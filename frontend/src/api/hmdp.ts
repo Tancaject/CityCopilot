@@ -340,6 +340,10 @@ export function fetchApiErrors() {
   return getData<ApiErrorDefinition[]>('/admin/api/errors');
 }
 
+export function fetchAgentPing() {
+  return getData<Record<string, unknown>>('/agent/ping');
+}
+
 export async function fetchAdminBlogs(current = 1, keyword?: string) {
   const payload = await getData<Blog[] | PageResult<Blog>>('/admin/blogs', {
     params: { current, keyword },

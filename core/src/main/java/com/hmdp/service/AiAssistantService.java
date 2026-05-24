@@ -51,6 +51,7 @@ import static com.hmdp.utils.RedisConstants.AI_RATE_LIMIT_KEY;
 
 @Slf4j
 @Service
+@Deprecated(since = "0.1-citycopilot", forRemoval = false)
 public class AiAssistantService {
 
     private static final DateTimeFormatter RATE_BUCKET_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmm");

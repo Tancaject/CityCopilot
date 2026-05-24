@@ -1,6 +1,7 @@
 package com.hmdp.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.citycopilot.core.agent.AgentTool;
 import com.hmdp.entity.ShopType;
 
 import java.util.List;
@@ -15,5 +16,6 @@ import java.util.List;
  */
 public interface IShopTypeService extends IService<ShopType> {
 
+    @AgentTool(name = "list_shop_types", description = "List supported local-life shop categories")
     List<ShopType> queryShopType();
 }
