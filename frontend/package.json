@@ -1,0 +1,23 @@
+{
+  "name": "hmdp-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.16.0",
+    "axios": "^1.6.8",
+    "vue": "^3.4.21",
+    "vue-router": "^5.0.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "typescript": "^5.4.2",
+    "vite": "^8.0.13",
+    "vue-tsc": "^2.0.6"
+  }
+}

@@ -1,0 +1,95 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: hmdp
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${HMDP_DB_URL:jdbc:mysql://127.0.0.1:3306/hmdp?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+    username: ${HMDP_DB_USERNAME:root}
+    password: ${HMDP_DB_PASSWORD:12345}
+  data:
+    redis:
+      host: ${HMDP_REDIS_HOST:172.19.235.221}
+      port: ${HMDP_REDIS_PORT:6379}
+      password: ${HMDP_REDIS_PASSWORD:}
+      database: ${HMDP_REDIS_DATABASE:0}
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 10
+          min-idle: 1
+          time-between-eviction-runs: 10s
+  jackson:
+    default-property-inclusion: non_null # JSON处理时忽略非空字段
+mybatis-plus:
+  type-aliases-package: com.hmdp.entity # 别名扫描包
+logging:
+  level:
+    com.hmdp: debug
+hmdp:
+  audit:
+    retention-days: ${HMDP_AUDIT_RETENTION_DAYS:90}
+    export-limit: ${HMDP_AUDIT_EXPORT_LIMIT:1000}
+  security:
+    login-code-rate-limit-per-phone: 3
+    role-permissions:
+      admin:
+        - "*"
+      geo_operator:
+        - admin:access
+        - geo:read
+        - geo:write
+        - audit:read
+      auditor:
+        - admin:access
+        - geo:read
+        - audit:read
+      merchant:
+        - admin:access
+        - shop:write
+        - voucher:write
+        - order:write
+  upload:
+    root-dir: ${HMDP_UPLOAD_ROOT:uploads}
+    public-prefix: ${HMDP_UPLOAD_PUBLIC_PREFIX:/uploads}
+    max-image-size-bytes: 5242880
+    allowed-image-extensions:
+      - jpg
+      - jpeg
+      - png
+      - webp
+      - gif
+    allowed-image-content-types:
+      - image/jpeg
+      - image/png
+      - image/webp
+      - image/gif
+  geo:
+    auto-sync-shop-index: true
+    nearby-radius-meters: 5000
+    max-batch-size: 100
+    default-city: ${HMDP_GEO_DEFAULT_CITY:杭州}
+    city-limit: true
+    shop-page-size: 5
+    max-shop-page-size: 20
+  amap:
+    web-service-key: ${HMDP_AMAP_WEB_SERVICE_KEY:}
+    geocode-url: https://restapi.amap.com/v3/geocode/geo
+    poi-text-url: https://restapi.amap.com/v3/place/text
+    cache-ttl-minutes: 1440
+    rate-limit-per-minute: 60
+    circuit-failure-threshold: 5
+    circuit-open-seconds: 120
+    metrics-ttl-days: 7
+  ai:
+    enabled: ${HMDP_AI_ENABLED:true}
+    api-key: ${HMDP_AI_API_KEY:${DASHSCOPE_API_KEY:}}
+    api-url: ${HMDP_AI_API_URL:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
+    model: ${HMDP_AI_MODEL:qwen-plus}
+    timeout-seconds: 8
+    max-message-length: 300
+    public-rate-limit-per-minute: 20
+    user-rate-limit-per-minute: 40
+    admin-rate-limit-per-minute: 80
+    history-limit: 6
