@@ -1,4 +1,4 @@
-# HMDP 地图能力接入计划
+# CityCopilot 地图能力接入计划
 
 ## 决策
 
@@ -17,7 +17,7 @@
 - 前端店铺列表新增“附近优先”入口，店铺详情新增位置面板。
 - 前端新增 `/admin/geo-shops` 店铺地理校准台，支持店铺搜索、状态筛选、POI 候选确认、地址解析、手动写回坐标和 Redis GEO 重建。
 - 地理校准台和 `/geo/**`、`/shop/{id}/geo`、`POST/PUT /shop`、`POST /voucher`、`POST /voucher/seckill` 等写接口已接入权限码校验，当前支持 `admin`、`geo_operator`、`auditor`、`merchant` 等角色映射。
-- 角色权限映射已升级为配置驱动，默认由 `hmdp.security.role-permissions` 提供；`/user/me` 会返回当前用户权限，前端导航和路由守卫只做体验层判断。
+- 角色权限映射已升级为配置驱动，默认由 `citycopilot.security.role-permissions` 提供；`/user/me` 会返回当前用户权限，前端导航和路由守卫只做体验层判断。
 - 新增 `POST /geo/shops/batch-geocode`、`GET /geo/batch-jobs`、`GET /geo/batch-jobs/{jobId}`、`GET /geo/batch-jobs/{jobId}/items`、`POST /geo/batch-jobs/{jobId}/cancel`、`POST /geo/batch-jobs/{jobId}/retry`，用于批量解析缺坐标店铺、查询任务进度、取消任务和重试失败明细。
 - 批量任务落库到 `tb_geo_batch_job` 和 `tb_geo_batch_job_item`，服务重启后仍能查询任务和单店处理明细。
 - 新增 `GET /admin/audit-logs` 和 `tb_operation_log`，用于追踪店铺修改、坐标写回、GEO 索引重建、批量任务创建与完成。
@@ -25,9 +25,9 @@
 - 用户表新增 `role` 字段，用于区分普通用户和管理员。
 - Redis GEO 只同步 `geo_status = 'verified'` 的店铺，避免未确认坐标影响附近排序。
 - 新增 `POST /geo/shop-index/sync`，用于字段修正或批量校准后手动重建 GEO 索引。
-- 附近搜索半径通过 `hmdp.geo.nearby-radius-meters` 配置，默认 5000 米。
-- 店铺分页大小、最大分页大小、默认城市和 POI 城市限制通过 `hmdp.geo.shop-page-size`、`hmdp.geo.max-shop-page-size`、`hmdp.geo.default-city`、`hmdp.geo.city-limit` 配置。
-- 高德 Web 服务调用增加 Redis 缓存和分钟级限流，配置项为 `hmdp.amap.cache-ttl-minutes` 与 `hmdp.amap.rate-limit-per-minute`。
+- 附近搜索半径通过 `citycopilot.geo.nearby-radius-meters` 配置，默认 5000 米。
+- 店铺分页大小、最大分页大小、默认城市和 POI 城市限制通过 `citycopilot.geo.shop-page-size`、`citycopilot.geo.max-shop-page-size`、`citycopilot.geo.default-city`、`citycopilot.geo.city-limit` 配置。
+- 高德 Web 服务调用增加 Redis 缓存和分钟级限流，配置项为 `citycopilot.amap.cache-ttl-minutes` 与 `citycopilot.amap.rate-limit-per-minute`。
 - 高德 Web 服务调用增加熔断保护和 Redis 指标计数，可通过 `GET /geo/amap/status` 查看熔断状态、分钟调用量、成功/失败、缓存命中和限流次数。
 - 高德异常会记录 `infocode/info`，前端收到更明确的失败原因。
 - 审计日志支持 `GET /admin/audit-logs/export` 导出最近 1000 条匹配记录。
@@ -38,7 +38,7 @@
 ## 边界
 
 - 前端不直接调用高德 Web 服务，避免暴露 Web 服务 Key。
-- 后端高德 Web 服务 Key 通过 `HMDP_AMAP_WEB_SERVICE_KEY` 配置。
+- 后端高德 Web 服务 Key 通过 `CITYCOPILOT_AMAP_WEB_SERVICE_KEY` 配置。
 - 前端高德 JS Key 只用于地图渲染，通过 `VITE_AMAP_JS_KEY` 配置。
 - 高德服务不可用时，列表仍可按普通分页展示，详情页仍展示坐标位置面板。
 
@@ -58,5 +58,5 @@ curl -X POST "http://127.0.0.1:8081/geo/shop-index/sync" -H "authorization: $TOK
 
 ## 后续
 
-1. 如果权限需要在页面上运营，再把 `hmdp.security.role-permissions` 升级为数据库或配置中心驱动。
+1. 如果权限需要在页面上运营，再把 `citycopilot.security.role-permissions` 升级为数据库或配置中心驱动。
 2. 地图数据可以继续增加城市、商圈、坐标可信度评分和人工复核队列。

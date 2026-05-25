@@ -5,38 +5,79 @@ import com.citycopilot.agent.tool.ToolMetadata;
 import com.citycopilot.agent.tool.ToolParameter;
 
 import java.lang.reflect.InvocationTargetException;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 public final class ToolGateway {
     private final AgentToolRegistry registry;
+    private final ToolAuditSink auditSink;
+    private final ToolExecutionGuard executionGuard;
 
     public ToolGateway(AgentToolRegistry registry) {
+        this(registry, ToolAuditSink.noop());
+    }
+
+    public ToolGateway(AgentToolRegistry registry, ToolAuditSink auditSink) {
+        this(registry, auditSink, ToolExecutionGuard.direct());
+    }
+
+    public ToolGateway(AgentToolRegistry registry, ToolAuditSink auditSink, ToolExecutionGuard executionGuard) {
         this.registry = registry;
+        this.auditSink = auditSink == null ? ToolAuditSink.noop() : auditSink;
+        this.executionGuard = executionGuard == null ? ToolExecutionGuard.direct() : executionGuard;
+    }
+
+    public List<ToolMetadata> tools() {
+        return registry.tools();
     }
 
     public ToolResult invoke(String name, Map<String, Object> args, ToolCallContext context) {
+        Instant start = Instant.now();
         ToolMetadata tool;
         try {
             tool = registry.require(name);
         } catch (IllegalArgumentException e) {
-            return ToolResult.failure("unknown_tool", e.getMessage(), false);
+            ToolResult result = ToolResult.failure("unknown_tool", e.getMessage(), false);
+            audit(name, args, context, result, start);
+            return result;
         }
 
         if (!hasRequiredPermissions(tool, context)) {
-            return ToolResult.failure("permission_denied", "Missing permission for tool: " + name, false);
+            ToolResult result = ToolResult.failure("permission_denied", "Missing permission for tool: " + name, false);
+            audit(name, args, context, result, start);
+            return result;
         }
 
         try {
-            Object output = tool.method().invoke(tool.bean(), buildArguments(tool.parameters(), args));
-            return ToolResult.success(output);
+            Object[] invocationArgs = buildArguments(tool.parameters(), args);
+            Object output = executionGuard.execute(tool, () -> tool.method().invoke(tool.bean(), invocationArgs));
+            ToolResult result = ToolResult.success(output);
+            audit(name, args, context, result, start);
+            return result;
+        } catch (ToolExecutionException e) {
+            ToolResult result = ToolResult.failure(e.code(), e.getMessage(), e.retryable());
+            audit(name, args, context, result, start);
+            return result;
         } catch (IllegalArgumentException e) {
-            return ToolResult.failure("invalid_args", e.getMessage(), false);
+            ToolResult result = ToolResult.failure("invalid_args", e.getMessage(), false);
+            audit(name, args, context, result, start);
+            return result;
         } catch (IllegalAccessException e) {
-            return ToolResult.failure("tool_inaccessible", e.getMessage(), false);
+            ToolResult result = ToolResult.failure("tool_inaccessible", e.getMessage(), false);
+            audit(name, args, context, result, start);
+            return result;
         } catch (InvocationTargetException e) {
             Throwable cause = e.getTargetException();
-            return ToolResult.failure("business_error", cause.getMessage(), false);
+            ToolResult result = ToolResult.failure("business_error", cause.getMessage(), false);
+            audit(name, args, context, result, start);
+            return result;
+        } catch (Exception e) {
+            ToolResult result = ToolResult.failure("tool_error", e.getMessage(), false);
+            audit(name, args, context, result, start);
+            return result;
         }
     }
 
@@ -59,7 +100,13 @@ public final class ToolGateway {
         Object[] values = new Object[parameters.size()];
         for (int i = 0; i < parameters.size(); i++) {
             ToolParameter parameter = parameters.get(i);
-            Object raw = args == null ? null : args.getOrDefault(parameter.name(), args.get("arg" + i));
+            String positionalName = "arg" + i;
+            boolean hasNamedArg = args != null && args.containsKey(parameter.name());
+            boolean hasPositionalArg = args != null && args.containsKey(positionalName);
+            Object raw = hasNamedArg ? args.get(parameter.name()) : (hasPositionalArg ? args.get(positionalName) : null);
+            if (!hasNamedArg && !hasPositionalArg && parameter.required()) {
+                throw new IllegalArgumentException("Missing required argument: " + parameter.name());
+            }
             values[i] = coerce(raw, parameter.javaType());
         }
         return values;
@@ -80,9 +127,45 @@ public final class ToolGateway {
                 return number.doubleValue();
             }
         }
+        if (raw instanceof String text) {
+            if (targetType == Long.class || targetType == long.class) {
+                return Long.parseLong(text);
+            }
+            if (targetType == Integer.class || targetType == int.class) {
+                return Integer.parseInt(text);
+            }
+            if (targetType == Double.class || targetType == double.class) {
+                return Double.parseDouble(text);
+            }
+            if (targetType == Boolean.class || targetType == boolean.class) {
+                return Boolean.parseBoolean(text);
+            }
+        }
         if (targetType == String.class) {
             return String.valueOf(raw);
         }
         return raw;
+    }
+
+    private void audit(String name, Map<String, Object> args, ToolCallContext context, ToolResult result, Instant start) {
+        try {
+            auditSink.record(new ToolCallAudit(
+                    context == null ? null : context.userId(),
+                    name,
+                    copyArgs(args),
+                    result.ok(),
+                    result.ok() ? null : result.error(),
+                    Duration.between(start, Instant.now()).toMillis()
+            ));
+        } catch (Exception ignored) {
+            // Audit must not turn a successful tool call into an agent-visible failure.
+        }
+    }
+
+    private static Map<String, Object> copyArgs(Map<String, Object> args) {
+        if (args == null || args.isEmpty()) {
+            return Map.of();
+        }
+        return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(args));
     }
 }

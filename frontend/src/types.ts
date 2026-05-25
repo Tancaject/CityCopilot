@@ -165,6 +165,38 @@ export interface AiChatResponse {
   diagnostics?: Record<string, unknown>;
 }
 
+export interface AgentToolEvent {
+  index?: number;
+  phase?: 'call' | 'result' | string;
+  toolName?: string;
+  args?: Record<string, unknown>;
+  observation?: unknown;
+}
+
+export interface AgentSseEvent {
+  event: 'message' | 'tool' | 'error' | 'final' | 'traceId' | string;
+  data?: unknown;
+}
+
+export interface AgentTraceStep {
+  index: number;
+  type: string;
+  toolName?: string;
+  args?: Record<string, unknown>;
+  observation?: unknown;
+  errorCode?: string;
+  message?: string;
+}
+
+export interface AgentTrace {
+  traceId: string;
+  mode: string;
+  steps: AgentTraceStep[];
+  finalAnswer?: string;
+  durationMs: number;
+  createdAt?: string;
+}
+
 export interface GeoBatchJob {
   id?: number;
   jobId: string;

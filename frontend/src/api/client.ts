@@ -35,7 +35,7 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      window.dispatchEvent(new CustomEvent('hmdp:auth-expired'));
+      window.dispatchEvent(new CustomEvent('citycopilot:auth-expired'));
       return Promise.reject(new ApiError('请先登录', error.response?.data?.code || 'AUTH_REQUIRED'));
     }
     const message = error.response?.data?.errorMsg || error.message || '服务暂时不可用';

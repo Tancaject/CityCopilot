@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { AlertCircle, ArrowLeft, Heart, Loader2, RefreshCw, Store, UserPlus } from '@lucide/vue';
-import { checkFollow, fetchBlog, fetchBlogLikes, followUser, likeBlog } from '../api/hmdp';
+import { checkFollow, fetchBlog, fetchBlogLikes, followUser, likeBlog } from '../api/citycopilot';
 import { authState, initAuth } from '../composables/auth';
 import { assetUrl, blogContentText, firstImage } from '../utils/assets';
 import type { Blog, UserDTO } from '../types';

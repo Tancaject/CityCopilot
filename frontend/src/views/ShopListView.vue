@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { AlertCircle, ArrowLeft, Loader2, MapPin, RefreshCw, Search, Star } from '@lucide/vue';
-import { fetchNearbyShops, fetchShopsByName, fetchShopsByType } from '../api/hmdp';
+import { fetchNearbyShops, fetchShopsByName, fetchShopsByType } from '../api/citycopilot';
 import { clearCurrentLocation, locationState, requestCurrentLocation } from '../composables/location';
 import { formatDistance, formatPrice, formatScore, shopCover } from '../utils/assets';
 import type { Shop } from '../types';

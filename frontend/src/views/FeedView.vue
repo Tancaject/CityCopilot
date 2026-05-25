@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { AlertCircle, Heart, Loader2, RefreshCw, Rss } from '@lucide/vue';
-import { fetchFollowBlogs } from '../api/hmdp';
+import { fetchFollowBlogs } from '../api/citycopilot';
 import { assetUrl, blogCover } from '../utils/assets';
 import type { Blog } from '../types';
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { AlertCircle, Braces, KeyRound, Loader2, RefreshCw, Search } from '@lucide/vue';
-import { fetchApiEndpoints, fetchApiErrors, fetchPermissionMatrix } from '../api/hmdp';
+import { fetchApiEndpoints, fetchApiErrors, fetchPermissionMatrix } from '../api/citycopilot';
 import type { ApiEndpoint, ApiErrorDefinition } from '../types';
 
 type ApiTab = 'endpoints' | 'errors' | 'permissions';

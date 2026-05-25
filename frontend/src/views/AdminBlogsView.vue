@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { AlertCircle, Loader2, RefreshCw, Search, Trash2 } from '@lucide/vue';
-import { deleteAdminBlog, fetchAdminBlogs } from '../api/hmdp';
+import { deleteAdminBlog, fetchAdminBlogs } from '../api/citycopilot';
 import { blogContentText, blogCover } from '../utils/assets';
 import type { Blog } from '../types';
 

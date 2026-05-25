@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { AlertCircle, ArrowLeft, Clock, Loader2, MapPin, RefreshCw, Star, Ticket } from '@lucide/vue';
-import { fetchShop, fetchVoucherOrder, fetchVouchers, seckillVoucher } from '../api/hmdp';
+import { fetchShop, fetchVoucherOrder, fetchVouchers, seckillVoucher } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import ShopMapPanel from '../components/ShopMapPanel.vue';
 import { firstImage, formatCents, formatPrice, formatScore } from '../utils/assets';

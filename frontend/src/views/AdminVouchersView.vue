@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { AlertCircle, CheckCircle2, Loader2, Plus, Save, Search, Ticket, ToggleLeft, ToggleRight } from '@lucide/vue';
-import { createAdminVoucher, fetchAdminVouchers, updateAdminVoucher, updateAdminVoucherStatus } from '../api/hmdp';
+import { createAdminVoucher, fetchAdminVouchers, updateAdminVoucher, updateAdminVoucherStatus } from '../api/citycopilot';
 import { formatCents } from '../utils/assets';
 import type { Voucher } from '../types';
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { AlertCircle, Database, Download, Loader2, RefreshCw, Search, Trash2 } from '@lucide/vue';
-import { cleanupAuditLogs, exportOperationLogs, fetchAuditStatus, fetchOperationLogs } from '../api/hmdp';
+import { cleanupAuditLogs, exportOperationLogs, fetchAuditStatus, fetchOperationLogs } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import { hasPermission } from '../utils/permissions';
 import type { AuditStatus, OperationLog } from '../types';
@@ -65,7 +65,7 @@ async function exportLogs() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `hmdp-audit-${Date.now()}.csv`;
+    link.download = `citycopilot-audit-${Date.now()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   } catch (error) {

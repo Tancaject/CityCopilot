@@ -1,5 +1,5 @@
 import { reactive } from 'vue';
-import { fetchMe, loginByCode, logoutCurrentUser } from '../api/hmdp';
+import { fetchMe, loginByCode, logoutCurrentUser } from '../api/citycopilot';
 import type { LoginForm, UserDTO } from '../types';
 
 const TOKEN_KEY = 'token';

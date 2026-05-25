@@ -1,8 +1,10 @@
-# HMDP 前端重构计划
+# CityCopilot 前端重构计划
 
 ## 目标
 
 把当前嵌在 Spring Boot resources 里的静态 HTML 前端，逐步迁移为独立的 Vue 3 + TypeScript + Vite 应用。后端保持 API 服务职责，Nginx 只作为部署层存在，负责静态资源、SPA fallback、API 反向代理和缓存策略。
+
+同步备注（2026-05-25）：项目已完成对外身份迁移为 CityCopilot，主前端已接入 Agent 流式对话和 Trace 看板；旧静态页面仍作为历史资源保留在 `core/src/main/resources/nginx-1.18.0/html/citycopilot/`。
 
 ## 当前判断
 
@@ -16,8 +18,11 @@
 ## 目标架构
 
 ```text
-hmdp/
-  src/                    Spring Boot API
+CityCopilot/
+  core/                   Spring Boot 核心业务 API
+  agent/                  Agent 主服务和 SSE 对话
+  mcp-server/             HTTP MCP-style 工具层
+  eval/                   YAML 评测与 Markdown 报告
   frontend/               Vue 3 + TypeScript + Vite
   deploy/nginx/           生产部署层配置
   docs/design/            重构计划和设计记录
@@ -119,7 +124,7 @@ Browser
 - `/blogs/new` 支持标题、正文、关联店铺 ID 和图片上传。
 - `/feed` 支持关注流滚动分页入口。
 - 发布页和关注流已接入登录保护。
-- 当前后端默认使用 `FileStorageService` 的本地实现，上传根目录和公开前缀由 `hmdp.upload.*` 配置；后续可新增对象存储实现替换。
+- 当前后端默认使用 `FileStorageService` 的本地实现，上传根目录和公开前缀由 `citycopilot.upload.*` 配置；后续可新增对象存储实现替换。
 
 ### 阶段 5：秒杀和订单体验
 
@@ -155,13 +160,13 @@ Browser
 
 ### 阶段 6：运营后台拆分
 
-状态：运营概览、店铺资料管理、优惠券配置、用户角色管理、内容治理、地理校准台、券核销台、审计、运营摘要和 API 契约自检已在主前端内完成；独立后台应用仍作为后续拆分方向。
+状态：运营概览、店铺资料管理、优惠券配置、用户角色管理、内容治理、地理校准台、券核销台、审计、运营摘要、API 契约自检和 Agent Trace 看板已在主前端内完成；独立后台应用仍作为后续拆分方向。
 
 交付物：
 
 - 商户、券、内容审核、用户管理等后台能力。
 - 建议作为 `frontend-admin/` 或同 repo 下单独 Vite app。
-- 当前已交付 `/admin`、`/admin/shops`、`/admin/vouchers`、`/admin/users`、`/admin/blogs`、`/admin/geo-shops`、`/admin/orders`、`/admin/audit`、`/admin/api`、`/admin/ops/summary`、审计日志留存/导出/清理和 API 契约自检入口。
+- 当前已交付 `/admin`、`/admin/shops`、`/admin/vouchers`、`/admin/users`、`/admin/blogs`、`/admin/geo-shops`、`/admin/orders`、`/admin/audit`、`/admin/api`、`/admin/ops/summary`、`/admin/traces`、审计日志留存/导出/清理和 API 契约自检入口。
 
 验收：
 

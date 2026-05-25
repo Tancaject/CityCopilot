@@ -1,10 +1,12 @@
 package com.citycopilot.agent.tool;
 
 import com.citycopilot.core.agent.AgentTool;
+import org.springframework.aop.support.AopUtils;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,13 +39,16 @@ public final class AgentToolRegistry {
     }
 
     private static void registerBean(Map<String, ToolMetadata> discovered, Object bean) {
-        for (Method method : bean.getClass().getDeclaredMethods()) {
-            AgentTool annotation = findAnnotation(bean.getClass(), method);
-            if (annotation == null) {
-                continue;
-            }
+        if (bean == null) {
+            return;
+        }
+        Map<MethodSignature, AnnotatedMethod> annotatedMethods = new LinkedHashMap<>();
+        collectAnnotatedMethods(AopUtils.getTargetClass(bean), annotatedMethods);
+        collectAnnotatedMethods(bean.getClass(), annotatedMethods);
+        for (AnnotatedMethod annotatedMethod : annotatedMethods.values()) {
+            Method method = AopUtils.selectInvocableMethod(annotatedMethod.method(), bean.getClass());
             method.setAccessible(true);
-            ToolMetadata metadata = toMetadata(bean, method, annotation);
+            ToolMetadata metadata = toMetadata(bean, method, annotatedMethod.annotation());
             ToolMetadata existing = discovered.putIfAbsent(metadata.name(), metadata);
             if (existing != null) {
                 throw new IllegalStateException("Duplicate agent tool name: " + metadata.name());
@@ -51,40 +56,20 @@ public final class AgentToolRegistry {
         }
     }
 
-    private static AgentTool findAnnotation(Class<?> beanType, Method method) {
-        AgentTool direct = method.getAnnotation(AgentTool.class);
-        if (direct != null) {
-            return direct;
+    private static void collectAnnotatedMethods(Class<?> type, Map<MethodSignature, AnnotatedMethod> methods) {
+        if (type == null || type == Object.class) {
+            return;
         }
-        for (Class<?> contract : beanType.getInterfaces()) {
-            AgentTool fromContract = findInterfaceAnnotation(contract, method);
-            if (fromContract != null) {
-                return fromContract;
-            }
-        }
-        return null;
-    }
-
-    private static AgentTool findInterfaceAnnotation(Class<?> contract, Method implementationMethod) {
-        try {
-            Method contractMethod = contract.getMethod(
-                    implementationMethod.getName(),
-                    implementationMethod.getParameterTypes()
-            );
-            AgentTool annotation = contractMethod.getAnnotation(AgentTool.class);
+        for (Method method : type.getDeclaredMethods()) {
+            AgentTool annotation = method.getAnnotation(AgentTool.class);
             if (annotation != null) {
-                return annotation;
-            }
-        } catch (NoSuchMethodException ignored) {
-            // Keep walking parent interfaces below.
-        }
-        for (Class<?> parent : contract.getInterfaces()) {
-            AgentTool fromParent = findInterfaceAnnotation(parent, implementationMethod);
-            if (fromParent != null) {
-                return fromParent;
+                methods.putIfAbsent(MethodSignature.of(method), new AnnotatedMethod(method, annotation));
             }
         }
-        return null;
+        for (Class<?> contract : type.getInterfaces()) {
+            collectAnnotatedMethods(contract, methods);
+        }
+        collectAnnotatedMethods(type.getSuperclass(), methods);
     }
 
     private static ToolMetadata toMetadata(Object bean, Method method, AgentTool annotation) {
@@ -95,7 +80,7 @@ public final class AgentToolRegistry {
                 annotation.rateLimitPerMinute(),
                 annotation.idempotent(),
                 bean,
-                bean.getClass(),
+                method.getDeclaringClass(),
                 method,
                 parametersOf(method)
         );
@@ -107,5 +92,14 @@ public final class AgentToolRegistry {
             parameters.add(new ToolParameter(parameter.getName(), parameter.getType(), true));
         }
         return parameters;
+    }
+
+    private record AnnotatedMethod(Method method, AgentTool annotation) {
+    }
+
+    private record MethodSignature(String name, List<Class<?>> parameterTypes) {
+        static MethodSignature of(Method method) {
+            return new MethodSignature(method.getName(), Arrays.asList(method.getParameterTypes()));
+        }
     }
 }

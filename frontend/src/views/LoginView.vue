@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { AlertCircle, Loader2, MessageCircle, ShieldCheck, Smartphone } from '@lucide/vue';
-import { sendLoginCode } from '../api/hmdp';
+import { sendLoginCode } from '../api/citycopilot';
 import { login } from '../composables/auth';
 
 const router = useRouter();

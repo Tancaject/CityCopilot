@@ -18,6 +18,77 @@
 
 ---
 
+## Current Execution Status (updated 2026-05-25)
+
+This section is the source of truth for the current implementation state. The detailed phase checklist below is kept as the original execution plan and implementation trace.
+
+### Progress Sync Notes
+
+- Code evidence checked on 2026-05-25: main Java source currently exposes 27 unique `@AgentTool` names.
+- The current Plan-Execute path is heuristic and deterministic; it is not yet an LLM-generated Plan-Execute-Replan loop.
+- The current MCP surface is HTTP-style `GET /mcp/tools/list` and `POST /mcp/tools/call`; stdio/SSE MCP protocol transport is still not implemented.
+- The eval harness is runnable from `EvalRunner.main`, reads one YAML suite with 10 cases, and can render Markdown. It does not yet run 30 cases or measure live LLM quality/token usage.
+- The detailed phase checklist below intentionally preserves historical `hmdp` paths and shell snippets as the original execution trace; use this top status block for current truth.
+
+### Priority Status
+
+| Priority | Plan item | Status | Evidence / notes |
+|---:|---|---|---|
+| 1 | Unblock Maven | Done | Local Maven is available under `.tools/apache-maven-3.9.9`; `mvn clean verify` passes through `.\.tools\apache-maven-3.9.9\bin\mvn.cmd`. |
+| 1 | Resolve Spring AI dependency risk | Done with fallback | Spring AI Alibaba dependency pins resolve, but the DashScope starter auto-config hard-fails without API key. Runtime uses OpenAI-compatible DashScope client plus deterministic fallback instead of a hard starter dependency. |
+| 2 | Spring bean based `AgentToolRegistry` | Done | Registry scans Spring beans, resolves interface annotations and proxy target classes, and has regression tests. |
+| 2 | `ToolGateway` validation / permission / errors / audit | Done | Gateway validates missing args, supports null-valued optional args, checks permissions, standardizes `ToolError`, writes audit, and prevents audit failures from rewriting successful tool calls. |
+| 2 | LLM client wrapper | Done, not full Spring AI Alibaba | `OpenAiCompatibleAgentLlmClient` points at DashScope-compatible chat completions; `HeuristicAgentLlmClient` remains as offline fallback. A direct Spring AI Alibaba chat client is not active. |
+| 2 | ReAct executor | Done | Max steps, duplicate tool-call guard, tool observation feedback, final answer, and trace save are implemented and tested. |
+| 2 | Redis trace store | Done | `TraceStore` has in-memory and Redis implementations; trace list/detail APIs exist. Runtime Redis availability still determines persistence durability. |
+| 2 | `/agent/chat` SSE | Done | Emits `status`, `traceId`, `tool`, `error`, `final`; security review fixes preserve logged-in user context across async execution. |
+| 3 | Frontend Agent MVP | Done | AI panel streams `/agent/chat`, renders tool cards and `traceId`, and falls back to legacy `/ai/chat`. |
+| 4 | Router + Plan-Execute | Partial | Router selects ReAct vs Plan-Execute; high-risk writes are controlled/refused without permission; retryable tool failures get one retry. Full LLM-driven Replan and Critic Agent are not implemented. |
+| 4 | Tool catalog | Done | 27 unique `@AgentTool` names are registered from main Java source across shop, voucher, order, follow/feed/blog, geo, batch job, audit, and ops surfaces. |
+| 4 | MCP server | Partial | `mcp-server` exposes HTTP `tools/list` and `tools/call` reusing Registry/Gateway, and call auth was hardened. Full Spring AI MCP stdio/SSE protocol integration remains open. |
+| 4 | Resilience4j | Done | Tool-level rate limit, retry, circuit breaker, timeout, and bounded executor are implemented. |
+| 5 | Ops Agent | Partial | Redis Stream task enqueue/poll exists and now uses consumer group + ack. Current processors are task-entry skeletons for geo calibration, order anomaly scan, and daily report. |
+| 5 | Eval Harness | Partial | One YAML suite with 10 cases, `EvalRunner` CLI entry, `--fail-on-gate`, and Markdown report rendering exist. Target 30 cases and live provider-quality/token metrics are not complete. |
+| 5 | Observability | Partial | Actuator, Prometheus endpoint, scrape config, and Grafana dashboard JSON exist. Custom ToolGateway/LLM Micrometer timers or counters are not wired in main code yet. |
+| 5 | Traces dashboard | Done | Frontend route and API client exist; backend trace APIs are protected by `audit:read`. |
+| 5 | README / RESUME / metrics | Partial | README and `RESUME.md` are updated. Real eval/load metrics table and demo video are not complete. |
+
+### Security Review Fixes Completed
+
+- MCP `tools/call` no longer trusts caller-supplied `permissions` or `userId`; server-side login context is authoritative.
+- `/agent/chat` captures the logged-in user before async dispatch and restores `UserHolder` in the worker thread.
+- `/agent/traces` and `/agent/traces/{traceId}` require backend `audit:read`, not only frontend route guards.
+- Refund no longer removes the user from the seckill one-user-one-order Redis set; cancel still releases eligibility.
+- Seckill returns `SECKILL_WORKER_UNAVAILABLE` before Lua execution if the stream worker cannot safely persist orders.
+- Tool args with null values no longer break `AgentDecision`, `AgentTraceStep`, or `ToolGateway` audit paths.
+- First SSE frame is `event:status`, so the frontend no longer displays literal `agent_started` as an answer.
+
+### Still Open
+
+- Replace heuristic Plan-Execute with full Plan-Execute-Replan and a real Critic Agent for write operations.
+- Implement true Spring AI MCP protocol transport, not only HTTP-compatible `tools/list` / `tools/call`.
+- Expand eval cases from 10 to 30 and record real accuracy/latency/token metrics.
+- Add custom Micrometer timers/counters for tool calls and LLM calls.
+- Build real Ops Agent processors instead of entry-point skeletons.
+- Run full acceptance against real MySQL, Redis, AMap, and DashScope credentials.
+- Record demo video and add verified metrics to README/resume notes.
+- Decide when to retire legacy `AiAssistantService`; it is intentionally still kept as fallback.
+
+### Latest Verification (re-run 2026-05-25)
+
+```powershell
+.\.tools\apache-maven-3.9.9\bin\mvn.cmd -q clean verify
+cd frontend; npm run build
+```
+
+Additional jar probes passed:
+
+- `/agent/traces` without login returns `HTTP 401`.
+- `/mcp/tools/call` without login returns `HTTP 401`, even when the request body spoofs `permissions: ["*", "order:write"]`.
+- `/agent/chat` first event is `status`, followed by `traceId` and `final`.
+
+---
+
 ## Phase Map
 
 | Week | Phases | Cumulative state |

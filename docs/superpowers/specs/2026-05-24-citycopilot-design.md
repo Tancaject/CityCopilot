@@ -5,6 +5,14 @@
 - 目标投递：2026 校招 Java 后端（含 AI Agent 方向）
 - 时间窗口：4-6 周（v0.1 MVP 第 3 周末投递，后续面试间隙打磨）
 
+## 0. 当前实施状态（2026-05-25）
+
+详细执行状态以 `docs/superpowers/plans/2026-05-24-citycopilot-implementation.md` 的 **Current Execution Status** 为准。当前进度摘要如下：
+
+- **已完成**：Maven 本地解阻、多模块 `core/agent/mcp-server/eval`、Spring bean 扫描式 Tool Registry、ToolGateway 校验/权限/审计/标准错误、ReAct、基础 Plan-Execute、`/agent/chat` SSE、前端工具卡片、trace 列表/详情、HTTP MCP-style tools/list/tools/call、27 个已注册工具名、Resilience4j、单 YAML 套件 10 条 eval case、Actuator/Prometheus/Grafana JSON、README/RESUME 初版。
+- **已修复的安全问题**：MCP 不再信任调用方权限、Agent 异步线程保留用户身份、trace 后端加 `audit:read`、秒杀退款不再破坏一人一单、Redisson/stream worker 不可用时不再先扣库存、null 工具参数不再打断审计/trace。
+- **仍未完成**：真正 LLM 驱动的 Plan-Execute-Replan、Critic Agent、完整 Spring AI MCP 协议 transport、30 条 eval 与真实准确率/延迟/token 指标、工具/LLM 自定义 metrics、Ops Agent 真实处理逻辑、真实 MySQL/Redis/AMap/DashScope 环境验收、demo 视频、旧 `AiAssistantService` 下线。
+
 ## 1. 项目身份
 
 ### 1.1 一句话定位

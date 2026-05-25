@@ -16,7 +16,7 @@ import {
   Users,
 } from '@lucide/vue';
 import { RouterLink } from 'vue-router';
-import { fetchOpsSummary } from '../api/hmdp';
+import { fetchOpsSummary } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import { hasPermission } from '../utils/permissions';
 import type { OpsSummary } from '../types';

@@ -36,19 +36,48 @@ build/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
-frontend/.env
+frontend/.env*
+!frontend/.env.example
 frontend/*.log
 
 ### Local secrets / runtime overrides ###
+**/.env
+**/.env.*
+!**/.env.example
 application-local.yml
 application-local.yaml
+application-local.properties
 application-secret.yml
 application-secret.yaml
+application-secret.properties
+application-*.local.yml
+application-*.local.yaml
+application-*.local.properties
+application-*.secret.yml
+application-*.secret.yaml
+application-*.secret.properties
 .env
+.env.*
+!.env.example
 .env.local
+secrets/
+credentials.json
+service-account*.json
+*-service-account.json
+
+### Certificates / private keys ###
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
 
 ### Logs / OS ###
 *.log
 logs/
 .DS_Store
 Thumbs.db
+
+### Local tools ###
+.tools/

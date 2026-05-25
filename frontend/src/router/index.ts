@@ -103,6 +103,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredPermissions: ['audit:read'] },
   },
   {
+    path: '/admin/agent-traces',
+    name: 'admin-agent-traces',
+    component: () => import('../views/AdminAgentTracesView.vue'),
+    meta: { requiresAuth: true, requiredPermissions: ['audit:read'] },
+  },
+  {
     path: '/403',
     name: 'forbidden',
     component: () => import('../views/ForbiddenView.vue'),

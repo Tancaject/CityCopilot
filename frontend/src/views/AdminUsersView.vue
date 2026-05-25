@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, ShieldCheck, UserRound } from '@lucide/vue';
-import { fetchAdminUsers, fetchPermissionMatrix, updateAdminUserRole } from '../api/hmdp';
+import { fetchAdminUsers, fetchPermissionMatrix, updateAdminUserRole } from '../api/citycopilot';
 import type { UserAdmin } from '../types';
 
 const users = ref<UserAdmin[]>([]);

@@ -2376,6 +2376,54 @@ textarea {
   color: var(--muted);
 }
 
+.ai-agent-trace {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ai-agent-trace > small {
+  overflow-wrap: anywhere;
+  color: #7a6758;
+  font-size: 11px;
+}
+
+.ai-tool-card {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #ead9ca;
+  border-radius: 8px;
+  background: #fffaf6;
+}
+
+.ai-tool-card span {
+  width: fit-content;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #f4ece4;
+  color: #7a3f24;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ai-tool-card strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.ai-tool-card code {
+  max-height: 88px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  color: #5f4c3d;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
 .ai-shop-results {
   display: grid;
   gap: 8px;
@@ -2543,6 +2591,106 @@ textarea {
 .ai-input button:disabled {
   cursor: not-allowed;
   opacity: 0.58;
+}
+
+.trace-dashboard {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.trace-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.trace-list button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+}
+
+.trace-list button.active {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(245, 95, 45, 0.12);
+}
+
+.trace-list strong,
+.trace-list small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace-list small,
+.trace-list em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.trace-detail {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.trace-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.trace-detail-head span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eef5f0;
+  color: #23543a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.trace-detail code,
+.trace-steps code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.trace-steps {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.trace-steps li {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #ead9ca;
+  border-radius: 8px;
+  background: #fffaf6;
+}
+
+.trace-steps span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .geo-admin-page {

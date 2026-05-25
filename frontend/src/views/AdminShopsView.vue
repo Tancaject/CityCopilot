@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { AlertCircle, CheckCircle2, Loader2, Plus, RefreshCw, Save, Search, Store } from '@lucide/vue';
-import { createShop, fetchShop, fetchShopsByName, fetchShopTypes, updateShop } from '../api/hmdp';
+import { createShop, fetchShop, fetchShopsByName, fetchShopTypes, updateShop } from '../api/citycopilot';
 import type { Shop, ShopType } from '../types';
 
 interface ShopForm {

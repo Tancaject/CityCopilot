@@ -1,0 +1,54 @@
+- name: nearby_hotpot
+  input: "附近有什么火锅"
+  expect_mode: REACT
+  expect_tools:
+    - search_nearby_shops
+  expect_keywords:
+    - 工具
+- name: shop_vouchers
+  input: "这家店有什么优惠券"
+  expect_mode: REACT
+  expect_tools:
+    - list_vouchers_by_shop
+- name: my_orders
+  input: "我的订单"
+  expect_mode: REACT
+  expect_tools:
+    - get_my_orders
+- name: hotpot_order_guard
+  input: "附近 50 块以内有券火锅，帮我下单"
+  expect_mode: PLAN_EXECUTE
+  expect_tools:
+    - search_nearby_shops
+    - list_vouchers_by_shop
+    - place_seckill_order
+- name: pay_order_guard
+  input: "帮我支付订单"
+  expect_mode: PLAN_EXECUTE
+  expect_tools:
+    - pay_order
+- name: refund_order_guard
+  input: "帮我退款"
+  expect_mode: PLAN_EXECUTE
+  expect_tools:
+    - refund_order
+- name: cancel_order_guard
+  input: "取消订单"
+  expect_mode: PLAN_EXECUTE
+  expect_tools:
+    - cancel_order
+- name: geo_provider_status
+  input: "高德地理服务状态怎么样"
+  expect_mode: REACT
+  expect_tools:
+    - get_geo_provider_status
+- name: audit_logs
+  input: "查询今天的审计日志"
+  expect_mode: REACT
+  expect_tools:
+    - query_audit_logs
+- name: ops_summary
+  input: "运营概览"
+  expect_mode: REACT
+  expect_tools:
+    - ops_summary

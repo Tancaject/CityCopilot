@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { Braces, ClipboardCheck, Database, FileText, LayoutDashboard, LogOut, MapPin, ReceiptText, Rss, Search, ShieldCheck, SlidersHorizontal, SquarePen, Store, Ticket, UserRound } from '@lucide/vue';
+import { Activity, Braces, ClipboardCheck, Database, FileText, LayoutDashboard, LogOut, MapPin, ReceiptText, Rss, Search, ShieldCheck, SlidersHorizontal, SquarePen, Store, Ticket, UserRound } from '@lucide/vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import AiAssistantPanel from './components/AiAssistantPanel.vue';
 import { authState, clearAuth, initAuth, logout } from './composables/auth';
@@ -59,22 +59,22 @@ async function handleSearch() {
 }
 
 onMounted(() => {
-  window.addEventListener('hmdp:auth-expired', handleAuthExpired);
+  window.addEventListener('citycopilot:auth-expired', handleAuthExpired);
   initAuth();
 });
 
 onUnmounted(() => {
-  window.removeEventListener('hmdp:auth-expired', handleAuthExpired);
+  window.removeEventListener('citycopilot:auth-expired', handleAuthExpired);
 });
 </script>
 
 <template>
   <main class="app-shell">
     <header class="topbar">
-      <RouterLink class="brand-lockup" :to="{ name: 'home' }" aria-label="黑马点评首页">
-        <span class="brand-mark">H</span>
+      <RouterLink class="brand-lockup" :to="{ name: 'home' }" aria-label="CityCopilot 首页">
+        <span class="brand-mark">C</span>
         <div>
-          <strong>黑马点评</strong>
+          <strong>CityCopilot</strong>
           <span>城市生活精选</span>
         </div>
       </RouterLink>
@@ -145,6 +145,10 @@ onUnmounted(() => {
             <RouterLink v-if="canAccessAudit" :to="{ name: 'admin-api' }">
               <Braces :size="17" aria-hidden="true" />
               契约
+            </RouterLink>
+            <RouterLink v-if="canAccessAudit" :to="{ name: 'admin-agent-traces' }">
+              <Activity :size="17" aria-hidden="true" />
+              Traces
             </RouterLink>
           </div>
         </details>

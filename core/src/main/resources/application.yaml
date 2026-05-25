@@ -1,19 +1,20 @@
 server:
   port: 8081
+
 spring:
   application:
     name: city-copilot
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: ${HMDP_DB_URL:jdbc:mysql://127.0.0.1:3306/hmdp?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
-    username: ${HMDP_DB_USERNAME:root}
-    password: ${HMDP_DB_PASSWORD:12345}
+    url: "${CITYCOPILOT_DB_URL:jdbc:mysql://127.0.0.1:3306/citycopilot?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}"
+    username: "${CITYCOPILOT_DB_USERNAME:root}"
+    password: "${CITYCOPILOT_DB_PASSWORD:12345}"
   data:
     redis:
-      host: ${HMDP_REDIS_HOST:172.19.235.221}
-      port: ${HMDP_REDIS_PORT:6379}
-      password: ${HMDP_REDIS_PASSWORD:}
-      database: ${HMDP_REDIS_DATABASE:0}
+      host: "${CITYCOPILOT_REDIS_HOST:172.19.235.221}"
+      port: "${CITYCOPILOT_REDIS_PORT:6379}"
+      password: "${CITYCOPILOT_REDIS_PASSWORD:}"
+      database: "${CITYCOPILOT_REDIS_DATABASE:0}"
       lettuce:
         pool:
           max-active: 10
@@ -21,16 +22,19 @@ spring:
           min-idle: 1
           time-between-eviction-runs: 10s
   jackson:
-    default-property-inclusion: non_null # JSON处理时忽略非空字段
+    default-property-inclusion: non_null
+
 mybatis-plus:
-  type-aliases-package: com.hmdp.entity # 别名扫描包
+  type-aliases-package: com.citycopilot.core.entity
+
 logging:
   level:
-    com.hmdp: debug
-hmdp:
+    com.citycopilot.core: debug
+
+citycopilot:
   audit:
-    retention-days: ${HMDP_AUDIT_RETENTION_DAYS:90}
-    export-limit: ${HMDP_AUDIT_EXPORT_LIMIT:1000}
+    retention-days: "${CITYCOPILOT_AUDIT_RETENTION_DAYS:90}"
+    export-limit: "${CITYCOPILOT_AUDIT_EXPORT_LIMIT:1000}"
   security:
     login-code-rate-limit-per-phone: 3
     role-permissions:
@@ -51,8 +55,8 @@ hmdp:
         - voucher:write
         - order:write
   upload:
-    root-dir: ${HMDP_UPLOAD_ROOT:uploads}
-    public-prefix: ${HMDP_UPLOAD_PUBLIC_PREFIX:/uploads}
+    root-dir: "${CITYCOPILOT_UPLOAD_ROOT:uploads}"
+    public-prefix: "${CITYCOPILOT_UPLOAD_PUBLIC_PREFIX:/uploads}"
     max-image-size-bytes: 5242880
     allowed-image-extensions:
       - jpg
@@ -69,12 +73,12 @@ hmdp:
     auto-sync-shop-index: true
     nearby-radius-meters: 5000
     max-batch-size: 100
-    default-city: ${HMDP_GEO_DEFAULT_CITY:杭州}
+    default-city: "${CITYCOPILOT_GEO_DEFAULT_CITY:杭州}"
     city-limit: true
     shop-page-size: 5
     max-shop-page-size: 20
   amap:
-    web-service-key: ${HMDP_AMAP_WEB_SERVICE_KEY:}
+    web-service-key: "${CITYCOPILOT_AMAP_WEB_SERVICE_KEY:}"
     geocode-url: https://restapi.amap.com/v3/geocode/geo
     poi-text-url: https://restapi.amap.com/v3/place/text
     cache-ttl-minutes: 1440
@@ -83,13 +87,31 @@ hmdp:
     circuit-open-seconds: 120
     metrics-ttl-days: 7
   ai:
-    enabled: ${HMDP_AI_ENABLED:true}
-    api-key: ${HMDP_AI_API_KEY:${DASHSCOPE_API_KEY:}}
-    api-url: ${HMDP_AI_API_URL:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
-    model: ${HMDP_AI_MODEL:qwen-plus}
+    enabled: "${CITYCOPILOT_AI_ENABLED:true}"
+    api-key: "${CITYCOPILOT_AI_API_KEY:${DASHSCOPE_API_KEY:}}"
+    api-url: "${CITYCOPILOT_AI_API_URL:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}"
+    model: "${CITYCOPILOT_AI_MODEL:qwen-plus}"
     timeout-seconds: 8
     max-message-length: 300
     public-rate-limit-per-minute: 20
     user-rate-limit-per-minute: 40
     admin-rate-limit-per-minute: 80
     history-limit: 6
+  redisson:
+    enabled: "${CITYCOPILOT_REDISSON_ENABLED:true}"
+  seckill:
+    stream-worker:
+      enabled: "${CITYCOPILOT_SECKILL_STREAM_WORKER_ENABLED:true}"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: city-copilot

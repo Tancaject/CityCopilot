@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { AlertCircle, ImagePlus, Loader2, Send } from '@lucide/vue';
-import { publishBlog, uploadBlogImage } from '../api/hmdp';
+import { publishBlog, uploadBlogImage } from '../api/citycopilot';
 import { assetUrl } from '../utils/assets';
 
 const router = useRouter();

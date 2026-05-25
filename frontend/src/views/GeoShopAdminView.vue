@@ -36,7 +36,7 @@ import {
   startGeoBatchGeocode,
   syncShopGeoIndex,
   updateShopGeo,
-} from '../api/hmdp';
+} from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import { hasPermission } from '../utils/permissions';
 import type { AmapPoi, AmapServiceStatus, AuditStatus, GeoBatchJob, GeoBatchJobItem, OpsSummary, Shop } from '../types';
@@ -695,8 +695,8 @@ async function loadAuditLogs(targetId = selectedShop.value?.id) {
 }
 
 onMounted(() => {
-  window.addEventListener('hmdp:geo-batch-updated', handleExternalBatchUpdate);
-  window.addEventListener('hmdp:geo-index-synced', handleExternalGeoIndexSynced);
+  window.addEventListener('citycopilot:geo-batch-updated', handleExternalBatchUpdate);
+  window.addEventListener('citycopilot:geo-index-synced', handleExternalGeoIndexSynced);
   loadFirstPage();
   loadAuditLogs();
   loadBatchJobs(route.query.focus === 'failed-jobs');
@@ -715,8 +715,8 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  window.removeEventListener('hmdp:geo-batch-updated', handleExternalBatchUpdate);
-  window.removeEventListener('hmdp:geo-index-synced', handleExternalGeoIndexSynced);
+  window.removeEventListener('citycopilot:geo-batch-updated', handleExternalBatchUpdate);
+  window.removeEventListener('citycopilot:geo-index-synced', handleExternalGeoIndexSynced);
   stopBatchPolling();
 });
 </script>

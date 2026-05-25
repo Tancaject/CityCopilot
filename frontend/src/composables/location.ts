@@ -1,7 +1,7 @@
 import { computed, reactive } from 'vue';
 import type { GeoPoint } from '../types';
 
-const LOCATION_KEY = 'hmdp:user-location';
+const LOCATION_KEY = 'citycopilot:user-location';
 
 type LocationStatus = 'idle' | 'loading' | 'ready' | 'denied' | 'unsupported' | 'error';
 

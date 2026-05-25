@@ -2,12 +2,12 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Bot, ExternalLink, Loader2, MapPin, Send, Sparkles, Store, Trash2, X } from '@lucide/vue';
-import { retryGeoBatchJob, sendAiChat, startGeoBatchGeocode, syncShopGeoIndex } from '../api/hmdp';
+import { retryGeoBatchJob, sendAiChat, startGeoBatchGeocode, streamAgentChat, syncShopGeoIndex } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import { locationState, requestCurrentLocation } from '../composables/location';
 import { formatDistance, formatPrice, formatScore } from '../utils/assets';
 import { hasPermission } from '../utils/permissions';
-import type { AiAssistantAction, AiAssistantShop, AiChatMessage, GeoBatchJob } from '../types';
+import type { AgentToolEvent, AiAssistantAction, AiAssistantShop, AiChatMessage, AiChatRequest, AiChatResponse, GeoBatchJob } from '../types';
 
 interface ChatMessage {
   id: number;
@@ -15,6 +15,8 @@ interface ChatMessage {
   text: string;
   shops?: AiAssistantShop[];
   actions?: AiAssistantAction[];
+  traceId?: string;
+  toolEvents?: AgentToolEvent[];
 }
 
 const route = useRoute();
@@ -28,7 +30,7 @@ const actionLoading = ref('');
 const errorMessage = ref('');
 const scrollRef = ref<HTMLElement | null>(null);
 let messageId = 0;
-const storageKey = 'hmdp:ai-assistant';
+const storageKey = 'citycopilot:ai-assistant';
 
 const welcomeMessage: ChatMessage = {
   id: ++messageId,
@@ -159,6 +161,13 @@ async function sendPrompt(prompt = input.value) {
   errorMessage.value = '';
   const history = recentHistory();
   messages.value.push({ id: ++messageId, role: 'user', text });
+  const assistantMessage: ChatMessage = {
+    id: ++messageId,
+    role: 'assistant',
+    text: 'Agent 正在规划工具调用...',
+    toolEvents: [],
+  };
+  messages.value.push(assistantMessage);
   loading.value = true;
   await nextTick(scrollToBottom);
   try {
@@ -166,7 +175,7 @@ async function sendPrompt(prompt = input.value) {
       await requestCurrentLocation();
     }
     const point = locationState.point;
-    const response = await sendAiChat({
+    const payload: AiChatRequest = {
       message: text,
       scene: scene.value,
       conversationId: conversationId.value,
@@ -176,23 +185,73 @@ async function sendPrompt(prompt = input.value) {
       x: point?.x,
       y: point?.y,
       history,
-    });
-    if (response.conversationId) {
-      conversationId.value = response.conversationId;
-    }
-    messages.value.push({
-      id: ++messageId,
-      role: 'assistant',
-      text: response.message,
-      shops: response.shops || [],
-      actions: response.actions || [],
-    });
+    };
+    await streamAgentChat(payload, (event) => handleAgentEvent(event.event, event.data, assistantMessage));
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'AI 助手暂时不可用';
+    try {
+      const point = locationState.point;
+      const response = await sendAiChat({
+        message: text,
+        scene: scene.value,
+        conversationId: conversationId.value,
+        routeName: String(route.name || ''),
+        routePath: route.fullPath,
+        currentShopId: currentShopId.value,
+        x: point?.x,
+        y: point?.y,
+        history,
+      });
+      applyAiResponse(assistantMessage, response);
+    } catch (fallbackError) {
+      errorMessage.value = fallbackError instanceof Error ? fallbackError.message : 'AI assistant is unavailable';
+      assistantMessage.text = 'AI assistant is unavailable.';
+    }
   } finally {
     loading.value = false;
     await nextTick(scrollToBottom);
   }
+}
+
+function handleAgentEvent(event: string, data: unknown, assistantMessage: ChatMessage) {
+  if (event === 'traceId' && isRecord(data)) {
+    assistantMessage.traceId = stringValue(data.traceId, '');
+    return;
+  }
+  if (event === 'tool' && isRecord(data)) {
+    assistantMessage.toolEvents = [...(assistantMessage.toolEvents || []), data as AgentToolEvent];
+    nextTick(scrollToBottom);
+    return;
+  }
+  if (event === 'message') {
+    const response = normalizeAiResponse(data);
+    if (response) {
+      applyAiResponse(assistantMessage, response);
+    }
+    return;
+  }
+  if (event === 'error' && isRecord(data)) {
+    errorMessage.value = stringValue(data.message, 'Agent call failed');
+    return;
+  }
+  if (event === 'final' && isRecord(data)) {
+    assistantMessage.text = stringValue(data.message, assistantMessage.text);
+  }
+}
+
+function normalizeAiResponse(data: unknown): AiChatResponse | undefined {
+  if (!isRecord(data) || typeof data.message !== 'string') {
+    return undefined;
+  }
+  return data as unknown as AiChatResponse;
+}
+
+function applyAiResponse(message: ChatMessage, response: AiChatResponse) {
+  if (response.conversationId) {
+    conversationId.value = response.conversationId;
+  }
+  message.text = response.message;
+  message.shops = response.shops || [];
+  message.actions = response.actions || [];
 }
 
 async function useLocationPrompt(prompt: string) {
@@ -357,12 +416,16 @@ function numberValue(value: unknown, fallback: number) {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
 function notifyGeoBatch(job: GeoBatchJob) {
-  window.dispatchEvent(new CustomEvent('hmdp:geo-batch-updated', { detail: job }));
+  window.dispatchEvent(new CustomEvent('citycopilot:geo-batch-updated', { detail: job }));
 }
 
 function notifyGeoIndex(count: number) {
-  window.dispatchEvent(new CustomEvent('hmdp:geo-index-synced', { detail: count }));
+  window.dispatchEvent(new CustomEvent('citycopilot:geo-index-synced', { detail: count }));
 }
 </script>
 
@@ -397,6 +460,15 @@ function notifyGeoIndex(count: number) {
           </div>
           <div class="ai-bubble">
             <p>{{ message.text }}</p>
+
+            <div v-if="message.traceId || message.toolEvents?.length" class="ai-agent-trace">
+              <small v-if="message.traceId">traceId: {{ message.traceId }}</small>
+              <div v-for="(toolEvent, index) in message.toolEvents" :key="`${message.id}-${index}`" class="ai-tool-card">
+                <span>{{ toolEvent.phase === 'result' ? 'result' : 'call' }}</span>
+                <strong>{{ toolEvent.toolName }}</strong>
+                <code>{{ toolEvent.phase === 'result' ? JSON.stringify(toolEvent.observation) : JSON.stringify(toolEvent.args) }}</code>
+              </div>
+            </div>
 
             <div v-if="message.shops?.length" class="ai-shop-results">
               <button v-for="shop in message.shops" :key="shop.id" class="ai-shop-card" type="button" @click="openShop(shop)">
