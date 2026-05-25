@@ -4,7 +4,7 @@
 
 把当前嵌在 Spring Boot resources 里的静态 HTML 前端，逐步迁移为独立的 Vue 3 + TypeScript + Vite 应用。后端保持 API 服务职责，Nginx 只作为部署层存在，负责静态资源、SPA fallback、API 反向代理和缓存策略。
 
-同步备注（2026-05-25）：项目已完成对外身份迁移为 CityCopilot，主前端已接入 Agent 流式对话和 Trace 看板；旧静态页面仍作为历史资源保留在 `core/src/main/resources/nginx-1.18.0/html/citycopilot/`。
+同步备注（2026-05-25）：项目已完成对外身份迁移为 CityCopilot，主前端已接入 Agent 流式对话和 Trace 看板；旧静态页面仍作为历史资源保留在 `backend/core/src/main/resources/nginx-1.18.0/html/citycopilot/`。
 
 ## 当前判断
 
@@ -19,10 +19,11 @@
 
 ```text
 CityCopilot/
-  core/                   Spring Boot 核心业务 API
-  agent/                  Agent 主服务和 SSE 对话
-  mcp-server/             HTTP MCP-style 工具层
-  eval/                   YAML 评测与 Markdown 报告
+  backend/
+    core/                 Spring Boot 核心业务 API
+    agent/                Agent 主服务和 SSE 对话
+    mcp-server/           HTTP MCP-style 工具层
+    eval/                 YAML 评测与 Markdown 报告
   frontend/               Vue 3 + TypeScript + Vite
   deploy/nginx/           生产部署层配置
   docs/design/            重构计划和设计记录

@@ -6,13 +6,13 @@ CityCopilot 是一个本地生活 AI Agent 项目。项目把店铺、优惠券�
 
 | 模块 | 作用 |
 |---|---|
-| `core` | CityCopilot 核心业务：MySQL、Redis、Lua 秒杀、Redis GEO、权限、审计日志 |
-| `agent` | Agent 主服务：Tool Registry、ToolGateway、ReAct、Plan-Execute、SSE `/agent/chat`、Trace、Ops Agent、Actuator |
-| `mcp-server` | MCP 风格 HTTP 工具层：`tools/list`、`tools/call`，复用同一套 Registry/Gateway |
-| `eval` | YAML 用例、评测 runner、Markdown 报告 |
+| `backend/core` | CityCopilot 核心业务：MySQL、Redis、Lua 秒杀、Redis GEO、权限、审计日志 |
+| `backend/agent` | Agent 主后端服务：Tool Registry、ToolGateway、ReAct、Plan-Execute、SSE `/agent/chat`、Trace、Ops Agent、Actuator |
+| `backend/mcp-server` | MCP 风格 HTTP 工具层：`tools/list`、`tools/call`，复用同一套 Registry/Gateway |
+| `backend/eval` | YAML 用例、评测 runner、Markdown 报告 |
 | `frontend` | Vue 3 + TypeScript 前端，包含 Agent 流式对话卡片和 Trace 看板 |
 
-依赖方向是 `mcp-server -> agent -> core`，`eval -> agent`。
+后端统一放在 `backend/` 下，依赖方向是 `mcp-server -> agent -> core`，`eval -> agent`。日常启动给前端用的是 `backend/agent`。更细的后端模块说明见 `backend/README.md`。
 
 ## 当前进度
 
@@ -62,7 +62,7 @@ $env:CITYCOPILOT_AMAP_WEB_SERVICE_KEY="你的高德 Web 服务 Key"
 $env:DASHSCOPE_API_KEY="你的 DashScope API Key"
 ```
 
-DashScope 使用 OpenAI-compatible 接口，默认地址在 `core/src/main/resources/application.yaml` 的 `citycopilot.ai.api-url` 中配置。
+DashScope 使用 OpenAI-compatible 接口，默认地址在 `backend/core/src/main/resources/application.yaml` 的 `citycopilot.ai.api-url` 中配置。
 
 ## 构建和启动后端
 
@@ -81,7 +81,7 @@ mvn clean verify
 启动主后端服务：
 
 ```powershell
-.\.tools\apache-maven-3.9.9\bin\mvn.cmd -pl agent spring-boot:run
+.\.tools\apache-maven-3.9.9\bin\mvn.cmd -pl backend/agent spring-boot:run
 ```
 
 启动成功后访问：
@@ -108,7 +108,7 @@ Vite 会输出本地访问地址，通常是：
 http://localhost:5173
 ```
 
-前端会通过 Vite 代理访问后端 `/api`。使用前请确认后端 `agent` 模块已经在 `8081` 端口启动。
+前端会通过 Vite 代理访问后端 `/api`。使用前请确认后端 `backend/agent` 模块已经在 `8081` 端口启动。
 
 构建前端生产包：
 

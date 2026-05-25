@@ -17,10 +17,10 @@
     </parent>
 
     <modules>
-        <module>core</module>
-        <module>agent</module>
-        <module>mcp-server</module>
-        <module>eval</module>
+        <module>backend/core</module>
+        <module>backend/agent</module>
+        <module>backend/mcp-server</module>
+        <module>backend/eval</module>
     </modules>
 
     <properties>

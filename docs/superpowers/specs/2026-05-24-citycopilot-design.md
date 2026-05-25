@@ -9,7 +9,7 @@
 
 详细执行状态以 `docs/superpowers/plans/2026-05-24-citycopilot-implementation.md` 的 **Current Execution Status** 为准。当前进度摘要如下：
 
-- **已完成**：Maven 本地解阻、多模块 `core/agent/mcp-server/eval`、Spring bean 扫描式 Tool Registry、ToolGateway 校验/权限/审计/标准错误、ReAct、基础 Plan-Execute、`/agent/chat` SSE、前端工具卡片、trace 列表/详情、HTTP MCP-style tools/list/tools/call、27 个已注册工具名、Resilience4j、单 YAML 套件 10 条 eval case、Actuator/Prometheus/Grafana JSON、README/RESUME 初版。
+- **已完成**：Maven 本地解阻、多模块 `backend/core`、`backend/agent`、`backend/mcp-server`、`backend/eval`、Spring bean 扫描式 Tool Registry、ToolGateway 校验/权限/审计/标准错误、ReAct、基础 Plan-Execute、`/agent/chat` SSE、前端工具卡片、trace 列表/详情、HTTP MCP-style tools/list/tools/call、27 个已注册工具名、Resilience4j、单 YAML 套件 10 条 eval case、Actuator/Prometheus/Grafana JSON、README/RESUME 初版。
 - **已修复的安全问题**：MCP 不再信任调用方权限、Agent 异步线程保留用户身份、trace 后端加 `audit:read`、秒杀退款不再破坏一人一单、Redisson/stream worker 不可用时不再先扣库存、null 工具参数不再打断审计/trace。
 - **仍未完成**：真正 LLM 驱动的 Plan-Execute-Replan、Critic Agent、完整 Spring AI MCP 协议 transport、30 条 eval 与真实准确率/延迟/token 指标、工具/LLM 自定义 metrics、Ops Agent 真实处理逻辑、真实 MySQL/Redis/AMap/DashScope 环境验收、demo 视频、旧 `AiAssistantService` 下线。
 
@@ -85,18 +85,19 @@ CityCopilot 是一个基于 Spring AI Alibaba 的"动作型"AI Agent 本地生�
 
 ```text
 city-copilot/
- ├─ core/         业务实体与服务（原 hmdp 主体代码）
- │                 Shop/Voucher/Order/Geo/Blog/User/Audit
- │                 现有秒杀 Lua、分布式锁、Redis GEO 均在此
- ├─ agent/        Agent 主体
- │                 Orchestrator、Tool Registry、@AgentTool 注解、
- │                 ReAct / Plan-Execute 实现、Multi-Agent、
- │                 SSE 接口、Traces 落 Redis
- ├─ mcp-server/   MCP 协议实现
- │                 复用 agent 模块的 Tool Registry
- │                 stdio + HTTP 双协议
- ├─ eval/         评估子系统
- │                 CLI、yaml 用例集、报告生成
+ ├─ backend/
+ │  ├─ core/         业务实体与服务（原 hmdp 主体代码）
+ │  │                 Shop/Voucher/Order/Geo/Blog/User/Audit
+ │  │                 现有秒杀 Lua、分布式锁、Redis GEO 均在此
+ │  ├─ agent/        Agent 主体和主后端入口
+ │  │                 Orchestrator、Tool Registry、@AgentTool 注解、
+ │  │                 ReAct / Plan-Execute 实现、Multi-Agent、
+ │  │                 SSE 接口、Traces 落 Redis
+ │  ├─ mcp-server/   MCP 协议实现
+ │  │                 复用 agent 模块的 Tool Registry
+ │  │                 stdio + HTTP 双协议
+ │  └─ eval/         评估子系统
+ │                    CLI、yaml 用例集、报告生成
  └─ deploy/       部署与可观测
                   Docker compose、Prometheus 配置、
                   Grafana 看板 JSON
@@ -254,7 +255,7 @@ final = LLM(answer_prompt + prior_outputs)
 #### 用例格式
 
 ```yaml
-# eval/cases/seckill_flow.yaml
+# backend/eval/src/main/resources/cases/seckill_flow.yaml
 - name: nearby_hotpot_with_voucher_order
   input: "附近 50 块以内有券的火锅，帮我下单一个"
   context:
@@ -273,7 +274,7 @@ final = LLM(answer_prompt + prior_outputs)
   expect_no_keywords: ["抱歉", "无法"]
 ```
 
-#### 指标输出（每次跑后写入 `eval/reports/YYYY-MM-DD-HHmm.md`）
+#### 指标输出（每次跑后写入 `backend/eval/reports/YYYY-MM-DD-HHmm.md`）
 
 | 指标 | 说明 |
 |---|---|
@@ -286,9 +287,9 @@ final = LLM(answer_prompt + prior_outputs)
 #### 使用方式
 
 ```bash
-mvn -pl eval test                       # 跑全集
-mvn -pl eval test -Dcase=seckill_flow   # 跑单条
-mvn -pl eval test -DllmModel=qwen-plus  # 切换模型对比
+mvn -pl backend/eval test                       # 跑全集
+mvn -pl backend/eval test -Dcase=seckill_flow   # 跑单条
+mvn -pl backend/eval test -DllmModel=qwen-plus  # 切换模型对比
 ```
 
 ## 4. 错误处理与降级
