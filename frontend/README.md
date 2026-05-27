@@ -1,6 +1,6 @@
 # CityCopilot Frontend
 
-这是 CityCopilot 的 Vue 3 + TypeScript 前端。开发时通过 Vite 代理把 `/api` 转发到后端 `http://127.0.0.1:8081`，把 `/uploads` 转发到同一个后端。
+这是 CityCopilot 的 Vue 3 + TypeScript 前端。开发时通过 Vite 代理把 `/api` 转发到主后端 `backend/agent` 的 `http://127.0.0.1:8081`，把 `/uploads` 转发到同一个后端。
 
 ## 启动
 
