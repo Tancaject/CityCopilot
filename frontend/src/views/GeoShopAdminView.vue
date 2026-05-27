@@ -37,6 +37,7 @@ import {
   syncShopGeoIndex,
   updateShopGeo,
 } from '../api/citycopilot';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import { authState } from '../composables/auth';
 import { hasPermission } from '../utils/permissions';
 import type { AmapPoi, AmapServiceStatus, AuditStatus, GeoBatchJob, GeoBatchJobItem, OpsSummary, Shop } from '../types';
@@ -81,6 +82,7 @@ const hasMore = ref(true);
 const errorMessage = ref('');
 const candidateError = ref('');
 const successMessage = ref('');
+const cleanupAuditOpen = ref(false);
 let requestId = 0;
 let batchTimer: number | undefined;
 
@@ -167,6 +169,32 @@ const amapMetricSummary = computed(() => {
     limited: metrics['total.rate_limited'] || 0,
   };
 });
+const geoPipeline = computed(() => [
+  {
+    label: '定位问题',
+    value: stats.value.missing,
+    detail: '缺坐标优先处理',
+    tone: stats.value.missing > 0 ? 'warn' : 'ok',
+  },
+  {
+    label: '人工复核',
+    value: stats.value.pending,
+    detail: '待确认 POI',
+    tone: stats.value.pending > 0 ? 'warn' : 'ok',
+  },
+  {
+    label: '索引可用',
+    value: stats.value.verified,
+    detail: '可进入附近推荐',
+    tone: 'ok',
+  },
+  {
+    label: '服务风险',
+    value: amapMetricSummary.value.failure + amapMetricSummary.value.limited,
+    detail: amapStatus.value?.circuitOpen ? '高德服务熔断' : '失败/限流',
+    tone: amapStatus.value?.circuitOpen ? 'bad' : 'muted',
+  },
+]);
 
 function normalizeStatus(shop: Shop) {
   return shop.geoStatus || (isMissingGeo(shop) ? 'missing' : 'seed');
@@ -496,15 +524,13 @@ async function loadOpsSummary() {
 }
 
 async function handleCleanupAudit() {
-  if (!window.confirm('确认清理超过留存期的审计日志？')) {
-    return;
-  }
   auditCleaning.value = true;
   errorMessage.value = '';
   successMessage.value = '';
   try {
     const count = await cleanupAuditLogs();
     successMessage.value = `已清理 ${count || 0} 条过期审计日志`;
+    cleanupAuditOpen.value = false;
     await Promise.all([loadAuditLogs(selectedShop.value?.id), loadAuditStatus()]);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '审计日志清理失败';
@@ -748,6 +774,14 @@ onBeforeUnmount(() => {
         </span>
       </div>
     </header>
+
+    <section class="geo-pipeline" aria-label="地理校准流水线">
+      <article v-for="stage in geoPipeline" :key="stage.label" :class="`geo-pipeline-${stage.tone}`">
+        <span>{{ stage.label }}</span>
+        <strong>{{ stage.value }}</strong>
+        <small>{{ stage.detail }}</small>
+      </article>
+    </section>
 
     <section v-if="opsCards.length" class="ops-summary" aria-label="运营概览">
       <article v-for="card in opsCards" :key="card.label">
@@ -1107,7 +1141,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="geo-mini-actions">
-              <button v-if="canCleanupAudit" class="geo-mini-button" type="button" :disabled="auditCleaning" title="清理过期审计日志" @click="handleCleanupAudit">
+              <button v-if="canCleanupAudit" class="geo-mini-button" type="button" :disabled="auditCleaning" title="清理过期审计日志" @click="cleanupAuditOpen = true">
                 <Loader2 v-if="auditCleaning" class="spin" :size="15" aria-hidden="true" />
                 <Ban v-else :size="15" aria-hidden="true" />
               </button>
@@ -1141,5 +1175,16 @@ onBeforeUnmount(() => {
         </section>
       </aside>
     </section>
+
+    <ConfirmDialog
+      :open="cleanupAuditOpen"
+      title="确认清理过期审计"
+      message="这会按留存策略删除过期审计日志。建议先导出需要留档的记录，再执行清理。"
+      confirm-text="清理审计"
+      tone="danger"
+      :busy="auditCleaning"
+      @cancel="cleanupAuditOpen = false"
+      @confirm="handleCleanupAudit"
+    />
   </section>
 </template>

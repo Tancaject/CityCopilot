@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { AlertCircle, Heart, Loader2, RefreshCw, Store } from '@lucide/vue';
+import { AlertCircle, BadgeCheck, Heart, Loader2, MapPin, Navigation, RefreshCw, Sparkles, Store, Ticket } from '@lucide/vue';
 import { fetchBlog, fetchHotBlogs, fetchShopTypes, likeBlog } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import { assetUrl, blogCover } from '../utils/assets';
@@ -20,6 +20,31 @@ const errorMessage = ref('');
 const authMessage = ref('');
 
 const hasBlogs = computed(() => blogs.value.length > 0);
+const leadBlog = computed(() => blogs.value[0]);
+const featuredBlogs = computed(() => blogs.value.slice(0, 4));
+const totalLikes = computed(() => blogs.value.reduce((sum, blog) => sum + (blog.liked || 0), 0));
+const topShopTypes = computed(() => shopTypes.value.slice(0, 8));
+const cityName = computed(() => import.meta.env.VITE_DEFAULT_CITY || '杭州');
+const insightCards = computed(() => [
+  {
+    label: '今日可行动',
+    value: `${shopTypes.value.length || '--'} 类`,
+    detail: '从分类、距离和券包切入',
+    icon: Navigation,
+  },
+  {
+    label: '内容热度',
+    value: `${blogs.value.length || '--'} 条`,
+    detail: `${totalLikes.value || 0} 次点赞信号`,
+    icon: Heart,
+  },
+  {
+    label: '交易入口',
+    value: '券包',
+    detail: '详情页内完成秒杀和订单追踪',
+    icon: Ticket,
+  },
+]);
 
 async function loadHome() {
   loading.value = true;
@@ -90,16 +115,49 @@ onMounted(loadHome);
 </script>
 
 <template>
-  <section class="hero-panel">
-    <div class="hero-copy">
-      <p class="eyebrow">今日附近灵感</p>
-      <h1>把附近值得去的店，收进一个清爽的首页。</h1>
-      <p>从热门探店、分类入口到店铺优惠，把真实用户的选择和今日可用的活动放在同一屏里。</p>
+  <section class="home-command">
+    <div class="home-command-copy">
+      <p class="eyebrow">City operating layer · {{ cityName }}</p>
+      <h1>
+        <span>今晚去哪，别靠刷。</span>
+        <span>让 CityCopilot 把附近选择压成一张行动图。</span>
+      </h1>
+      <p>
+        同一屏看分类、热门笔记、优惠券和位置线索。目标不是展示更多卡片，而是帮用户更快决定一家现在值得去的店。
+      </p>
+      <div class="home-command-actions">
+        <RouterLink :to="{ name: 'shops' }">
+          <Navigation :size="18" aria-hidden="true" />
+          浏览附近店铺
+        </RouterLink>
+        <RouterLink :to="{ name: 'blog-create' }">
+          <Sparkles :size="18" aria-hidden="true" />
+          发布探店线索
+        </RouterLink>
+      </div>
     </div>
-    <div class="hero-metric" aria-label="首页数据概览">
-      <span>{{ shopTypes.length }}</span>
-      <small>店铺分类</small>
-    </div>
+
+    <aside class="home-live-panel" aria-label="城市决策概览">
+      <div class="home-live-head">
+        <span>Live city signals</span>
+        <strong>{{ cityName }}</strong>
+      </div>
+      <div class="home-signal-grid">
+        <article v-for="card in insightCards" :key="card.label">
+          <component :is="card.icon" :size="18" aria-hidden="true" />
+          <span>{{ card.label }}</span>
+          <strong>{{ card.value }}</strong>
+          <small>{{ card.detail }}</small>
+        </article>
+      </div>
+      <RouterLink v-if="leadBlog" class="home-lead-note" :to="{ name: 'blog-detail', params: { id: leadBlog.id } }">
+        <img :src="blogCover(leadBlog)" :alt="leadBlog.title" />
+        <span>
+          <small>当前热笔记</small>
+          <strong>{{ leadBlog.title }}</strong>
+        </span>
+      </RouterLink>
+    </aside>
   </section>
 
   <section v-if="authMessage" class="notice">
@@ -116,12 +174,13 @@ onMounted(loadHome);
     </button>
   </section>
 
-  <section class="content-grid">
-    <aside class="category-panel">
+  <section class="home-flow">
+    <aside class="category-panel city-filter-panel">
       <div class="section-heading">
         <Store :size="19" aria-hidden="true" />
-        <h2>分类</h2>
+        <h2>城市入口</h2>
       </div>
+      <p class="section-copy">先按场景缩小选择，再用距离、评分和券包完成决策。</p>
 
       <div v-if="loading" class="loading-row">
         <Loader2 class="spin" :size="18" aria-hidden="true" />
@@ -129,29 +188,34 @@ onMounted(loadHome);
       </div>
 
       <div v-else class="category-grid">
-        <button v-for="type in shopTypes" :key="type.id" class="category-item" type="button" @click="openType(type)">
+        <button v-for="type in topShopTypes" :key="type.id" class="category-item" type="button" @click="openType(type)">
           <img :src="assetUrl(type.icon)" :alt="type.name" />
           <span>{{ type.name }}</span>
         </button>
       </div>
     </aside>
 
-    <section class="feed-panel">
+    <section class="feed-panel city-feed-panel">
       <div class="section-heading">
         <Heart :size="19" aria-hidden="true" />
-        <h2>热门探店</h2>
+        <h2>正在影响选择的笔记</h2>
       </div>
+      <p class="section-copy">把内容从瀑布流改成决策信号：谁推荐、为什么值得去、热度是否可信。</p>
 
       <div v-if="loading" class="feed-skeleton">
         <article v-for="item in 4" :key="item" class="skeleton-card" />
       </div>
 
       <div v-else-if="hasBlogs" class="blog-grid">
-        <article v-for="blog in blogs" :key="blog.id" class="blog-card">
+        <article v-for="blog in featuredBlogs" :key="blog.id" class="blog-card city-note-card">
           <RouterLink :to="{ name: 'blog-detail', params: { id: blog.id } }">
             <img class="blog-cover" :src="blogCover(blog)" :alt="blog.title" />
           </RouterLink>
           <div class="blog-body">
+            <span class="note-signal">
+              <BadgeCheck :size="14" aria-hidden="true" />
+              真实探店
+            </span>
             <RouterLink :to="{ name: 'blog-detail', params: { id: blog.id } }">
               <h3>{{ blog.title }}</h3>
             </RouterLink>
@@ -182,5 +246,23 @@ onMounted(loadHome);
         {{ loadingMore ? '加载中' : hasMore ? '加载更多' : '没有更多了' }}
       </button>
     </section>
+  </section>
+
+  <section class="home-ops-strip" aria-label="平台能力">
+    <article>
+      <MapPin :size="19" aria-hidden="true" />
+      <strong>位置不是装饰</strong>
+      <span>店铺列表、详情地图和地理校准台共用坐标数据，减少“看得到但找不到”的体验断点。</span>
+    </article>
+    <article>
+      <Ticket :size="19" aria-hidden="true" />
+      <strong>从发现到交易</strong>
+      <span>优惠券、秒杀、订单轮询和核销形成闭环，项目不再只是点评式内容页。</span>
+    </article>
+    <article>
+      <Sparkles :size="19" aria-hidden="true" />
+      <strong>AI 应该缩短路径</strong>
+      <span>助手会保留页面上下文，后续会继续升级成右侧任务面板而不是普通聊天窗。</span>
+    </article>
   </section>
 </template>

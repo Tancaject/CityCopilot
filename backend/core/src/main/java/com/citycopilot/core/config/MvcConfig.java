@@ -50,7 +50,6 @@ public class MvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(new LoginInterceptor())
                 .excludePathPatterns(
                         "/blog/hot",
-                        "/ai/chat",
                         "/agent/ping",
                         "/agent/chat",
                         "/mcp/tools/list",

@@ -81,6 +81,7 @@ citycopilot:
     web-service-key: "${CITYCOPILOT_AMAP_WEB_SERVICE_KEY:}"
     geocode-url: https://restapi.amap.com/v3/geocode/geo
     poi-text-url: https://restapi.amap.com/v3/place/text
+    poi-around-url: https://restapi.amap.com/v3/place/around
     cache-ttl-minutes: 1440
     rate-limit-per-minute: 60
     circuit-failure-threshold: 5

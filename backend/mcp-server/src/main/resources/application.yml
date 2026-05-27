@@ -1,0 +1,31 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: citycopilot-mcp-server
+  ai:
+    mcp:
+      server:
+        enabled: true
+        name: citycopilot-mcp
+        version: 0.2.1
+        type: SYNC
+        stdio: false
+        instructions: CityCopilot local-life tools exposed through the shared AgentToolRegistry and ToolGateway.
+        sse-endpoint: /mcp/sse
+        sse-message-endpoint: /mcp/messages
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+          completion: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: citycopilot-mcp-server

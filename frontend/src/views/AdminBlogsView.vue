@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { AlertCircle, Loader2, RefreshCw, Search, Trash2 } from '@lucide/vue';
 import { deleteAdminBlog, fetchAdminBlogs } from '../api/citycopilot';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import { blogContentText, blogCover } from '../utils/assets';
 import type { Blog } from '../types';
 
@@ -10,6 +11,7 @@ const keyword = ref('');
 const loading = ref(false);
 const deletingId = ref<number | null>(null);
 const errorMessage = ref('');
+const pendingDelete = ref<Blog | null>(null);
 
 function formatTime(value?: string) {
   if (!value) {
@@ -31,7 +33,12 @@ async function loadBlogs() {
 }
 
 async function handleDelete(blog: Blog) {
-  if (!window.confirm(`确认删除「${blog.title || blog.id}」？`)) {
+  pendingDelete.value = blog;
+}
+
+async function confirmDelete() {
+  const blog = pendingDelete.value;
+  if (!blog) {
     return;
   }
   deletingId.value = blog.id;
@@ -39,6 +46,7 @@ async function handleDelete(blog: Blog) {
   try {
     await deleteAdminBlog(blog.id);
     blogs.value = blogs.value.filter((item) => item.id !== blog.id);
+    pendingDelete.value = null;
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '删除失败';
   } finally {
@@ -100,5 +108,16 @@ onMounted(loadBlogs);
     <div v-else class="empty-state orders-empty">
       没有匹配笔记
     </div>
+
+    <ConfirmDialog
+      :open="Boolean(pendingDelete)"
+      title="确认删除笔记"
+      :message="`将删除「${pendingDelete?.title || pendingDelete?.id || ''}」，该内容不会再出现在用户侧。`"
+      confirm-text="删除"
+      tone="danger"
+      :busy="Boolean(deletingId)"
+      @cancel="pendingDelete = null"
+      @confirm="confirmDelete"
+    />
   </section>
 </template>

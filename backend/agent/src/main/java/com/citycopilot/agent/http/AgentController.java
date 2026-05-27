@@ -10,14 +10,11 @@ import com.citycopilot.agent.security.AgentSecurity;
 import com.citycopilot.agent.trace.AgentTrace;
 import com.citycopilot.agent.trace.TraceStore;
 import com.citycopilot.core.dto.AiChatRequest;
-import com.citycopilot.core.dto.AiChatResponse;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.security.PermissionPolicy;
 import com.citycopilot.core.security.RequirePermission;
-import com.citycopilot.core.service.AiAssistantService;
 import com.citycopilot.core.utils.UserHolder;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -43,22 +40,19 @@ public class AgentController {
     private final AgentRouter router;
     private final TraceStore traceStore;
     private final PermissionPolicy permissionPolicy;
-    private final AiAssistantService fallbackAiAssistantService;
 
     public AgentController(
             ReActExecutor reActExecutor,
             PlanExecuteExecutor planExecuteExecutor,
             AgentRouter router,
             TraceStore traceStore,
-            PermissionPolicy permissionPolicy,
-            ObjectProvider<AiAssistantService> fallbackAiAssistantService
+            PermissionPolicy permissionPolicy
     ) {
         this.reActExecutor = reActExecutor;
         this.planExecuteExecutor = planExecuteExecutor;
         this.router = router;
         this.traceStore = traceStore;
         this.permissionPolicy = permissionPolicy;
-        this.fallbackAiAssistantService = fallbackAiAssistantService.getIfAvailable();
     }
 
     @GetMapping("/ping")
@@ -134,14 +128,10 @@ public class AgentController {
                     "code", "agent_provider_error",
                     "message", error.getMessage() == null ? "Agent provider unavailable" : error.getMessage()
             )));
-            if (fallbackAiAssistantService != null) {
-                AiChatResponse response = fallbackAiAssistantService.chat(request);
-                emit(emitter, new AgentSseEvent("message", response));
-                emit(emitter, new AgentSseEvent("final", Map.of(
-                        "message", response.getMessage(),
-                        "fallback", true
-                )));
-            }
+            emit(emitter, new AgentSseEvent("final", Map.of(
+                    "message", "Agent 暂不可用，请稍后重试。",
+                    "fallback", false
+            )));
             emitter.complete();
         } catch (Exception fallbackError) {
             emitter.completeWithError(fallbackError);

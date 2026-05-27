@@ -1,0 +1,144 @@
+{
+  "baseUrl": "http://127.0.0.1:5173",
+  "screenshots": [
+    "D:\\programming\\CityCopilot\\frontend\\test-artifacts\\webapp-smoke\\ai-panel.png",
+    "D:\\programming\\CityCopilot\\frontend\\test-artifacts\\webapp-smoke\\home-desktop.png",
+    "D:\\programming\\CityCopilot\\frontend\\test-artifacts\\webapp-smoke\\home-mobile.png",
+    "D:\\programming\\CityCopilot\\frontend\\test-artifacts\\webapp-smoke\\login-desktop.png",
+    "D:\\programming\\CityCopilot\\frontend\\test-artifacts\\webapp-smoke\\orders-redirect.png",
+    "D:\\programming\\CityCopilot\\frontend\\test-artifacts\\webapp-smoke\\shops-desktop.png"
+  ],
+  "checks": [
+    {
+      "name": "home topbar visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "home hero visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "home headline rendered and includes brand",
+      "ok": true,
+      "detail": "今晚去哪，别靠刷。\n让 CityCopilot 把附近选择压成一张行动图。"
+    },
+    {
+      "name": "search input visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "AI fab visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "AI panel opens",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "shops hero visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "shops list panel visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "login layout visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "login form visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "login has phone and code inputs",
+      "ok": true,
+      "detail": "inputs=2"
+    },
+    {
+      "name": "login submit enabled after valid-looking fields",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "orders redirects unauthenticated user to login",
+      "ok": true,
+      "detail": "http://127.0.0.1:5173/login?redirect=/orders"
+    },
+    {
+      "name": "mobile home topbar visible",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "mobile home no horizontal overflow",
+      "ok": true,
+      "detail": "overflow=0"
+    }
+  ],
+  "pageErrors": [],
+  "consoleWarningsAndErrors": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)",
+      "url": "http://127.0.0.1:5173/"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)",
+      "url": "http://127.0.0.1:5173/"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "url": "http://127.0.0.1:5173/"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)",
+      "url": "http://127.0.0.1:5173/shops"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)",
+      "url": "http://127.0.0.1:5173/"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 502 (Bad Gateway)",
+      "url": "http://127.0.0.1:5173/"
+    }
+  ],
+  "httpErrors": [
+    {
+      "url": "http://127.0.0.1:5173/api/shop-type/list",
+      "status": 502
+    },
+    {
+      "url": "http://127.0.0.1:5173/api/blog/hot?current=1",
+      "status": 502
+    },
+    {
+      "url": "http://127.0.0.1:5173/api/shop/of/name?current=1",
+      "status": 502
+    },
+    {
+      "url": "http://127.0.0.1:5173/api/shop-type/list",
+      "status": 502
+    },
+    {
+      "url": "http://127.0.0.1:5173/api/blog/hot?current=1",
+      "status": 502
+    }
+  ],
+  "requestFailures": []
+}

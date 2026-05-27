@@ -1,7 +1,5 @@
 package com.citycopilot.eval;
 
-import com.citycopilot.agent.router.AgentRouter;
-import com.citycopilot.agent.router.Mode;
 import org.yaml.snakeyaml.Yaml;
 
 import java.nio.file.Files;
@@ -14,7 +12,18 @@ import java.util.List;
 import java.util.Map;
 
 public final class EvalRunner {
-    private final AgentRouter router = new AgentRouter();
+    private static final String DEFAULT_PROVIDER_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+    private static final String DEFAULT_PROVIDER_MODEL = "qwen-plus";
+
+    private final EvalPredictor predictor;
+
+    public EvalRunner() {
+        this(new HeuristicEvalPredictor());
+    }
+
+    EvalRunner(EvalPredictor predictor) {
+        this.predictor = predictor;
+    }
 
     public static void main(String[] args) throws Exception {
         String resourcePath = args.length > 0 && !args[0].startsWith("--")
@@ -23,9 +32,10 @@ public final class EvalRunner {
         Path output = outputPath(args);
         boolean failOnGate = contains(args, "--fail-on-gate");
 
-        EvalRunner runner = new EvalRunner();
+        EvalPredictor predictor = predictor(args);
+        EvalRunner runner = new EvalRunner(predictor);
         List<EvalResult> results = runner.run(runner.loadCases(resourcePath));
-        String report = MarkdownReport.render(results);
+        String report = MarkdownReport.render(results, predictor.metadata());
         if (output == null) {
             System.out.print(report);
         } else {
@@ -51,7 +61,8 @@ public final class EvalRunner {
                         String.valueOf(row.get("input")),
                         String.valueOf(row.get("expect_mode")),
                         strings(row.get("expect_tools")),
-                        strings(row.get("expect_keywords"))
+                        strings(row.get("expect_keywords")),
+                        strings(row.get("expect_no_keywords"))
                 ));
             }
             return cases;
@@ -64,56 +75,61 @@ public final class EvalRunner {
         List<EvalResult> results = new ArrayList<>();
         for (EvalCase evalCase : cases) {
             Instant start = Instant.now();
-            Mode mode = router.classify(evalCase.input());
-            List<String> predictedTools = predictTools(evalCase.input(), mode);
-            boolean passed = mode.name().equals(evalCase.expectMode())
-                    && predictedTools.containsAll(evalCase.expectTools());
+            EvalPrediction prediction = predictor.predict(evalCase);
+            String actualMode = prediction.mode() == null ? "" : prediction.mode();
+            List<String> predictedTools = prediction.tools() == null ? List.of() : prediction.tools();
+            String predictedAnswer = prediction.answer() == null ? "" : prediction.answer();
+            boolean modePassed = actualMode.equals(evalCase.expectMode());
+            boolean toolsPassed = predictedTools.containsAll(evalCase.expectTools());
+            boolean keywordsPassed = keywordsPassed(predictedAnswer, evalCase.expectKeywords(), evalCase.expectNoKeywords());
+            boolean passed = modePassed && toolsPassed && keywordsPassed;
             results.add(new EvalResult(
                     evalCase.name(),
                     passed,
-                    mode.name(),
+                    actualMode,
                     evalCase.expectTools(),
                     predictedTools,
+                    predictedAnswer,
+                    modePassed,
+                    toolsPassed,
+                    keywordsPassed,
+                    tokenOrEstimate(prediction.inputTokens(), evalCase.input() + " " + String.join(" ", predictedTools)),
+                    tokenOrEstimate(prediction.outputTokens(), predictedAnswer),
                     Duration.between(start, Instant.now()).toMillis()
             ));
         }
         return results;
     }
 
-    private List<String> predictTools(String input, Mode mode) {
-        String text = input == null ? "" : input;
-        List<String> tools = new ArrayList<>();
-        if (mode == Mode.PLAN_EXECUTE) {
-            if (text.contains("下单")) {
-                tools.add("search_nearby_shops");
-                tools.add("list_vouchers_by_shop");
-                tools.add("place_seckill_order");
-            }
-            if (text.contains("支付")) {
-                tools.add("pay_order");
-            }
-            if (text.contains("退款")) {
-                tools.add("refund_order");
-            }
-            if (text.contains("取消")) {
-                tools.add("cancel_order");
-            }
-            return tools;
+    private boolean keywordsPassed(String answer, List<String> expectedKeywords, List<String> blockedKeywords) {
+        String text = answer == null ? "" : answer;
+        boolean expectedOk = expectedKeywords == null || expectedKeywords.stream().allMatch(text::contains);
+        boolean blockedOk = blockedKeywords == null || blockedKeywords.stream().noneMatch(text::contains);
+        return expectedOk && blockedOk;
+    }
+
+    private int estimateTokens(String text) {
+        if (text == null || text.isBlank()) {
+            return 0;
         }
-        if (text.contains("订单")) {
-            tools.add("get_my_orders");
-        } else if (text.contains("优惠券") || text.contains("券")) {
-            tools.add("list_vouchers_by_shop");
-        } else if (text.contains("地理") || text.contains("高德")) {
-            tools.add("get_geo_provider_status");
-        } else if (text.contains("审计")) {
-            tools.add("query_audit_logs");
-        } else if (text.contains("运营")) {
-            tools.add("ops_summary");
-        } else {
-            tools.add("search_nearby_shops");
+        int asciiLike = 0;
+        int nonAscii = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (Character.isWhitespace(ch)) {
+                continue;
+            }
+            if (ch < 128) {
+                asciiLike++;
+            } else {
+                nonAscii++;
+            }
         }
-        return tools;
+        return (int) Math.ceil(asciiLike / 4.0D) + nonAscii;
+    }
+
+    private int tokenOrEstimate(Integer providerTokens, String fallbackText) {
+        return providerTokens == null ? estimateTokens(fallbackText) : Math.max(0, providerTokens);
     }
 
     private List<String> strings(Object value) {
@@ -130,6 +146,38 @@ public final class EvalRunner {
             }
         }
         return null;
+    }
+
+    private static EvalPredictor predictor(String[] args) {
+        String provider = option(args, "--provider", "offline");
+        if (!"openai-compatible".equals(provider)) {
+            return new HeuristicEvalPredictor();
+        }
+        String apiUrl = option(args, "--api-url", DEFAULT_PROVIDER_URL);
+        String model = option(args, "--model", envOrDefault("CITYCOPILOT_AI_MODEL", DEFAULT_PROVIDER_MODEL));
+        String keyEnv = option(args, "--api-key-env", "CITYCOPILOT_AI_API_KEY");
+        String apiKey = System.getenv(keyEnv);
+        if ((apiKey == null || apiKey.isBlank()) && "CITYCOPILOT_AI_API_KEY".equals(keyEnv)) {
+            apiKey = System.getenv("DASHSCOPE_API_KEY");
+        }
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalArgumentException("Missing provider API key. Set " + keyEnv + " or pass --api-key-env.");
+        }
+        return new OpenAiCompatibleEvalPredictor(apiUrl, apiKey, model);
+    }
+
+    private static String option(String[] args, String name, String fallback) {
+        for (int i = 0; i < args.length - 1; i++) {
+            if (name.equals(args[i])) {
+                return args[i + 1];
+            }
+        }
+        return fallback;
+    }
+
+    private static String envOrDefault(String envName, String fallback) {
+        String value = System.getenv(envName);
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     private static boolean contains(String[] args, String value) {

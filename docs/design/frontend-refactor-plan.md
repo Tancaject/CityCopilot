@@ -4,13 +4,13 @@
 
 把当前嵌在 Spring Boot resources 里的静态 HTML 前端，逐步迁移为独立的 Vue 3 + TypeScript + Vite 应用。后端保持 API 服务职责，Nginx 只作为部署层存在，负责静态资源、SPA fallback、API 反向代理和缓存策略。
 
-同步备注（2026-05-25）：项目已完成对外身份迁移为 CityCopilot，主前端已接入 Agent 流式对话和 Trace 看板；旧静态页面仍作为历史资源保留在 `backend/core/src/main/resources/nginx-1.18.0/html/citycopilot/`。
+同步备注（2026-05-26）：项目已完成对外身份迁移为 CityCopilot，主前端已接入 Agent 流式对话和 Trace 看板；历史 Nginx 静态页面和 Nginx 二进制已从 `backend/core/src/main/resources/` 移除，前端统一由 `frontend/` 维护。
 
 ## 当前判断
 
 当前项目的业务练习价值很高，但前端形态偏教程项目：
 
-- 页面、CSS、JS、图片和 Nginx 二进制都放在 `src/main/resources/nginx-1.18.0`。
+- 历史问题：页面、CSS、JS、图片和 Nginx 二进制曾放在 `src/main/resources/nginx-1.18.0`。
 - 前端以多 HTML 页面 + 全局 Vue 2 + Axios 为主，缺少工程化构建、类型约束、路由和状态管理。
 - 部署配置与源码资源混在一起，难以做 CI/CD、CDN 缓存、灰度和独立回滚。
 - 旧页面存在编码显示问题，继续在原结构里堆功能会让维护成本越来越高。
@@ -56,7 +56,7 @@ Browser
 
 - `frontend` 能通过 `/api` 访问现有后端。
 - 首页不依赖全局 `vue.js`、`axios.min.js`、`element.js`。
-- 旧页面仍保留，不影响当前项目运行。
+- 旧页面已移除，当前项目运行以 `frontend/` 为准。
 
 ### 阶段 2：登录态和路由
 

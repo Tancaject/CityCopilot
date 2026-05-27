@@ -3,6 +3,9 @@ package com.citycopilot.agent.gateway;
 import com.citycopilot.agent.tool.AgentToolRegistry;
 import com.citycopilot.agent.tool.ToolMetadata;
 import com.citycopilot.agent.tool.ToolParameter;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 import java.lang.reflect.InvocationTargetException;
 import java.time.Duration;
@@ -15,6 +18,7 @@ public final class ToolGateway {
     private final AgentToolRegistry registry;
     private final ToolAuditSink auditSink;
     private final ToolExecutionGuard executionGuard;
+    private final MeterRegistry meterRegistry;
 
     public ToolGateway(AgentToolRegistry registry) {
         this(registry, ToolAuditSink.noop());
@@ -25,9 +29,19 @@ public final class ToolGateway {
     }
 
     public ToolGateway(AgentToolRegistry registry, ToolAuditSink auditSink, ToolExecutionGuard executionGuard) {
+        this(registry, auditSink, executionGuard, null);
+    }
+
+    public ToolGateway(
+            AgentToolRegistry registry,
+            ToolAuditSink auditSink,
+            ToolExecutionGuard executionGuard,
+            MeterRegistry meterRegistry
+    ) {
         this.registry = registry;
         this.auditSink = auditSink == null ? ToolAuditSink.noop() : auditSink;
         this.executionGuard = executionGuard == null ? ToolExecutionGuard.direct() : executionGuard;
+        this.meterRegistry = meterRegistry;
     }
 
     public List<ToolMetadata> tools() {
@@ -148,6 +162,7 @@ public final class ToolGateway {
     }
 
     private void audit(String name, Map<String, Object> args, ToolCallContext context, ToolResult result, Instant start) {
+        long durationMs = Duration.between(start, Instant.now()).toMillis();
         try {
             auditSink.record(new ToolCallAudit(
                     context == null ? null : context.userId(),
@@ -155,11 +170,36 @@ public final class ToolGateway {
                     copyArgs(args),
                     result.ok(),
                     result.ok() ? null : result.error(),
-                    Duration.between(start, Instant.now()).toMillis()
+                    durationMs
             ));
         } catch (Exception ignored) {
             // Audit must not turn a successful tool call into an agent-visible failure.
+        } finally {
+            recordMetrics(name, result, durationMs);
         }
+    }
+
+    private void recordMetrics(String name, ToolResult result, long durationMs) {
+        if (meterRegistry == null) {
+            return;
+        }
+        String tool = name == null || name.isBlank() ? "unknown" : name;
+        String outcome = result.ok() ? "success" : "failure";
+        String errorCode = result.ok() || result.error() == null ? "none" : result.error().code();
+        Timer.builder("citycopilot.tool.call.duration")
+                .description("ToolGateway tool call duration")
+                .tag("tool", tool)
+                .tag("outcome", outcome)
+                .tag("error", errorCode)
+                .register(meterRegistry)
+                .record(Duration.ofMillis(Math.max(0L, durationMs)));
+        Counter.builder("citycopilot.tool.call.count")
+                .description("ToolGateway tool call count")
+                .tag("tool", tool)
+                .tag("outcome", outcome)
+                .tag("error", errorCode)
+                .register(meterRegistry)
+                .increment();
     }
 
     private static Map<String, Object> copyArgs(Map<String, Object> args) {

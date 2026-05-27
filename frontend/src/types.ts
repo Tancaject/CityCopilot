@@ -73,6 +73,31 @@ export interface Shop {
   distance?: number;
 }
 
+export interface ShopDiscoveryItem {
+  id?: number;
+  source: 'local' | 'amap' | string;
+  sourceId?: string;
+  orderable: boolean;
+  typeId?: number;
+  typeName?: string;
+  name: string;
+  images?: string;
+  area?: string;
+  address?: string;
+  x?: number;
+  y?: number;
+  poiId?: string;
+  adcode?: string;
+  geoSource?: string;
+  geoStatus?: string;
+  avgPrice?: number;
+  sold?: number;
+  comments?: number;
+  score?: number;
+  openHours?: string;
+  distance?: number;
+}
+
 export interface GeoPoint {
   x: number;
   y: number;

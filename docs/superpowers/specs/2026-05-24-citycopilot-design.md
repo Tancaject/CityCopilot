@@ -9,9 +9,13 @@
 
 详细执行状态以 `docs/superpowers/plans/2026-05-24-citycopilot-implementation.md` 的 **Current Execution Status** 为准。当前进度摘要如下：
 
+<<<<<<< HEAD
 - **已完成**：Maven 本地解阻、多模块 `backend/core`、`backend/agent`、`backend/mcp-server`、`backend/eval`、Spring bean 扫描式 Tool Registry、ToolGateway 校验/权限/审计/标准错误、ReAct、基础 Plan-Execute、`/agent/chat` SSE、前端工具卡片、trace 列表/详情、HTTP MCP-style tools/list/tools/call、27 个已注册工具名、Resilience4j、单 YAML 套件 10 条 eval case、Actuator/Prometheus/Grafana JSON、README/RESUME 初版。
+=======
+- **已完成**：Maven 本地解阻、多模块 `backend/core`、`backend/agent`、`backend/mcp-server`、`backend/eval`、Spring bean 扫描式 Tool Registry、ToolGateway 校验/权限/审计/标准错误、ReAct、LLM-first Plan-Execute-Replan、Critic Agent 高风险拦截、`/agent/chat` SSE、前端工具卡片、trace 列表/详情、Spring AI MCP tool callbacks、HTTP MCP-style tools/list/tools/call、MCP 8090 配置和 HTTP/SSE 客户端样例、27 个已注册工具名、Resilience4j、Ops Agent live ToolGateway 执行、单 YAML 套件 30 条 eval case、离线 eval 指标报告、Actuator/Prometheus/Grafana JSON、工具/LLM 自定义 metrics、README/RESUME 初版。
+>>>>>>> 4c697ae (新增 /shop/discovery 统一发现接口：ShopController.java (line 107))
 - **已修复的安全问题**：MCP 不再信任调用方权限、Agent 异步线程保留用户身份、trace 后端加 `audit:read`、秒杀退款不再破坏一人一单、Redisson/stream worker 不可用时不再先扣库存、null 工具参数不再打断审计/trace。
-- **仍未完成**：真正 LLM 驱动的 Plan-Execute-Replan、Critic Agent、完整 Spring AI MCP 协议 transport、30 条 eval 与真实准确率/延迟/token 指标、工具/LLM 自定义 metrics、Ops Agent 真实处理逻辑、真实 MySQL/Redis/AMap/DashScope 环境验收、demo 视频、旧 `AiAssistantService` 下线。
+- **仍未完成**：MCP 客户端真实连通验收、真实 provider 准确率/延迟/token 指标、真实 MySQL/Redis/AMap/DashScope 环境验收、demo 视频。
 
 ## 1. 项目身份
 
@@ -281,7 +285,7 @@ final = LLM(answer_prompt + prior_outputs)
 | 工具调用准确率 | 期望工具被调用的占比 |
 | 答案命中率 | 关键词命中 / 总用例 |
 | 平均延迟 | 端到端 ms |
-| 平均 token | input + output |
+| 平均 token | input + output；当前离线 runner 使用启发式估算，真实 provider token 用量待接入 |
 | 失败原因分布 | LLM 决策错误 / 工具错误 / 超时 / 参数错 |
 
 #### 使用方式
@@ -341,7 +345,7 @@ mvn -pl backend/eval test -DllmModel=qwen-plus  # 切换模型对比
 - Maven 拆 4 模块
 - 仓库改名 `hmdp` → `city-copilot`
 - 引入 Spring AI Alibaba，跑通 `/agent/ping`
-- 现有 `AiAssistantService` 标记 deprecated，保留为兜底
+- 旧 `AiAssistantService` 已下线，前端统一走 `/agent/chat`
 - 新 README
 
 **第 2 周**：Tool Registry + ReAct + SSE（= v0.1 MVP）
@@ -394,7 +398,7 @@ mvn -pl backend/eval test -DllmModel=qwen-plus  # 切换模型对比
   驱动的异步运营任务）
 - 实现 MCP server（stdio + HTTP），业务能力可被 Claude / Cursor
   等任意 MCP 客户端直连调用
-- Eval Harness：30+ 用例，工具调用准确率 X%，平均延迟 Y ms，token 消耗 Z
+- Eval Harness：30 条离线用例，模式准确率 100%，工具调用准确率 100%，关键词命中率 100%，平均 eval 延迟 1 ms，平均估算 token 27；真实 provider 指标待接入
 - 底层：Redis Lua 秒杀（QPS A→B）、Redisson 分布式锁、Redis GEO、
   Resilience4j 限流熔断
 - 可观测：Micrometer + Prometheus + Grafana 看板覆盖业务 / Agent / 工具维度
@@ -418,7 +422,7 @@ mvn -pl backend/eval test -DllmModel=qwen-plus  # 切换模型对比
 | LLM provider 选型（DashScope / 百炼 / OpenAI 兼容） | 低 | 通过配置切换；Eval 模块支持模型对比 |
 | Plan-Execute 实现复杂度被低估 | 中 | MVP 模式可降级为只 ReAct；Plan-Execute 在第 3 周末完成最低可用版本 |
 | Eval 用例编写工作量大 | 中 | 用例从 10 条起步（v0.1.5），逐步扩到 30；先有数字再优化数字 |
-| 现有 873 行 `AiAssistantService` 中的规则代码价值如何处理 | 待定 | 默认作为兜底路径保留；若新 Agent 在 Eval 上稳定优于旧规则，再 deprecated |
+| 旧 `AiAssistantService` 规则代码价值如何处理 | 已决策 | 已移除旧服务和 `/ai/chat`，以 `/agent/chat`、Tool Registry、ReAct/Plan-Execute 作为唯一对话链路 |
 
 ## 9. 待用户决定的开放项
 

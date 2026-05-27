@@ -11,6 +11,7 @@ public class AmapProperties {
     private String webServiceKey;
     private String geocodeUrl = "https://restapi.amap.com/v3/geocode/geo";
     private String poiTextUrl = "https://restapi.amap.com/v3/place/text";
+    private String poiAroundUrl = "https://restapi.amap.com/v3/place/around";
     private Integer cacheTtlMinutes = 1440;
     private Integer rateLimitPerMinute = 60;
     private Integer circuitFailureThreshold = 5;

@@ -9,6 +9,8 @@
 | `mcp-server` | MCP-style HTTP tool adapter that reuses the same Agent tool registry and gateway. |
 | `eval` | YAML-driven evaluation runner and Markdown report generation. |
 
+`core` only keeps backend resources such as `application.yaml`, mapper XML, and Lua scripts. The historical bundled Nginx/static HTML frontend has been removed; use the root `frontend/` app for UI work.
+
 Dependency direction:
 
 ```text

@@ -167,6 +167,62 @@ public class AmapGeoService {
         }
     }
 
+    public Result searchAroundPoi(Double x, Double y, String keywords, Integer current, Integer size) {
+        String operation = "poi_around";
+        if (!isValidCoordinate(x, y)) {
+            return Result.fail("SHOP_GEO_INVALID", "坐标参数不合法");
+        }
+        if (StrUtil.isBlank(amapProperties.getWebServiceKey())) {
+            return Result.fail("AMAP_CONFIG_MISSING", "高德地图 Web 服务 Key 未配置");
+        }
+
+        int page = current == null || current < 1 ? 1 : current;
+        int offset = size == null || size < 1 ? 10 : Math.min(size, 25);
+        String keywordScope = StrUtil.blankToDefault(keywords, "");
+        String cacheKey = CACHE_AMAP_POI_KEY + "around:" + cacheKey(
+                x + "," + y + "|" + keywordScope + "|" + page + "|" + offset,
+                String.valueOf(nearbyRadiusMeters())
+        );
+        Map<?, ?> cached = readCachedResponse(cacheKey);
+        if (cached != null) {
+            recordMetric(operation, "cache_hit");
+            return parsePoiSearchResponse(cached);
+        }
+        recordMetric(operation, "cache_miss");
+
+        Result gate = checkRemoteGate(operation);
+        if (gate != null) {
+            return gate;
+        }
+
+        URI uri = UriComponentsBuilder.fromHttpUrl(amapProperties.getPoiAroundUrl())
+                .queryParam("key", amapProperties.getWebServiceKey())
+                .queryParam("location", x + "," + y)
+                .queryParam("radius", Math.round(nearbyRadiusMeters()))
+                .queryParamIfPresent("keywords", StrUtil.isBlank(keywordScope) ? Optional.empty() : Optional.of(keywordScope))
+                .queryParam("offset", offset)
+                .queryParam("page", page)
+                .queryParam("extensions", "base")
+                .queryParam("sortrule", "distance")
+                .build()
+                .encode()
+                .toUri();
+
+        try {
+            Map<?, ?> response = restTemplate.getForObject(uri, Map.class);
+            Result result = parsePoiSearchResponse(response);
+            recordRemoteResult(operation, response);
+            if (Boolean.TRUE.equals(result.getSuccess())) {
+                cacheResponse(cacheKey, response);
+            }
+            return result;
+        } catch (Exception error) {
+            recordRemoteFailure(operation);
+            log.warn("Amap POI around search failed: {}", error.getMessage());
+            return Result.fail("AMAP_UNAVAILABLE", "周边搜索服务暂时不可用");
+        }
+    }
+
     @AgentTool(
             name = "get_geo_provider_status",
             description = "Get Amap provider health, rate-limit, and circuit status",
@@ -264,7 +320,8 @@ public class AmapGeoService {
                 .setAdName(valueOf(poi.get("adname")))
                 .setAdcode(valueOf(poi.get("adcode")))
                 .setX(x)
-                .setY(y);
+                .setY(y)
+                .setDistance(parseCoordinate(valueOf(poi.get("distance"))));
     }
 
     private String valueOf(Object value) {
@@ -293,6 +350,15 @@ public class AmapGeoService {
 
     private boolean cityLimitEnabled() {
         return geoProperties == null || geoProperties.isCityLimitEnabled();
+    }
+
+    private boolean isValidCoordinate(Double x, Double y) {
+        return x != null && y != null && x >= -180D && x <= 180D && y >= -90D && y <= 90D;
+    }
+
+    private double nearbyRadiusMeters() {
+        Double radius = geoProperties == null ? null : geoProperties.getNearbyRadiusMeters();
+        return radius == null || radius <= 0D ? 5000D : radius;
     }
 
     private Map<?, ?> readCachedResponse(String key) {

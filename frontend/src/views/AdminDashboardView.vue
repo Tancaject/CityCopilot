@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from 'vue';
 import {
   AlertCircle,
+  AlertTriangle,
+  ArrowUpRight,
   Braces,
   ClipboardCheck,
   Database,
@@ -99,21 +101,53 @@ const riskItems = computed(() => [
     label: '缺坐标店铺',
     value: summary.value?.missingGeo ?? 0,
     tone: (summary.value?.missingGeo ?? 0) > 0 ? 'warn' : 'ok',
+    route: 'geo-shops-admin',
+    action: '进入校准',
   },
   {
     label: '待确认坐标',
     value: summary.value?.pendingGeo ?? 0,
     tone: (summary.value?.pendingGeo ?? 0) > 0 ? 'warn' : 'ok',
+    route: 'geo-shops-admin',
+    action: '复核坐标',
   },
   {
     label: '今日失败审计',
     value: summary.value?.failedAuditsToday ?? 0,
     tone: (summary.value?.failedAuditsToday ?? 0) > 0 ? 'bad' : 'ok',
+    route: 'admin-audit',
+    action: '查看日志',
   },
   {
-    label: '已取消订单',
-    value: summary.value?.cancelledOrders ?? 0,
-    tone: 'muted',
+    label: '未支付订单',
+    value: summary.value?.unpaidOrders ?? 0,
+    tone: (summary.value?.unpaidOrders ?? 0) > 0 ? 'warn' : 'muted',
+    route: 'admin-orders',
+    action: '查订单',
+  },
+]);
+const unresolvedRiskCount = computed(
+  () =>
+    (summary.value?.missingGeo ?? 0) +
+    (summary.value?.pendingGeo ?? 0) +
+    (summary.value?.failedAuditsToday ?? 0) +
+    (summary.value?.unpaidOrders ?? 0),
+);
+const commandSignals = computed(() => [
+  {
+    label: '今日交易',
+    value: summary.value?.todayOrders ?? 0,
+    detail: `${summary.value?.unpaidOrders ?? 0} 个待支付`,
+  },
+  {
+    label: '今日内容',
+    value: summary.value?.todayBlogs ?? 0,
+    detail: `${summary.value?.blogs ?? 0} 篇累计笔记`,
+  },
+  {
+    label: '可用券包',
+    value: summary.value?.activeVouchers ?? 0,
+    detail: `${summary.value?.seckillVouchers ?? 0} 张秒杀券`,
   },
 ]);
 
@@ -134,16 +168,22 @@ onMounted(loadSummary);
 
 <template>
   <section class="admin-dashboard">
-    <header class="orders-header">
-      <div>
-        <p class="eyebrow">运营后台</p>
-        <h1>业务概览</h1>
+    <header class="ops-command-hero">
+      <div class="ops-command-copy">
+        <p class="eyebrow">Operations command</p>
+        <h1>从异常开始，而不是从菜单开始。</h1>
+        <p>把交易、内容、地理和审计压到同一个控制台里，运营人员第一眼看到的是需要处理的队列。</p>
       </div>
-      <button type="button" :disabled="loading" @click="loadSummary">
-        <Loader2 v-if="loading" class="spin" :size="17" aria-hidden="true" />
-        <RefreshCw v-else :size="17" aria-hidden="true" />
-        刷新
-      </button>
+      <aside class="ops-command-status">
+        <span>Open work</span>
+        <strong>{{ unresolvedRiskCount }}</strong>
+        <small>待处理运营信号</small>
+        <button type="button" :disabled="loading" @click="loadSummary">
+          <Loader2 v-if="loading" class="spin" :size="17" aria-hidden="true" />
+          <RefreshCw v-else :size="17" aria-hidden="true" />
+          刷新
+        </button>
+      </aside>
     </header>
 
     <section v-if="errorMessage" class="notice notice-error">
@@ -157,6 +197,14 @@ onMounted(loadSummary);
     </div>
 
     <template v-else>
+      <section class="ops-signal-row" aria-label="今日运营信号">
+        <article v-for="signal in commandSignals" :key="signal.label">
+          <span>{{ signal.label }}</span>
+          <strong>{{ signal.value }}</strong>
+          <small>{{ signal.detail }}</small>
+        </article>
+      </section>
+
       <section class="admin-dashboard-kpis" aria-label="核心指标">
         <article>
           <Users :size="20" aria-hidden="true" />
@@ -196,11 +244,20 @@ onMounted(loadSummary);
         </RouterLink>
       </section>
 
-      <section class="admin-dashboard-risks" aria-label="待处理事项">
-        <article v-for="item in riskItems" :key="item.label" :class="`risk-${item.tone}`">
+      <section class="ops-risk-queue" aria-label="待处理事项">
+        <div class="ops-section-title">
+          <AlertTriangle :size="19" aria-hidden="true" />
+          <div>
+            <strong>风险队列</strong>
+            <span>按会影响用户到店、交易和追责的信号排序。</span>
+          </div>
+        </div>
+        <RouterLink v-for="item in riskItems" :key="item.label" :class="`risk-${item.tone}`" :to="{ name: item.route }">
           <span>{{ item.label }}</span>
           <strong>{{ item.value }}</strong>
-        </article>
+          <small>{{ item.action }}</small>
+          <ArrowUpRight :size="17" aria-hidden="true" />
+        </RouterLink>
       </section>
     </template>
   </section>

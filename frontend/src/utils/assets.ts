@@ -21,7 +21,7 @@ export function blogCover(blog: Blog) {
   return firstImage(blog.images);
 }
 
-export function shopCover(shop: Shop) {
+export function shopCover(shop: Pick<Shop, 'images'> | { images?: string }) {
   return firstImage(shop.images);
 }
 

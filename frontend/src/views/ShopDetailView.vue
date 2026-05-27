@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
-import { AlertCircle, ArrowLeft, Clock, Loader2, MapPin, RefreshCw, Star, Ticket } from '@lucide/vue';
+import { AlertCircle, ArrowLeft, BadgeCheck, Clock, Loader2, MapPin, RefreshCw, Star, Ticket } from '@lucide/vue';
 import { fetchShop, fetchVoucherOrder, fetchVouchers, seckillVoucher } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import ShopMapPanel from '../components/ShopMapPanel.vue';
@@ -32,6 +32,17 @@ const gallery = computed(() => {
     return [];
   }
   return shop.value.images.split(',').filter(Boolean).slice(0, 4).map(firstImage);
+});
+const decisionSignals = computed(() => {
+  const current = shop.value;
+  if (!current) {
+    return [];
+  }
+  return [
+    { label: '评分', value: formatScore(current.score), icon: Star },
+    { label: '人均', value: formatPrice(current.avgPrice), icon: Ticket },
+    { label: '区域', value: current.area || '附近', icon: MapPin },
+  ];
 });
 
 async function loadShop() {
@@ -231,6 +242,25 @@ watch(
           <span>{{ formatPrice(shop.avgPrice) }}</span>
         </div>
 
+        <div class="detail-decision-grid" aria-label="到店决策信号">
+          <article v-for="signal in decisionSignals" :key="signal.label">
+            <component :is="signal.icon" :size="17" aria-hidden="true" />
+            <small>{{ signal.label }}</small>
+            <strong>{{ signal.value }}</strong>
+          </article>
+        </div>
+
+        <div class="detail-action-row">
+          <a href="#voucher-section">
+            <Ticket :size="17" aria-hidden="true" />
+            查看可用优惠
+          </a>
+          <span>
+            <BadgeCheck :size="17" aria-hidden="true" />
+            {{ shop.geoStatus === 'verified' ? '坐标已校准' : '坐标待复核' }}
+          </span>
+        </div>
+
         <p class="detail-line">
           <MapPin :size="18" aria-hidden="true" />
           {{ shop.address || '地址待补充' }}
@@ -247,7 +277,7 @@ watch(
           <img v-for="image in gallery" :key="image" :src="image" :alt="shop.name" />
         </div>
 
-        <section class="voucher-section">
+        <section id="voucher-section" class="voucher-section">
           <div class="section-heading">
             <Ticket :size="19" aria-hidden="true" />
             <h2>优惠活动</h2>

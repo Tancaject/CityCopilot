@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { AlertCircle, Database, Download, Loader2, RefreshCw, Search, Trash2 } from '@lucide/vue';
 import { cleanupAuditLogs, exportOperationLogs, fetchAuditStatus, fetchOperationLogs } from '../api/citycopilot';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import { authState } from '../composables/auth';
 import { hasPermission } from '../utils/permissions';
 import type { AuditStatus, OperationLog } from '../types';
@@ -17,6 +18,7 @@ const exporting = ref(false);
 const cleaning = ref(false);
 const errorMessage = ref('');
 const successMessage = ref('');
+const cleanupOpen = ref(false);
 
 const canCleanup = computed(() => hasPermission(authState.user, 'audit:write'));
 
@@ -76,15 +78,13 @@ async function exportLogs() {
 }
 
 async function cleanupLogs() {
-  if (!window.confirm('确认清理过期审计日志？')) {
-    return;
-  }
   cleaning.value = true;
   errorMessage.value = '';
   successMessage.value = '';
   try {
     const count = await cleanupAuditLogs();
     successMessage.value = `已清理 ${count} 条过期日志`;
+    cleanupOpen.value = false;
     await loadAudit();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '审计日志清理失败';
@@ -133,7 +133,7 @@ onMounted(loadAudit);
         <Download v-else :size="16" aria-hidden="true" />
         导出
       </button>
-      <button v-if="canCleanup" type="button" :disabled="cleaning" @click="cleanupLogs">
+      <button v-if="canCleanup" type="button" :disabled="cleaning" @click="cleanupOpen = true">
         <Loader2 v-if="cleaning" class="spin" :size="16" aria-hidden="true" />
         <Trash2 v-else :size="16" aria-hidden="true" />
         清理
@@ -175,5 +175,16 @@ onMounted(loadAudit);
       </article>
       <div v-if="!logs.length" class="empty-state orders-empty">暂无审计日志</div>
     </section>
+
+    <ConfirmDialog
+      :open="cleanupOpen"
+      title="确认清理过期日志"
+      message="系统将按当前审计留存策略删除过期操作日志，导出与追责链路将不再包含这些记录。"
+      confirm-text="清理日志"
+      tone="danger"
+      :busy="cleaning"
+      @cancel="cleanupOpen = false"
+      @confirm="cleanupLogs"
+    />
   </section>
 </template>

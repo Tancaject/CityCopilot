@@ -2,6 +2,7 @@ package com.citycopilot.agent.gateway;
 
 import com.citycopilot.agent.tool.AgentToolRegistry;
 import com.citycopilot.core.agent.AgentTool;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -73,6 +74,35 @@ class ToolGatewayTest {
         assertEquals("hotpot@Shanghai", result.data());
         assertEquals(1, audits.size());
         assertTrue(audits.get(0).args().containsKey("adcode"));
+    }
+
+    @Test
+    void recordsToolCallMetrics() {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        ToolGateway gateway = new ToolGateway(
+                AgentToolRegistry.fromBeans(List.of(new DemoTools())),
+                ToolAuditSink.noop(),
+                ToolExecutionGuard.direct(),
+                meterRegistry
+        );
+
+        ToolResult result = gateway.invoke(
+                "get_shop_detail",
+                Map.of("shopId", 1L),
+                new ToolCallContext("user-1", Set.of())
+        );
+
+        assertTrue(result.ok());
+        assertEquals(1.0, meterRegistry.get("citycopilot.tool.call.count")
+                .tag("tool", "get_shop_detail")
+                .tag("outcome", "success")
+                .counter()
+                .count());
+        assertEquals(1, meterRegistry.get("citycopilot.tool.call.duration")
+                .tag("tool", "get_shop_detail")
+                .tag("outcome", "success")
+                .timer()
+                .count());
     }
 
     static final class DemoTools {

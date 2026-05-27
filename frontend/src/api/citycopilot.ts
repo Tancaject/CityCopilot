@@ -16,6 +16,7 @@ import type {
   OpsSummary,
   ScrollResult,
   Shop,
+  ShopDiscoveryItem,
   ShopGeoUpdate,
   ShopType,
   UserAdmin,
@@ -127,6 +128,26 @@ export async function fetchNearbyShops(current: number, point: GeoPoint, size?: 
 export async function fetchShopsByName(name: string | undefined, current: number, size?: number) {
   const payload = await getData<Shop[]>('/shop/of/name', {
     params: { name, current, size },
+  });
+  return normalizeList(payload);
+}
+
+export async function fetchShopDiscovery(params: {
+  typeId?: number;
+  keyword?: string;
+  current: number;
+  point?: GeoPoint;
+  size?: number;
+}) {
+  const payload = await getData<ShopDiscoveryItem[] | PageResult<ShopDiscoveryItem>>('/shop/discovery', {
+    params: {
+      typeId: params.typeId,
+      keyword: params.keyword,
+      current: params.current,
+      size: params.size,
+      x: params.point?.x,
+      y: params.point?.y,
+    },
   });
   return normalizeList(payload);
 }

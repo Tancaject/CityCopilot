@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { AlertCircle, CheckCircle2, Loader2, Plus, Save, Search, Ticket, ToggleLeft, ToggleRight } from '@lucide/vue';
 import { createAdminVoucher, fetchAdminVouchers, updateAdminVoucher, updateAdminVoucherStatus } from '../api/citycopilot';
 import { formatCents } from '../utils/assets';
@@ -32,6 +32,30 @@ const errorMessage = ref('');
 const successMessage = ref('');
 
 const form = reactive<VoucherForm>(emptyForm());
+const voucherStats = computed(() => {
+  const total = vouchers.value.length;
+  const active = vouchers.value.filter((voucher) => (voucher.status || 1) === 1).length;
+  const seckill = vouchers.value.filter((voucher) => voucher.type === 1).length;
+  const stock = vouchers.value.reduce((sum, voucher) => sum + (voucher.type === 1 ? voucher.stock || 0 : 0), 0);
+  return [
+    { label: '当前结果', value: total, detail: '张券' },
+    { label: '上架中', value: active, detail: '可被用户看到' },
+    { label: '秒杀券', value: seckill, detail: `库存 ${stock}` },
+  ];
+});
+const statusFilters = [
+  { label: '全部', value: undefined },
+  { label: '上架', value: 1 },
+  { label: '下架', value: 2 },
+  { label: '过期', value: 3 },
+];
+const formPreview = computed(() => ({
+  title: form.title || '未命名券包',
+  price: formatCents(optionalNumber(form.payValue)),
+  value: formatCents(optionalNumber(form.actualValue)),
+  type: form.type === 1 ? '限时秒杀' : '普通券',
+  status: statusText(form.status),
+}));
 
 function emptyForm(): VoucherForm {
   return {
@@ -234,6 +258,25 @@ onMounted(loadVouchers);
       {{ errorMessage }}
     </section>
 
+    <section class="admin-voucher-command" aria-label="优惠券活动摘要">
+      <article v-for="stat in voucherStats" :key="stat.label">
+        <span>{{ stat.label }}</span>
+        <strong>{{ stat.value }}</strong>
+        <small>{{ stat.detail }}</small>
+      </article>
+      <div class="admin-voucher-filter" aria-label="状态筛选">
+        <button
+          v-for="filter in statusFilters"
+          :key="filter.label"
+          type="button"
+          :class="{ active: filterStatus === filter.value }"
+          @click="filterStatus = filter.value; loadVouchers()"
+        >
+          {{ filter.label }}
+        </button>
+      </div>
+    </section>
+
     <section class="admin-shops-layout">
       <aside class="admin-shop-list" aria-label="优惠券列表">
         <form class="admin-voucher-search" @submit.prevent="loadVouchers">
@@ -293,6 +336,15 @@ onMounted(loadVouchers);
             </button>
           </div>
         </div>
+
+        <section class="admin-voucher-preview" aria-label="当前券预览">
+          <span>{{ formPreview.type }}</span>
+          <strong>{{ formPreview.title }}</strong>
+          <div>
+            <b>{{ formPreview.price }}</b>
+            <small>抵扣 {{ formPreview.value }} · {{ formPreview.status }}</small>
+          </div>
+        </section>
 
         <div class="admin-shop-grid">
           <label>

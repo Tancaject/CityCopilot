@@ -1,8 +1,10 @@
 package com.citycopilot.agent.ops;
 
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -34,5 +36,10 @@ public class OpsAgentController {
     @PostMapping("/poll-once")
     public Map<String, Object> pollOnce() {
         return opsAgentService.pollOnce();
+    }
+
+    @GetMapping("/results")
+    public Map<String, Object> recentResults(@RequestParam(defaultValue = "20") Integer limit) {
+        return opsAgentService.recentResults(limit);
     }
 }

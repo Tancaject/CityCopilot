@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Bot, ExternalLink, Loader2, MapPin, Send, Sparkles, Store, Trash2, X } from '@lucide/vue';
 import { retryGeoBatchJob, sendAiChat, startGeoBatchGeocode, streamAgentChat, syncShopGeoIndex } from '../api/citycopilot';
+import ConfirmDialog from './ConfirmDialog.vue';
 import { authState } from '../composables/auth';
 import { locationState, requestCurrentLocation } from '../composables/location';
 import { formatDistance, formatPrice, formatScore } from '../utils/assets';
@@ -27,6 +28,7 @@ const open = ref(false);
 const input = ref('');
 const loading = ref(false);
 const actionLoading = ref('');
+const pendingAction = ref<AiAssistantAction | null>(null);
 const errorMessage = ref('');
 const scrollRef = ref<HTMLElement | null>(null);
 let messageId = 0;
@@ -64,6 +66,31 @@ const quickPrompts = computed(() => {
     return ['这家店怎么样？', '这家店有什么优惠券？', '附近还有类似的吗？'];
   }
   return ['附近适合一个人吃的店', '人均 100 以内有券的店', '评分高的咖啡店'];
+});
+const pendingActionDialog = computed(() => {
+  const action = pendingAction.value;
+  if (action?.type === 'geo_index_sync') {
+    return {
+      title: '确认重建 GEO 索引',
+      message: '系统会重新同步已验证店铺到 Redis GEO，附近推荐会使用新的索引结果。',
+      confirmText: '重建索引',
+      busy: Boolean(actionLoading.value),
+    };
+  }
+  if (action?.type === 'geo_batch_retry') {
+    return {
+      title: '确认重试失败任务',
+      message: '系统会基于最近失败明细创建新的批量校准任务，请确认当前高德服务状态可用。',
+      confirmText: '重试任务',
+      busy: Boolean(actionLoading.value),
+    };
+  }
+  return {
+    title: '确认创建批量任务',
+    message: '系统会为缺坐标或未验证店铺创建后台校准任务，执行过程会写入审计日志。',
+    confirmText: '创建任务',
+    busy: Boolean(actionLoading.value),
+  };
 });
 
 watch(
@@ -271,15 +298,15 @@ async function handleAction(action: AiAssistantAction) {
     return;
   }
   if (action.type === 'geo_batch_start') {
-    await handleGeoBatchStart(action);
+    requestGeoAction(action);
     return;
   }
   if (action.type === 'geo_index_sync') {
-    await handleGeoIndexSync(action);
+    requestGeoAction(action);
     return;
   }
   if (action.type === 'geo_batch_retry') {
-    await handleGeoBatchRetry(action);
+    requestGeoAction(action);
     return;
   }
   if (action.routeName) {
@@ -296,8 +323,31 @@ async function handleAction(action: AiAssistantAction) {
   }
 }
 
+function requestGeoAction(action: AiAssistantAction) {
+  if (!canWriteGeo.value) {
+    errorMessage.value = '需要 geo:write 权限才能执行地理校准写操作';
+    return;
+  }
+  pendingAction.value = action;
+}
+
+async function confirmPendingAction() {
+  const action = pendingAction.value;
+  if (!action || actionLoading.value) {
+    return;
+  }
+  if (action.type === 'geo_batch_start') {
+    await handleGeoBatchStart(action);
+  } else if (action.type === 'geo_index_sync') {
+    await handleGeoIndexSync(action);
+  } else if (action.type === 'geo_batch_retry') {
+    await handleGeoBatchRetry(action);
+  }
+  pendingAction.value = null;
+}
+
 async function handleGeoBatchStart(action: AiAssistantAction) {
-  if (!canWriteGeo.value || !window.confirm('确认创建缺坐标批量任务？')) {
+  if (!canWriteGeo.value) {
     return;
   }
   actionLoading.value = action.label;
@@ -327,7 +377,7 @@ async function handleGeoBatchStart(action: AiAssistantAction) {
 }
 
 async function handleGeoIndexSync(action: AiAssistantAction) {
-  if (!canWriteGeo.value || !window.confirm('确认重建 Redis GEO 索引？')) {
+  if (!canWriteGeo.value) {
     return;
   }
   actionLoading.value = action.label;
@@ -350,7 +400,7 @@ async function handleGeoIndexSync(action: AiAssistantAction) {
 }
 
 async function handleGeoBatchRetry(action: AiAssistantAction) {
-  if (!canWriteGeo.value || !window.confirm('确认重试最近失败的批量任务？')) {
+  if (!canWriteGeo.value) {
     return;
   }
   const jobId = optionalString(action.query?.jobId);
@@ -441,6 +491,7 @@ function notifyGeoIndex(count: number) {
         <div>
           <p class="eyebrow">{{ scene === 'admin' ? 'Operations copilot' : 'Local life copilot' }}</p>
           <h2>{{ panelTitle }}</h2>
+          <span>{{ scene === 'admin' ? '读取任务、审计和校准上下文' : '按当前位置、店铺和优惠缩短决策路径' }}</span>
         </div>
         <div class="ai-panel-tools">
           <button type="button" aria-label="清空对话" @click="resetConversation">
@@ -462,7 +513,7 @@ function notifyGeoIndex(count: number) {
             <p>{{ message.text }}</p>
 
             <div v-if="message.traceId || message.toolEvents?.length" class="ai-agent-trace">
-              <small v-if="message.traceId">traceId: {{ message.traceId }}</small>
+              <small v-if="message.traceId">Agent trace · {{ message.traceId }}</small>
               <div v-for="(toolEvent, index) in message.toolEvents" :key="`${message.id}-${index}`" class="ai-tool-card">
                 <span>{{ toolEvent.phase === 'result' ? 'result' : 'call' }}</span>
                 <strong>{{ toolEvent.toolName }}</strong>
@@ -529,5 +580,16 @@ function notifyGeoIndex(count: number) {
         </button>
       </form>
     </section>
+
+    <ConfirmDialog
+      :open="Boolean(pendingAction)"
+      :title="pendingActionDialog.title"
+      :message="pendingActionDialog.message"
+      :confirm-text="pendingActionDialog.confirmText"
+      tone="warning"
+      :busy="pendingActionDialog.busy"
+      @cancel="pendingAction = null"
+      @confirm="confirmPendingAction"
+    />
   </div>
 </template>

@@ -10,6 +10,8 @@ import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IShopService;
+import com.citycopilot.core.service.discovery.ShopDiscoveryQuery;
+import com.citycopilot.core.service.discovery.ShopDiscoveryService;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.annotation.Resource;
@@ -31,6 +33,9 @@ public class ShopController {
 
     @Resource
     private GeoProperties geoProperties;
+
+    @Resource
+    private ShopDiscoveryService shopDiscoveryService;
 
     /**
      * 根据id查询商铺信息
@@ -97,6 +102,27 @@ public class ShopController {
             @RequestParam("y") Double y
     ) {
         return shopService.queryNearbyShops(current, size, x, y);
+    }
+
+    @GetMapping("/discovery")
+    public Result discoverShops(
+            @RequestParam(value = "typeId", required = false) Integer typeId,
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "name", required = false) String name,
+            @RequestParam(value = "current", defaultValue = "1") Integer current,
+            @RequestParam(value = "size", required = false) Integer size,
+            @RequestParam(value = "x", required = false) Double x,
+            @RequestParam(value = "y", required = false) Double y
+    ) {
+        String resolvedKeyword = StrUtil.blankToDefault(keyword, name);
+        ShopDiscoveryQuery query = new ShopDiscoveryQuery()
+                .setTypeId(typeId)
+                .setKeyword(resolvedKeyword)
+                .setCurrent(current)
+                .setSize(size)
+                .setX(x)
+                .setY(y);
+        return shopDiscoveryService.discover(query);
     }
 
     /**

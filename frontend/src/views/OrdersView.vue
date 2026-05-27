@@ -3,10 +3,12 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { AlertCircle, Clock, CreditCard, Loader2, ReceiptText, RefreshCw, Store, Ticket, Undo2 } from '@lucide/vue';
 import { cancelVoucherOrder, fetchMyVoucherOrders, fetchVoucherOrder, payVoucherOrder, refundVoucherOrder } from '../api/citycopilot';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import { formatCents } from '../utils/assets';
 import type { VoucherOrder } from '../types';
 
 const route = useRoute();
+type OrderAction = 'cancel' | 'refund';
 
 const orders = ref<VoucherOrder[]>([]);
 const currentPage = ref(1);
@@ -17,10 +19,40 @@ const payingId = ref<number | null>(null);
 const refundingId = ref<number | null>(null);
 const hasMore = ref(true);
 const errorMessage = ref('');
+const pendingOrderAction = ref<{ type: OrderAction; order: VoucherOrder } | null>(null);
 
 const highlightedOrderId = computed(() => {
   const value = Number(route.query.highlight);
   return Number.isFinite(value) && value > 0 ? value : null;
+});
+const pendingOrderDialog = computed(() => {
+  const pending = pendingOrderAction.value;
+  if (!pending) {
+    return {
+      title: '',
+      message: '',
+      confirmText: '确认',
+      tone: 'warning' as const,
+      busy: false,
+    };
+  }
+  const name = pending.order.voucherTitle || `订单 #${pending.order.id}`;
+  if (pending.type === 'refund') {
+    return {
+      title: '确认申请退款',
+      message: `将为「${name}」发起退款，订单会从可使用状态切换为退款流程。`,
+      confirmText: '申请退款',
+      tone: 'danger' as const,
+      busy: refundingId.value === pending.order.id,
+    };
+  }
+  return {
+    title: '确认取消订单',
+    message: `将取消「${name}」，取消后需要重新下单才能使用这张券。`,
+    confirmText: '取消订单',
+    tone: 'warning' as const,
+    busy: cancelingId.value === pending.order.id,
+  };
 });
 
 function formatTime(value?: string) {
@@ -110,14 +142,31 @@ async function loadMore() {
 }
 
 async function handleCancel(order: VoucherOrder) {
-  if (!canCancel(order) || !window.confirm('确认取消这张券订单？')) {
+  if (!canCancel(order)) {
     return;
   }
+  pendingOrderAction.value = { type: 'cancel', order };
+}
+
+async function confirmOrderAction() {
+  const pending = pendingOrderAction.value;
+  if (!pending) {
+    return;
+  }
+  if (pending.type === 'cancel') {
+    await cancelOrder(pending.order);
+    return;
+  }
+  await refundOrder(pending.order);
+}
+
+async function cancelOrder(order: VoucherOrder) {
   cancelingId.value = order.id;
   errorMessage.value = '';
   try {
     const updated = await cancelVoucherOrder(order.id);
     updateOrder(updated);
+    pendingOrderAction.value = null;
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '取消订单失败';
   } finally {
@@ -142,14 +191,19 @@ async function handlePay(order: VoucherOrder) {
 }
 
 async function handleRefund(order: VoucherOrder) {
-  if (!canRefund(order) || !window.confirm('确认退款这张券订单？')) {
+  if (!canRefund(order)) {
     return;
   }
+  pendingOrderAction.value = { type: 'refund', order };
+}
+
+async function refundOrder(order: VoucherOrder) {
   refundingId.value = order.id;
   errorMessage.value = '';
   try {
     const updated = await refundVoucherOrder(order.id);
     updateOrder(updated);
+    pendingOrderAction.value = null;
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '退款失败';
   } finally {
@@ -264,5 +318,16 @@ watch(
     <div v-else class="empty-state orders-empty">
       暂时没有订单
     </div>
+
+    <ConfirmDialog
+      :open="Boolean(pendingOrderAction)"
+      :title="pendingOrderDialog.title"
+      :message="pendingOrderDialog.message"
+      :confirm-text="pendingOrderDialog.confirmText"
+      :tone="pendingOrderDialog.tone"
+      :busy="pendingOrderDialog.busy"
+      @cancel="pendingOrderAction = null"
+      @confirm="confirmOrderAction"
+    />
   </section>
 </template>

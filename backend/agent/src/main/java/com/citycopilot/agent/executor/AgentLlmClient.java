@@ -17,4 +17,8 @@ public interface AgentLlmClient {
     ) {
         return next(message, tools, observations);
     }
+
+    default String complete(String systemPrompt, List<String> userMessages) {
+        return "";
+    }
 }

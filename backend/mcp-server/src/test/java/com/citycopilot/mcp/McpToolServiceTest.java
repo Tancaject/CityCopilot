@@ -47,6 +47,40 @@ class McpToolServiceTest {
     }
 
     @Test
+    void hidesUnauthorizedToolsFromAnonymousToolsList() {
+        AgentToolRegistry registry = AgentToolRegistry.fromBeans(List.of(new DemoTools()));
+        McpToolService service = new McpToolService(
+                registry,
+                new ToolGateway(registry, ToolAuditSink.noop()),
+                new PermissionPolicy()
+        );
+
+        List<Map<String, Object>> tools = service.toolsList();
+
+        assertTrue(tools.stream().anyMatch(tool -> "echo".equals(tool.get("name"))));
+        assertTrue(tools.stream().noneMatch(tool -> "pay_order".equals(tool.get("name"))));
+    }
+
+    @Test
+    void listsAuthorizedToolsForAuthenticatedUser() {
+        UserDTO user = new UserDTO();
+        user.setId(9L);
+        user.setRole("merchant");
+        UserHolder.saveUser(user);
+
+        AgentToolRegistry registry = AgentToolRegistry.fromBeans(List.of(new DemoTools()));
+        McpToolService service = new McpToolService(
+                registry,
+                new ToolGateway(registry, ToolAuditSink.noop()),
+                new PermissionPolicy()
+        );
+
+        List<Map<String, Object>> tools = service.toolsList();
+
+        assertTrue(tools.stream().anyMatch(tool -> "pay_order".equals(tool.get("name"))));
+    }
+
+    @Test
     void ignoresCallerSuppliedPermissions() {
         AgentToolRegistry registry = AgentToolRegistry.fromBeans(List.of(new DemoTools()));
         McpToolService service = new McpToolService(

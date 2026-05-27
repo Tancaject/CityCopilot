@@ -17,4 +17,5 @@ public class AmapPoiDTO {
     private String adcode;
     private Double x;
     private Double y;
+    private Double distance;
 }

@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
-import { AlertCircle, ArrowLeft, Loader2, MapPin, RefreshCw, Search, Star } from '@lucide/vue';
-import { fetchNearbyShops, fetchShopsByName, fetchShopsByType } from '../api/citycopilot';
+import { AlertCircle, ArrowLeft, BadgeCheck, Loader2, MapPin, RefreshCw, Search, SlidersHorizontal, Star, Ticket } from '@lucide/vue';
+import { fetchShopDiscovery } from '../api/citycopilot';
 import { clearCurrentLocation, locationState, requestCurrentLocation } from '../composables/location';
 import { formatDistance, formatPrice, formatScore, shopCover } from '../utils/assets';
-import type { Shop } from '../types';
+import type { ShopDiscoveryItem } from '../types';
 
 const route = useRoute();
 
-const shops = ref<Shop[]>([]);
+const shops = ref<ShopDiscoveryItem[]>([]);
 const currentPage = ref(1);
 const loading = ref(false);
 const loadingMore = ref(false);
@@ -24,20 +24,27 @@ const typeId = computed(() => {
 const typeName = computed(() => (typeof route.query.typeName === 'string' ? route.query.typeName : '全部店铺'));
 const keyword = computed(() => (typeof route.query.name === 'string' ? route.query.name.trim() : ''));
 const title = computed(() => keyword.value || typeName.value || '全部店铺');
-const canUseNearby = computed(() => !keyword.value);
-const nearbyActive = computed(() => Boolean(canUseNearby.value && locationState.point));
+const canUseNearby = computed(() => true);
+const nearbyActive = computed(() => Boolean(locationState.point));
 const subtitle = computed(() => (keyword.value ? '搜索结果' : nearbyActive.value ? '附近优先' : '分类店铺'));
 const hasShops = computed(() => shops.value.length > 0);
+const listMode = computed(() => {
+  if (keyword.value) {
+    return '关键词';
+  }
+  if (nearbyActive.value) {
+    return '附近';
+  }
+  return typeId.value ? '分类' : '全城';
+});
 
 async function queryShops(page: number) {
-  const point = canUseNearby.value ? locationState.point || undefined : undefined;
-  if (typeId.value) {
-    return fetchShopsByType(typeId.value, page, point);
-  }
-  if (point) {
-    return fetchNearbyShops(page, point);
-  }
-  return fetchShopsByName(keyword.value || undefined, page);
+  return fetchShopDiscovery({
+    typeId: typeId.value,
+    keyword: keyword.value || undefined,
+    current: page,
+    point: locationState.point || undefined,
+  });
 }
 
 async function handleUseLocation() {
@@ -124,6 +131,20 @@ watch(
     </RouterLink>
     <p class="eyebrow">{{ subtitle }}</p>
     <h1>{{ title }}</h1>
+    <div class="list-signal-bar" aria-label="当前筛选信号">
+      <span>
+        <SlidersHorizontal :size="15" aria-hidden="true" />
+        {{ listMode }}
+      </span>
+      <span>
+        <BadgeCheck :size="15" aria-hidden="true" />
+        评分 / 距离 / 券包优先
+      </span>
+      <span>
+        <Ticket :size="15" aria-hidden="true" />
+        可交易店铺进入详情完成下单
+      </span>
+    </div>
     <div class="list-hero-actions">
       <button v-if="canUseNearby" class="location-toggle" type="button" :disabled="locationState.status === 'loading'" @click="nearbyActive ? handleClearLocation() : handleUseLocation()">
         <MapPin :size="17" aria-hidden="true" />
@@ -147,7 +168,13 @@ watch(
     </div>
 
     <div v-else-if="hasShops" class="shop-list">
-      <RouterLink v-for="shop in shops" :key="shop.id" class="shop-row" :to="{ name: 'shop-detail', params: { id: shop.id } }">
+      <component
+        :is="shop.orderable && shop.id ? RouterLink : 'article'"
+        v-for="shop in shops"
+        :key="`${shop.source}-${shop.sourceId || shop.id || shop.name}`"
+        class="shop-row"
+        :to="shop.orderable && shop.id ? { name: 'shop-detail', params: { id: shop.id } } : undefined"
+      >
         <img class="shop-row-cover" :src="shopCover(shop)" :alt="shop.name" />
         <div class="shop-row-main">
           <div class="shop-row-head">
@@ -163,9 +190,15 @@ watch(
             <MapPin :size="16" aria-hidden="true" />
             <span>{{ shop.area || '附近' }} · {{ shop.address || '地址待补充' }}</span>
           </p>
+          <div class="shop-row-tags">
+            <span>{{ shop.source === 'amap' ? '附近地点' : '已入驻店铺' }}</span>
+            <span>{{ shop.orderable ? '可看详情' : '外部 POI' }}</span>
+            <span v-if="shop.sold">已售 {{ shop.sold }}</span>
+            <span v-if="shop.geoStatus === 'verified'">坐标已校准</span>
+          </div>
         </div>
         <span v-if="formatDistance(shop.distance)" class="shop-distance">{{ formatDistance(shop.distance) }}</span>
-      </RouterLink>
+      </component>
     </div>
 
     <div v-else class="empty-state">

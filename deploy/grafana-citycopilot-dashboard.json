@@ -21,15 +21,37 @@
       "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(method_timed_seconds_bucket{application=\"city-copilot\"}[5m])) by (le, method))",
-          "legendFormat": "{{method}} p95"
+          "expr": "sum(rate(citycopilot_tool_call_duration_seconds_sum{application=\"city-copilot\"}[5m])) by (tool) / sum(rate(citycopilot_tool_call_duration_seconds_count{application=\"city-copilot\"}[5m])) by (tool)",
+          "legendFormat": "{{tool}} avg"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tool call rate",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(citycopilot_tool_call_count_total{application=\"city-copilot\"}[5m])) by (tool, outcome)",
+          "legendFormat": "{{tool}} {{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM call rate",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(citycopilot_llm_call_count_total{application=\"city-copilot\"}[5m])) by (operation, outcome)",
+          "legendFormat": "{{operation}} {{outcome}}"
         }
       ]
     },
     {
       "type": "stat",
       "title": "JVM memory used",
-      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 6 },
+      "gridPos": { "x": 0, "y": 16, "w": 8, "h": 6 },
       "targets": [
         {
           "expr": "sum(jvm_memory_used_bytes{application=\"city-copilot\"})",

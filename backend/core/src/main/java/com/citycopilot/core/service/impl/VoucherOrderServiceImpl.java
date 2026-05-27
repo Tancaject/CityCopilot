@@ -19,6 +19,7 @@ import com.citycopilot.core.utils.RedisIdWorker;
 import com.citycopilot.core.utils.SystemConstants;
 import com.citycopilot.core.utils.UserHolder;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import jakarta.annotation.Resource;
 import org.springframework.context.annotation.Lazy;
 import org.redisson.api.RLock;
@@ -77,6 +78,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Value("${citycopilot.seckill.stream-worker.enabled:true}")
     private boolean streamWorkerEnabled;
+    private volatile boolean seckillWorkerRunning;
 
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT;
     static {
@@ -88,7 +90,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         入队时，如果队列已满，线程会被阻塞，直到队列有空间。
         出队时，如果队列为空，线程会被阻塞，直到队列中有元素。
     */
-    private static final ExecutorService SECKILL_ORDER_EXECUTOR= Executors.newSingleThreadExecutor();//创建线程
+    private final ExecutorService seckillOrderExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "seckill-order-worker");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     @PostConstruct //当前类初始化完成后立即执行该方法
     private void init(){
@@ -98,14 +104,21 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             }
             return;
         }
-        SECKILL_ORDER_EXECUTOR.submit(new voucherOrderHandler());
+        seckillWorkerRunning = true;
+        seckillOrderExecutor.submit(new voucherOrderHandler());
+    }
+
+    @PreDestroy
+    private void shutdown() {
+        seckillWorkerRunning = false;
+        seckillOrderExecutor.shutdownNow();
     }
     //创建线程任务
     private class voucherOrderHandler implements Runnable{
 
         @Override
         public void run() {
-            while (true) {
+            while (seckillWorkerRunning && !Thread.currentThread().isInterrupted()) {
                 try {
                     // 从消息队列中获取订单信息
                     List<MapRecord<String, Object, Object>> list = stringRedisTemplate.opsForStream().read(
@@ -114,7 +127,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                             StreamOffset.create("stream.orders", ReadOffset.lastConsumed())
                     );
                     //判断消息是否获取成功
-                    if (list.isEmpty()||list==null){
+                    if (list == null || list.isEmpty()){
                         //获取失败，继续循环
                         continue;
                     }
@@ -126,6 +139,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                     //ACK确认
                     stringRedisTemplate.opsForStream().acknowledge("stream.orders","g1",record.getId());
                 } catch (Exception e) {
+                    if (isWorkerShutdown(e)) {
+                        break;
+                    }
                     log.error("处理订单异常", e);
                     handlePendingList();
                 }
@@ -133,7 +149,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
 
         private void handlePendingList() {//处理pending list里的消息
-            while (true) {
+            while (seckillWorkerRunning && !Thread.currentThread().isInterrupted()) {
                 try {
                     // 从pending list中获取订单信息
                     List<MapRecord<String, Object, Object>> list = stringRedisTemplate.opsForStream().read(
@@ -142,7 +158,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                             StreamOffset.create("stream.orders", ReadOffset.from("0"))
                     );
                     //判断消息是否获取成功
-                    if (list.isEmpty()||list==null){
+                    if (list == null || list.isEmpty()){
                         //获取失败，说明pending list里没有消息了，结束
                         break;
                     }
@@ -154,10 +170,29 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                     //ACK确认
                     stringRedisTemplate.opsForStream().acknowledge("stream.orders","g1",record.getId());
                 } catch (Exception e) {
+                    if (isWorkerShutdown(e)) {
+                        break;
+                    }
                     log.error("处理订单异常", e);
                 }
             }
         }
+    }
+
+    private boolean isWorkerShutdown(Exception error) {
+        if (!seckillWorkerRunning || Thread.currentThread().isInterrupted()) {
+            return true;
+        }
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof IllegalStateException
+                    && current.getMessage() != null
+                    && current.getMessage().contains("destroyed")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private IVoucherOrderService proxy;

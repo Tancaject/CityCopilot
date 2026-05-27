@@ -52,3 +52,103 @@
   expect_mode: REACT
   expect_tools:
     - ops_summary
+- name: shop_detail
+  input: "查看店铺详情"
+  expect_mode: REACT
+  expect_tools:
+    - get_shop_detail
+- name: shop_types
+  input: "有哪些店铺分类"
+  expect_mode: REACT
+  expect_tools:
+    - list_shop_types
+- name: nearby_hotpot_english
+  input: "nearby hotpot shops"
+  expect_mode: REACT
+  expect_tools:
+    - search_nearby_shops
+- name: voucher_english
+  input: "show coupons for this shop"
+  expect_mode: REACT
+  expect_tools:
+    - list_vouchers_by_shop
+- name: hot_blogs
+  input: "热门探店笔记"
+  expect_mode: REACT
+  expect_tools:
+    - list_hot_blogs
+- name: blog_detail
+  input: "查看笔记详情"
+  expect_mode: REACT
+  expect_tools:
+    - get_blog_detail
+- name: blog_likes
+  input: "这个笔记谁点赞了"
+  expect_mode: REACT
+  expect_tools:
+    - list_blog_likes
+- name: follow_feed
+  input: "我的关注动态"
+  expect_mode: REACT
+  expect_tools:
+    - get_follow_feed
+- name: check_follow
+  input: "我是否关注了这个用户"
+  expect_mode: REACT
+  expect_tools:
+    - check_follow_user
+- name: common_follows
+  input: "共同关注有哪些"
+  expect_mode: REACT
+  expect_tools:
+    - list_common_follows
+- name: like_blog_guard
+  input: "给这篇笔记点赞"
+  expect_mode: PLAN_EXECUTE
+  expect_tools:
+    - like_blog
+- name: follow_user_guard
+  input: "关注这个用户"
+  expect_mode: PLAN_EXECUTE
+  expect_tools:
+    - set_follow_user
+- name: geocode_address
+  input: "把地址转成经纬度"
+  expect_mode: REACT
+  expect_tools:
+    - geocode_address
+- name: search_geo_poi
+  input: "搜索高德 POI 火锅"
+  expect_mode: REACT
+  expect_tools:
+    - search_geo_poi
+- name: geo_batch_jobs
+  input: "查看地理任务列表"
+  expect_mode: REACT
+  expect_tools:
+    - list_geo_batch_jobs
+- name: start_geo_batch_guard
+  input: "批量地理编码这些店铺"
+  expect_mode: PLAN_EXECUTE
+  expect_tools:
+    - start_batch_geocode
+- name: retry_geo_batch_guard
+  input: "重试失败的地理批量任务"
+  expect_mode: PLAN_EXECUTE
+  expect_tools:
+    - retry_geo_batch_failed_items
+- name: audit_retention
+  input: "查看审计保留状态"
+  expect_mode: REACT
+  expect_tools:
+    - get_audit_retention_status
+- name: english_place_order
+  input: "place order for this voucher"
+  expect_mode: PLAN_EXECUTE
+  expect_tools:
+    - place_seckill_order
+- name: english_ops_summary
+  input: "ops summary"
+  expect_mode: REACT
+  expect_tools:
+    - ops_summary

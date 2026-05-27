@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { AlertCircle, BadgeCheck, Clock, Database, Loader2, ReceiptText, RefreshCw, Search, Store, Ticket } from '@lucide/vue';
+import { AlertCircle, AlertTriangle, BadgeCheck, Clock, Database, Loader2, ReceiptText, RefreshCw, Search, Store, Ticket } from '@lucide/vue';
 import { fetchAdminVoucherOrder, fetchOperationLogs, useVoucherOrder } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import { formatCents } from '../utils/assets';
@@ -18,9 +18,21 @@ const loading = ref(false);
 const usingOrder = ref(false);
 const auditLoading = ref(false);
 const errorMessage = ref('');
+const confirmUseOpen = ref(false);
 
 const canUseOrder = computed(() => order.value?.state === 'paid' || order.value?.status === 2);
 const canReadAudit = computed(() => hasPermission(authState.user, 'audit:read'));
+const orderSignals = computed(() => {
+  if (!order.value) {
+    return [];
+  }
+  return [
+    { label: '订单号', value: String(order.value.id) },
+    { label: '实付', value: formatCents(order.value.payValue) },
+    { label: '抵扣', value: formatCents(order.value.actualValue) },
+    { label: '状态', value: order.value.statusText || '状态待确认' },
+  ];
+});
 
 function formatTime(value?: string) {
   if (!value) {
@@ -48,6 +60,7 @@ async function loadOrder() {
   errorMessage.value = '';
   try {
     order.value = await fetchAdminVoucherOrder(orderId);
+    confirmUseOpen.value = false;
     await router.replace({ name: 'admin-orders', query: { id: String(orderId) } });
     await loadOrderAudit(orderId);
   } catch (error) {
@@ -75,13 +88,18 @@ async function loadOrderAudit(orderId: number) {
 }
 
 async function handleUseOrder() {
-  if (!order.value || !canUseOrder.value || !window.confirm('确认核销这张券？')) {
+  if (!order.value || !canUseOrder.value) {
+    return;
+  }
+  if (!confirmUseOpen.value) {
+    confirmUseOpen.value = true;
     return;
   }
   usingOrder.value = true;
   errorMessage.value = '';
   try {
     order.value = await useVoucherOrder(order.value.id);
+    confirmUseOpen.value = false;
     await loadOrderAudit(order.value.id);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '核销失败';
@@ -135,6 +153,13 @@ onMounted(() => {
     </div>
 
     <template v-else-if="order">
+    <section class="admin-order-command" aria-label="核销决策面板">
+      <article v-for="signal in orderSignals" :key="signal.label">
+        <span>{{ signal.label }}</span>
+        <strong>{{ signal.value }}</strong>
+      </article>
+    </section>
+
     <article class="order-card admin-order-card">
       <div class="order-main">
         <div class="order-icon">
@@ -176,10 +201,23 @@ onMounted(() => {
         <button type="button" :disabled="!canUseOrder || usingOrder" @click="handleUseOrder">
           <Loader2 v-if="usingOrder" class="spin" :size="14" aria-hidden="true" />
           <BadgeCheck v-else :size="14" aria-hidden="true" />
-          核销
+          {{ confirmUseOpen ? '确认核销' : '核销' }}
         </button>
       </div>
     </article>
+
+    <section v-if="confirmUseOpen" class="admin-use-confirm" aria-label="核销确认">
+      <AlertTriangle :size="20" aria-hidden="true" />
+      <div>
+        <strong>确认这张券已经到店消费？</strong>
+        <span>核销后会写入订单状态和审计日志，前台用户会看到该券已使用。</span>
+      </div>
+      <button type="button" :disabled="usingOrder" @click="handleUseOrder">
+        <Loader2 v-if="usingOrder" class="spin" :size="15" aria-hidden="true" />
+        确认核销
+      </button>
+      <button type="button" @click="confirmUseOpen = false">取消</button>
+    </section>
 
     <section v-if="canReadAudit" class="admin-order-audit" aria-label="订单操作日志">
       <div class="admin-order-audit-head">

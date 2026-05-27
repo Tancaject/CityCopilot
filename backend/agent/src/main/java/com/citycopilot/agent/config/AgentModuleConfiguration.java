@@ -1,6 +1,7 @@
 package com.citycopilot.agent.config;
 
 import com.citycopilot.agent.executor.AgentLlmClient;
+import com.citycopilot.agent.executor.CriticAgent;
 import com.citycopilot.agent.executor.HeuristicAgentLlmClient;
 import com.citycopilot.agent.executor.OpenAiCompatibleAgentLlmClient;
 import com.citycopilot.agent.executor.PlanExecuteExecutor;
@@ -15,6 +16,7 @@ import com.citycopilot.agent.trace.RedisTraceStore;
 import com.citycopilot.agent.trace.TraceStore;
 import com.citycopilot.core.agent.AgentTool;
 import com.citycopilot.core.config.AiProperties;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -64,12 +66,14 @@ public class AgentModuleConfiguration {
     public ToolGateway toolGateway(
             AgentToolRegistry registry,
             ObjectProvider<ToolAuditSink> auditSink,
-            ObjectProvider<ToolExecutionGuard> executionGuard
+            ObjectProvider<ToolExecutionGuard> executionGuard,
+            ObjectProvider<MeterRegistry> meterRegistry
     ) {
         return new ToolGateway(
                 registry,
                 auditSink.getIfAvailable(ToolAuditSink::noop),
-                executionGuard.getIfAvailable(ToolExecutionGuard::direct)
+                executionGuard.getIfAvailable(ToolExecutionGuard::direct),
+                meterRegistry.getIfAvailable()
         );
     }
 
@@ -81,7 +85,8 @@ public class AgentModuleConfiguration {
     @Bean
     public AgentLlmClient agentLlmClient(
             ObjectProvider<AiProperties> aiProperties,
-            ObjectProvider<RestTemplateBuilder> restTemplateBuilder
+            ObjectProvider<RestTemplateBuilder> restTemplateBuilder,
+            ObjectProvider<MeterRegistry> meterRegistry
     ) {
         AiProperties properties = aiProperties.getIfAvailable(AiProperties::new);
         AgentLlmClient fallback = new HeuristicAgentLlmClient(properties);
@@ -91,7 +96,7 @@ public class AgentModuleConfiguration {
                 .setConnectTimeout(Duration.ofSeconds(Math.min(3, timeoutSeconds)))
                 .setReadTimeout(Duration.ofSeconds(timeoutSeconds))
                 .build();
-        return new OpenAiCompatibleAgentLlmClient(restTemplate, properties, fallback);
+        return new OpenAiCompatibleAgentLlmClient(restTemplate, properties, fallback, meterRegistry.getIfAvailable());
     }
 
     @Bean
@@ -109,7 +114,17 @@ public class AgentModuleConfiguration {
     }
 
     @Bean
-    public PlanExecuteExecutor planExecuteExecutor(ToolGateway gateway, TraceStore traceStore) {
-        return new PlanExecuteExecutor(gateway, traceStore);
+    public CriticAgent criticAgent(AgentLlmClient llmClient) {
+        return new CriticAgent(llmClient);
+    }
+
+    @Bean
+    public PlanExecuteExecutor planExecuteExecutor(
+            ToolGateway gateway,
+            AgentLlmClient llmClient,
+            TraceStore traceStore,
+            CriticAgent criticAgent
+    ) {
+        return new PlanExecuteExecutor(llmClient, gateway, traceStore, 2, criticAgent);
     }
 }

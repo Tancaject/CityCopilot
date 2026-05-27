@@ -7,6 +7,7 @@ public record EvalCase(
         String input,
         String expectMode,
         List<String> expectTools,
-        List<String> expectKeywords
+        List<String> expectKeywords,
+        List<String> expectNoKeywords
 ) {
 }
