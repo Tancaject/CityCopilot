@@ -1,11 +1,14 @@
 package com.citycopilot.agent.executor;
 
 import com.citycopilot.agent.gateway.ToolCallContext;
-import com.citycopilot.agent.gateway.ToolGateway;
+import com.citycopilot.agent.gateway.ToolGatewayClient;
 import com.citycopilot.agent.gateway.ToolResult;
 import com.citycopilot.agent.trace.AgentTrace;
 import com.citycopilot.agent.trace.AgentTraceStep;
 import com.citycopilot.agent.trace.TraceStore;
+import com.citycopilot.agent.tool.ToolMetadata;
+import com.citycopilot.agent.tool.ToolPolicyEngine;
+import com.citycopilot.contract.tool.ToolAudience;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -16,12 +19,13 @@ import java.util.Map;
 import java.util.UUID;
 
 public final class ReActExecutor {
-    private final ToolGateway gateway;
+    private final ToolGatewayClient gateway;
     private final AgentLlmClient llmClient;
     private final TraceStore traceStore;
     private final int maxSteps;
+    private final ToolPolicyEngine toolPolicyEngine = new ToolPolicyEngine();
 
-    public ReActExecutor(ToolGateway gateway, AgentLlmClient llmClient, TraceStore traceStore, int maxSteps) {
+    public ReActExecutor(ToolGatewayClient gateway, AgentLlmClient llmClient, TraceStore traceStore, int maxSteps) {
         this.gateway = gateway;
         this.llmClient = llmClient;
         this.traceStore = traceStore;
@@ -40,7 +44,8 @@ public final class ReActExecutor {
         String finalAnswer = null;
 
         for (int index = 0; index < maxSteps; index++) {
-            AgentDecision decision = llmClient.next(message, gateway.tools(), List.copyOf(steps), hints == null ? Map.of() : hints);
+            List<ToolMetadata> availableTools = toolPolicyEngine.visibleTools(gateway.tools(), ToolAudience.CONSUMER);
+            AgentDecision decision = llmClient.next(message, availableTools, List.copyOf(steps), hints == null ? Map.of() : hints);
             if (decision.type() == AgentDecision.Type.FINAL) {
                 finalAnswer = decision.finalAnswer();
                 steps.add(AgentTraceStep.finalAnswer(index + 1, finalAnswer));
@@ -56,8 +61,17 @@ public final class ReActExecutor {
                 steps.add(AgentTraceStep.error(index + 1, "duplicate_tool_call", finalAnswer));
                 break;
             }
+            boolean allowed = availableTools.stream().anyMatch(tool -> tool.name().equals(decision.toolName()));
+            if (!allowed) {
+                finalAnswer = "当前 Agent 无权调用该工具。";
+                steps.add(AgentTraceStep.error(index + 1, "tool_not_allowed", finalAnswer));
+                break;
+            }
 
-            ToolResult result = gateway.invoke(decision.toolName(), decision.args(), context);
+            ToolCallContext invocationContext = context == null
+                    ? null
+                    : context.withIdempotencyKey(traceId + ":react:" + (index + 1));
+            ToolResult result = gateway.invoke(decision.toolName(), decision.args(), invocationContext);
             steps.add(AgentTraceStep.toolResult(index + 1, decision.toolName(), result));
             if (!result.ok() && !result.error().retryable()) {
                 finalAnswer = "工具调用失败：" + result.error().message();

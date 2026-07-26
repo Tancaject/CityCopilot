@@ -1,0 +1,22 @@
+{
+  "scenario": "POST http://127.0.0.1:8081/voucher-order/seckill/200 with one authenticated user per request",
+  "requests": 300,
+  "concurrency": 50,
+  "duration_seconds": 0.711,
+  "throughput_rps": 421.8,
+  "successes": 300,
+  "errors": 0,
+  "error_rate": 0.0,
+  "latency_ms": {
+    "mean": 89.72,
+    "p50": 31.31,
+    "p95": 340.08,
+    "p99": 546.28,
+    "max": 551.19
+  },
+  "error_codes": {},
+  "client": {
+    "python": "3.12.10",
+    "platform": "Windows-11-10.0.26200-SP0"
+  }
+}

@@ -3,8 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f55f2d" />
+    <meta name="theme-color" content="#fdfbf4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e1916" media="(prefers-color-scheme: dark)" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>CityCopilot</title>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('citycopilot:theme');
+          var theme = stored || 'light';
+          document.documentElement.dataset.theme = theme;
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

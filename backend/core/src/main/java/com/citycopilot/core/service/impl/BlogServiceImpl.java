@@ -37,8 +37,6 @@ import static com.citycopilot.core.utils.RedisConstants.FEED_KEY;
  *  服务实现类
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Service
 public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IBlogService {
@@ -64,7 +62,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         UserDTO user = UserHolder.getUser();
         if (user==null)return;//如果用户未登录直接返回，不需要查询是否点赞
         Long userId= user.getId();
-        //判断是否已经点过赞了
         Double score=stringRedisTemplate.opsForZSet().score(BLOG_LIKED_KEY+blog.getId(),userId.toString());
         blog.setIsLike(score!=null );
     }
@@ -75,7 +72,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         Page<Blog> page = query()
                 .orderByDesc("liked")
                 .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
-        // 获取当前页数据
         List<Blog> records = page.getRecords();
         // 查询用户
         records.forEach(blog -> {
@@ -89,7 +85,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     public Result likeBlog(Long id) {
         //获得当前用户id
         Long userId= UserHolder.getUser().getId();
-        //判断是否已经点过赞了
         Double score=stringRedisTemplate.opsForZSet().score(BLOG_LIKED_KEY+id,userId.toString());
         //没点过赞，则点赞+1
         if (score==null){
@@ -116,7 +111,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         List<Long> ids = top5.stream().map(Long::valueOf).collect(Collectors.toList());
         //根据id查用户
         List<UserDTO> userDTOS = userService.listByIds(ids).stream().map(user -> BeanUtil.copyProperties(user, UserDTO.class)).collect(Collectors.toList());
-        //返回
         return Result.ok(userDTOS);
     }
 
@@ -134,7 +128,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         List<Follow> follows = followService.query().eq("follow_user_id", userDTO.getId()).list();
         //推送笔记给粉丝
         for (Follow follow:follows){
-            //获取粉丝id
             Long userId = follow.getUserId();
             //推送
             String key=FEED_KEY+userId;
@@ -145,7 +138,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Override
     public Result queryBlogOfFollow(Long lastId, Integer offset) {
-        // 获取当前用户
         Long userId = UserHolder.getUser().getId();
         // 从 Redis ZSet 中滚动分页查询：ZREVRANGEBYSCORE feed:{userId} lastId 0 WITHSCORES LIMIT offset count
         String key = FEED_KEY + userId;

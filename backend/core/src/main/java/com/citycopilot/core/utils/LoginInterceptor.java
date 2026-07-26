@@ -12,7 +12,6 @@ public class LoginInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        // 判断是否需要登录（ThreadLocal 中是否有用户）
         if (UserHolder.getUser() == null) {
             response.setStatus(401);
             response.setCharacterEncoding(StandardCharsets.UTF_8.name());

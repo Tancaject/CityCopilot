@@ -12,14 +12,13 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestHeader;
 
 /**
  * <p>
  *  前端控制器
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @RestController
 @RequestMapping("/voucher-order")
@@ -28,8 +27,11 @@ public class VoucherOrderController {
     private IVoucherOrderService voucherOrderService;
 
     @PostMapping("seckill/{id}")
-    public Result seckillVoucher(@PathVariable("id") Long voucherId) {
-        return voucherOrderService.seckillVoucher(voucherId);
+    public Result seckillVoucher(
+            @PathVariable("id") Long voucherId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
+    ) {
+        return voucherOrderService.seckillVoucher(voucherId, idempotencyKey);
     }
 
     @GetMapping("of/me")

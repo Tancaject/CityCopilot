@@ -9,9 +9,10 @@ local userId = ARGV[2]
 local orderId = ARGV[3]
 
 ---库存key
-local stockKey = 'seckill:stock:' .. voucherId
+local stockKey = 'coupon:stock:' .. voucherId
 ---订单key
-local orderKey = 'seckill:order:' .. voucherId
+local orderKey = 'coupon:buyer:' .. voucherId
+local reservationKey = 'coupon:reservation:' .. orderId
 
 ---判断库存是否充足
 local stock = redis.call('get', stockKey)
@@ -28,6 +29,12 @@ end
 redis.call('incrby', stockKey, -1)
 ---写入用户id
 redis.call('sadd', orderKey, userId)
+redis.call('hset', reservationKey,
+        'orderId', orderId,
+        'voucherId', voucherId,
+        'userId', userId,
+        'status', 'RESERVED')
+redis.call('expire', reservationKey, 604800)
 ---发送消息到消息队列中
-redis.call('xadd','stream.orders','*','userId',userId,'voucherId',voucherId,'id',orderId)
+redis.call('xadd','stream.coupon-orders','*','userId',userId,'voucherId',voucherId,'id',orderId)
 return 0

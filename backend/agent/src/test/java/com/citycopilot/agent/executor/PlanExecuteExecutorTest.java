@@ -4,19 +4,76 @@ import com.citycopilot.agent.gateway.ToolAuditSink;
 import com.citycopilot.agent.gateway.ToolCallContext;
 import com.citycopilot.agent.gateway.ToolExecutionException;
 import com.citycopilot.agent.gateway.ToolGateway;
+import com.citycopilot.agent.confirmation.InMemoryPendingActionStore;
+import com.citycopilot.agent.confirmation.PendingAction;
 import com.citycopilot.agent.tool.AgentToolRegistry;
 import com.citycopilot.agent.trace.InMemoryTraceStore;
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.agent.trace.AgentTraceStep;
+import com.citycopilot.contract.tool.AgentTool;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlanExecuteExecutorTest {
+
+    @Test
+    void heuristicFallbackRefusesWriteIntentWithoutInventingIdentifiers() {
+        DemoTools tools = new DemoTools();
+        PlanExecuteExecutor executor = new PlanExecuteExecutor(
+                new ScriptedAgentLlmClient(List.of(), List.of()),
+                new ToolGateway(AgentToolRegistry.fromBeans(List.of(tools)), ToolAuditSink.noop()),
+                new InMemoryTraceStore(),
+                0
+        );
+
+        AgentExecutionResult result = executor.execute(
+                "帮我下单并支付",
+                new ToolCallContext("user-1", Set.of("order:write")),
+                Map.of()
+        );
+
+        assertTrue(result.finalAnswer().contains("需要 AI 服务可用"));
+        assertTrue(result.steps().stream().noneMatch(step -> "tool_call".equals(step.type())));
+        assertEquals(0, tools.orderAttempts);
+    }
+
+    @Test
+    void streamingExecutionEmitsToolBeforeDeltas() {
+        List<String> eventOrder = new ArrayList<>();
+        PlanExecuteExecutor executor = new PlanExecuteExecutor(
+                new ScriptedAgentLlmClient(
+                        List.of(),
+                        List.of(
+                                """
+                                {"steps":[{"idx":1,"tool":"search_nearby_shops","args":{"current":1,"size":5,"x":120.1,"y":30.2},"highRisk":false}],"finalAnswerTemplate":"done"}
+                                """,
+                                "结果已生成"
+                        )
+                ),
+                new ToolGateway(AgentToolRegistry.fromBeans(List.of(new DemoTools())), ToolAuditSink.noop()),
+                new InMemoryTraceStore(),
+                0
+        );
+
+        AgentExecutionResult result = executor.executeStreaming(
+                "找附近店铺",
+                new ToolCallContext("anonymous", Set.of()),
+                Map.of(),
+                step -> eventOrder.add(step.type()),
+                delta -> eventOrder.add("delta")
+        );
+
+        assertEquals("tool_call", eventOrder.get(0));
+        assertEquals("tool_result", eventOrder.get(1));
+        assertEquals("delta", eventOrder.get(2));
+        assertEquals("结果已生成", result.finalAnswer());
+    }
 
     @Test
     void refusesHighRiskWriteWithoutPermissionBeforeExecutingReadSteps() {
@@ -152,6 +209,46 @@ class PlanExecuteExecutorTest {
         assertTrue(result.finalAnswer().contains("missing explicit order confirmation"));
         assertEquals("critic_rejected", result.steps().get(1).errorCode());
         assertEquals(0, tools.orderAttempts);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void confirmationResumesTheOriginalMultiStepPlan() {
+        InMemoryTraceStore traceStore = new InMemoryTraceStore();
+        InMemoryPendingActionStore pendingStore = new InMemoryPendingActionStore();
+        DemoTools tools = new DemoTools();
+        ToolGateway gateway = new ToolGateway(
+                AgentToolRegistry.fromBeans(List.of(tools)),
+                ToolAuditSink.noop()
+        );
+        PlanExecuteExecutor executor = new PlanExecuteExecutor(
+                new ScriptedAgentLlmClient(List.of(), List.of("""
+                        {"steps":[
+                          {"idx":1,"tool":"select_shop","args":{},"highRisk":false},
+                          {"idx":2,"tool":"place_seckill_order","args":{"voucherId":"$step1.shopId"},"highRisk":true}
+                        ],"finalAnswerTemplate":"ordered"}
+                        """, "APPROVE")),
+                gateway,
+                traceStore,
+                0,
+                null,
+                pendingStore
+        );
+        ToolCallContext context = new ToolCallContext("user-1", Set.of("order:write"));
+
+        AgentExecutionResult paused = executor.execute("查找并下单", context, Map.of());
+        AgentTraceStep confirmation = paused.steps().stream()
+                .filter(step -> "confirmation".equals(step.type()))
+                .findFirst()
+                .orElseThrow();
+        String pendingId = String.valueOf(((Map<String, Object>) confirmation.observation()).get("pendingId"));
+        PendingAction checkpoint = pendingStore.consume(pendingId).orElseThrow();
+        AgentExecutionResult resumed = executor.resume(checkpoint, context);
+
+        assertEquals("已批准的计划执行并复核完成。", resumed.finalAnswer());
+        assertEquals(1, tools.orderAttempts);
+        assertTrue(checkpoint.completedOutputs().containsKey(1));
+        assertEquals(2, checkpoint.steps().size());
     }
 
     static final class DemoTools {

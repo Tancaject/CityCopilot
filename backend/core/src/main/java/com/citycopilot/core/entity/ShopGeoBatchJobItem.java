@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
-@TableName("tb_geo_batch_job_item")
+@TableName("geo_batch_job_item")
 public class ShopGeoBatchJobItem implements Serializable {
 
     private static final long serialVersionUID = 1L;

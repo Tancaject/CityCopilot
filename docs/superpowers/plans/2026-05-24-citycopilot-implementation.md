@@ -10,11 +10,11 @@
 
 | 模块 | 职责 |
 |---|---|
-| `backend/core` | 店铺、优惠券、订单、秒杀、Geo、审计、权限等核心业务 |
+| `backend/core` | 店铺、优惠券、订单、秒杀、Geo、审计、权限、混合发现等核心业务 |
 | `backend/agent` | 工具注册表、工具网关、ReAct、Plan-Execute-Replan、SSE、Trace、运营 Agent、审查 Agent |
 | `backend/mcp-server` | 复用工具注册表和工具网关，对外暴露 MCP tool callbacks 与 HTTP 兼容工具接口 |
 | `backend/eval` | YAML 用例、评测运行器、Markdown 评测报告 |
-| `frontend` | Vue 3 前端，包含 AI 面板、工具卡片、Trace 看板和运营页面 |
+| `frontend` | Vue 3 前端，包含用户首页、消费位置选择、混合发现店铺列表、AI 面板、工具卡片、Trace 看板和运营页面 |
 
 依赖方向：`mcp-server -> agent -> core`，`eval -> agent`。
 
@@ -25,20 +25,21 @@
 | 项目结构 | 已完成 | Java 后端已移动到 `backend/` 下，形成 4 个 Maven 模块 |
 | Git 基线 | 已完成 | 代码已推过 GitHub，当前分支 `codex-project-structure` 持续提交 |
 | Gitignore 与敏感信息保护 | 已完成 | 已排除日志、环境文件、构建产物和常见敏感文件 |
-| 历史静态前端清理 | 已完成 | `backend/core` 已移除历史 Nginx 静态页面和 Nginx 二进制，前端统一由 `frontend/` 维护 |
+| 历史静态前端清理 | 部分完成 | 当前主前端已统一由 `frontend/` 维护；`backend/core/src/main/resources/nginx-1.18.0` 仍残留历史 Nginx/静态资源，不能再作为新 UI 入口 |
 | 工具注册表 | 已完成 | Spring bean 扫描 `@AgentTool`，主源码注册 27 个工具名 |
 | 工具网关 | 已完成 | 参数校验、权限校验、标准错误、审计、指标和 Resilience4j 已接入 |
 | ReAct 执行器 | 已完成 | 支持单步和多步工具调用、重复调用保护、Trace 持久化 |
 | Plan-Execute-Replan 执行器 | 已完成 | LLM 优先规划、引用解析、失败重规划、权限预检、审查门禁 |
 | 对话 Agent | 已完成 | `/agent/chat` 通过 SSE 输出 `status`、`traceId`、`tool`、`error`、`final` |
-| 前端 Agent 面板 | 已完成 | AI 面板使用 `/agent/chat`，渲染工具卡和 traceId；旧 `/ai/chat` 已下线 |
+| 前端 Agent 面板 | 已完成 | AI 面板主链路使用 `/agent/chat`，渲染工具卡和 traceId；旧 `/ai/chat` 仍作为前端兜底兼容路径 |
+| 附近混合发现 | 已完成 | `/shop/discovery` 聚合本地店铺和高德周边 POI，前端共享消费位置并按 `source/orderable` 决定是否进入交易详情 |
 | Trace 看板 | 已完成 | 后端 trace list/detail API 与前端看板已完成，后端要求 `audit:read` 权限 |
 | MCP Server | 部分完成 | HTTP tools、权限过滤、Spring AI MCP callbacks、8090 配置、客户端样例和 HTTP smoke 脚本已补；真实 MCP 客户端验收待做 |
 | 运营 Agent | 部分完成 | Redis Stream 队列、ack、结果保留、最近结果查询、结构化处理和 live 工具网关执行已完成；真实数据调参待做 |
 | 审查 Agent | 已完成 | 高风险工具执行前 fail-closed 审查 |
 | 评测框架 | 部分完成 | 30 条 YAML case、fail-on-gate、Markdown 报告、失败原因分布、离线指标和 OpenAI-compatible provider 模式已完成；带真实 key 的指标待跑 |
 | 可观测性 | 部分完成 | Actuator、Prometheus、Grafana JSON、工具指标、LLM 指标和 smoke 脚本已完成；真实 dashboard 验收待做 |
-| 文档与简历材料 | 部分完成 | README、`docs/RESUME.md`、MCP 文档和离线指标已更新；demo、压测和真实指标待补 |
+| 文档与简历材料 | 部分完成 | README、`docs/RESUME.md`、MCP 文档、混合发现文档和离线指标已更新；demo、真实 provider 指标和 MCP 客户端证据待补 |
 
 ## 已完成的安全修复
 
@@ -92,7 +93,7 @@
 
 - [ ] 初始化 `citycopilot` 数据库并导入 `citycopilot.sql`。
 - [ ] 启动 Redis，验证登录、店铺、优惠券、订单基础链路。
-- [ ] 配置 AMap key，验证地址解析、POI 搜索、批量 Geo 任务。
+- [ ] 配置 AMap Web 服务 Key 和前端 JS Key，验证地址解析、POI 搜索、地图选点、`/shop/discovery` 混合发现、批量 Geo 任务。
 - [ ] 记录失败项、必要环境变量和修复方式。
 
 验收口径：核心业务 API、Agent 工具调用和 Geo 工具能在真实依赖下跑通。
@@ -112,8 +113,8 @@
 
 - [ ] 启动 Prometheus，确认能 scrape `/actuator/prometheus`。
 - [ ] 导入 Grafana dashboard JSON，确认工具和 LLM 指标可见。
-- [ ] 对秒杀或关键工具做一次小规模压测。
-- [ ] 记录 QPS、p95、错误率和限流/熔断效果。
+- [x] 对秒杀或关键工具做一次小规模压测（JMeter 脚本：`tools/loadtest/CityCopilot-Seckill.jmx`）。
+- [x] 记录 QPS、p95、错误率和限流/熔断效果。实测：下单接口 200 并发 ≈ 2700 QPS、P99 105ms、错误率 0%；5000 用户抢 100 库存场景成单恰好 100、零超卖、一人一单 100%（报告留底）。
 - [x] 提供 Prometheus 指标 smoke 脚本：`tools/smoke_observability.ps1`。
 
 验收口径：README 或简历说明里有一组真实压测和可观测性数字。
@@ -124,17 +125,19 @@
 - [ ] Demo 覆盖用户对话、工具卡片、Plan-Execute、Trace 看板。
 - [ ] 可选展示 MCP 客户端调用。
 - [ ] 将 demo 链接、关键截图或说明补到 README。
-- [ ] 根据真实指标更新 `docs/RESUME.md`。
+- [x] 根据秒杀压测数字更新 `docs/RESUME.md`。
+- [ ] 根据真实 provider / MCP / AMap 验收结果继续更新 `docs/RESUME.md`。
 
 验收口径：项目可以作为 GitHub 简历项目直接展示。
 
 ## 后续清理候选
 
 - [ ] 将 `AiChatRequest` 从 `core` 迁到 `agent`，减少 core 对 Agent 请求模型的认知。
+- [ ] 决定是否彻底移除旧 `/ai/chat` 兜底；若移除，需要同步删除前端 `sendAiChat` fallback 和后端 `AiController`/`AiAssistantService`。
 - [x] 给 MCP HTTP `tools/list` 增加基于登录用户的工具过滤。
 - [x] 增加 live eval 的失败原因分布。
 - [x] 给运营 Agent 增加最近结果查询 API。
-- [x] 梳理并移除 `backend/core/src/main/resources/nginx-1.18.0/html` 历史静态页面。
+- [ ] 清理 `backend/core/src/main/resources/nginx-1.18.0` 历史静态页面和 Nginx 二进制，或明确作为归档资源并从打包路径排除。
 
 ## 验证命令
 

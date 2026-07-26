@@ -1,0 +1,35 @@
+# E5 条件式拆分决策
+
+日期：2026-07-26  
+结论：**本里程碑不继续抽取 Place Service，也不把 Ops Worker 拆成独立部署。**
+
+这不是未完成项，而是按计划中的指标门禁作出的停止决策。
+
+## Place
+
+本轮验证中，停止 Commerce 后 Core health 仍为 `UP`，Place 的 `shop-type/list` 读取成功，交易入口在约 1.5 秒内以稳定 `COMMERCE_UNAVAILABLE` 失败。现有证据没有显示：
+
+- GEO/搜索与交易需要不同扩缩容曲线；
+- AMap 或批任务正在拖累交易 API；
+- 店铺索引需要独立发布资源；
+- Commerce 已稳定跨越一个生产里程碑。
+
+因此继续拆 Place 只会增加一次数据库迁移和同步投影，尚无可量化收益。
+
+## Ops Worker
+
+Ops Agent 已使用独立数据库、Reader/Executor 身份、线程池、RocketMQ Consumer Group、租约与状态机。容器重启后已完成 Case、execution 和 verification 记录全部恢复。现有证据没有显示：
+
+- Ops backlog 影响 Consumer Agent 延迟；
+- Ops 有显著不同的发布周期或资源曲线；
+- 需要两个以上独立扩缩容的 Worker 实例。
+
+因此保留 “Agent” 名称和完整 Agent 能力，但继续在同一 `agent-service` 内进行进程内资源隔离。未来只有上述指标触发时才拆部署。
+
+## 重新评估指标
+
+- Place 与交易的独立峰值、P95/P99 和 CPU/内存曲线；
+- AMap 限流/熔断对交易 API 的相关性；
+- Ops queue depth、oldest case age、event-to-diagnosis latency；
+- Consumer chat P95 与 Ops backlog 的相关性；
+- 独立发布次数和故障域事件。

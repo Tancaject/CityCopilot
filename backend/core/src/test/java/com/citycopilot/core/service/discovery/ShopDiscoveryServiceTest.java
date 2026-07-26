@@ -88,6 +88,45 @@ class ShopDiscoveryServiceTest {
     }
 
     @Test
+    void discoverReturnsAmapResultsWhenLocalNearbyCandidatesAreEmpty() {
+        GeoProperties geoProperties = new GeoProperties();
+        geoProperties.setShopPageSize(10);
+        geoProperties.setMaxShopPageSize(20);
+        geoProperties.setNearbyRadiusMeters(5000D);
+        ShopDiscoveryService service = new ShopDiscoveryService(List.of(
+                query -> List.of(),
+                query -> query.hasValidPoint() ? List.of(amap("amap-near", "Nearby Amap", "Around Road", 130D)) : List.of()
+        ), geoProperties);
+
+        Result result = service.discover(query(1, 10));
+
+        assertTrue(result.getSuccess());
+        List<ShopDiscoveryItemDTO> items = items(result);
+        assertEquals(1, items.size());
+        assertEquals("Nearby Amap", items.get(0).getName());
+        assertEquals("amap", items.get(0).getSource());
+        assertEquals(1L, result.getTotal());
+    }
+
+    @Test
+    void discoverDoesNotShowGenericLocalListWhenPointQueryHasNoNearbyCandidates() {
+        GeoProperties geoProperties = new GeoProperties();
+        geoProperties.setShopPageSize(10);
+        geoProperties.setMaxShopPageSize(20);
+        geoProperties.setNearbyRadiusMeters(5000D);
+        ShopDiscoveryItemDTO fallbackShop = local("9", null, "Fallback Local", "Seed Road", null);
+        ShopDiscoveryService service = new ShopDiscoveryService(List.of(
+                query -> query.hasValidPoint() ? List.of() : List.of(fallbackShop)
+        ), geoProperties);
+
+        Result result = service.discover(query(1, 10));
+
+        assertTrue(result.getSuccess());
+        assertTrue(items(result).isEmpty());
+        assertEquals(0L, result.getTotal());
+    }
+
+    @Test
     void discoverRejectsInvalidCoordinates() {
         ShopDiscoveryService service = discoveryService(List.of(), List.of());
 

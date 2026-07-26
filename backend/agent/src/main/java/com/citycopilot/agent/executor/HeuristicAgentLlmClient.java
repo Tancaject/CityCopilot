@@ -3,7 +3,7 @@ package com.citycopilot.agent.executor;
 import com.citycopilot.agent.gateway.ToolResult;
 import com.citycopilot.agent.trace.AgentTraceStep;
 import com.citycopilot.agent.tool.ToolMetadata;
-import com.citycopilot.core.config.AiProperties;
+import com.citycopilot.agent.config.AgentAiProperties;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -11,9 +11,9 @@ import java.util.Locale;
 import java.util.Map;
 
 public final class HeuristicAgentLlmClient implements AgentLlmClient {
-    private final AiProperties aiProperties;
+    private final AgentAiProperties aiProperties;
 
-    public HeuristicAgentLlmClient(AiProperties aiProperties) {
+    public HeuristicAgentLlmClient(AgentAiProperties aiProperties) {
         this.aiProperties = aiProperties;
     }
 
@@ -40,6 +40,11 @@ public final class HeuristicAgentLlmClient implements AgentLlmClient {
             }
         }
         String normalized = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        if (containsAny(normalized, "下单", "支付", "退款", "取消订单", "place order", "pay", "refund", "cancel order")) {
+            return AgentDecision.finalAnswer(
+                    "需要 AI 服务可用并明确识别目标后，才能执行下单、支付、退款或取消订单等写操作。"
+            );
+        }
         if (containsAny(normalized, "订单", "order")) {
             return AgentDecision.callTool("get_my_orders", Map.of("current", 1));
         }

@@ -16,6 +16,9 @@ public class ShopDiscoveryItemDTO {
     private String images;
     private String area;
     private String address;
+    private String tel;
+    private String businessArea;
+    private String tag;
     private Double x;
     private Double y;
     private String poiId;

@@ -40,14 +40,11 @@ public class CacheClient {
         String key=keyPrefix + id;
         // 通过redis查商户缓存
         String json = stringRedisTemplate.opsForValue().get(key);
-        // 判断redis中是否存在
         if (StrUtil.isNotBlank(json)) {
             // 存在则直接返回
             return JSONUtil.toBean(json, type);
         }
-        //判断命中的是否是空值“”
         if (json!=null){
-            //返回错误信息
             return null;
         }
         // 不存在则查数据库
@@ -56,7 +53,6 @@ public class CacheClient {
         if (r == null) {
             //将空值写入redis
             stringRedisTemplate.opsForValue().set(key,"",CACHE_NULL_TTL,TimeUnit.MINUTES);
-            //返回错误信息
             return null;
         }
         // 存在，写入redis并设置超时时间
@@ -69,7 +65,6 @@ public class CacheClient {
         String key = keyPrefix + id;
         //从redis查询商铺缓存
         String json = stringRedisTemplate.opsForValue().get(key);
-        //判断是否存在
         if (StrUtil.isBlank(json)) {
             //不存在，直接返回null（逻辑过期方案假设热点数据已预热）
             return null;
@@ -78,18 +73,14 @@ public class CacheClient {
         RedisData redisData = JSONUtil.toBean(json, RedisData.class);
         R r = JSONUtil.toBean((cn.hutool.json.JSONObject) redisData.getData(), type);
         LocalDateTime expireTime = redisData.getExpireTime();
-        //判断是否过期
         if (expireTime.isAfter(LocalDateTime.now())) {
             //未过期，直接返回信息
             return r;
         }
         //已过期，需要缓存重建
-        //获取互斥锁
         String lockKey = LOCK_SHOP_KEY + id;
         boolean isLock = tryLock(lockKey);
-        //判断是否获取锁成功
         if (isLock) {
-            //获取锁成功，二次检查缓存是否过期（Double-Check）
             json = stringRedisTemplate.opsForValue().get(key);
             if (StrUtil.isNotBlank(json)) {
                 redisData = JSONUtil.toBean(json, RedisData.class);
@@ -114,7 +105,6 @@ public class CacheClient {
                 }
             });
         }
-        //返回过期的信息（保证可用性）
         return r;
     }
 

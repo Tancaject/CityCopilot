@@ -13,6 +13,10 @@ import com.citycopilot.core.service.IShopTypeService;
 import com.citycopilot.core.service.OperationLogService;
 import com.citycopilot.core.utils.CacheClient;
 import com.citycopilot.core.utils.SystemConstants;
+import com.citycopilot.core.utils.UserHolder;
+import com.citycopilot.core.dto.UserDTO;
+import com.citycopilot.core.security.ShopAccessDeniedException;
+import com.citycopilot.core.security.ShopOwnershipPolicy;
 import jakarta.annotation.Resource;
 import org.springframework.data.geo.Distance;
 import org.springframework.data.geo.GeoResult;
@@ -40,8 +44,6 @@ import static com.citycopilot.core.utils.RedisConstants.*;
  * 服务实现类
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Service
 public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IShopService {
@@ -60,6 +62,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     @Resource
     private IShopTypeService shopTypeService;
+
+    @Resource
+    private ShopOwnershipPolicy shopOwnershipPolicy;
 
     @Override
     public Result queryShopById(Long id) {
@@ -81,6 +86,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             operationLogService.record("shop", "shop_create", "shop", null, null, null, shop, false, validation.getErrorMsg());
             return validation;
         }
+        shopOwnershipPolicy.assignOwnerOnCreate(shop, UserHolder.getUser());
         applyShopDefaults(shop);
         save(shop);
         Shop after = getById(shop.getId());
@@ -88,60 +94,6 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         operationLogService.record("shop", "shop_create", "shop", shop.getId(), String.valueOf(shop.getId()), null, after, true, null);
         return Result.ok(shop.getId());
     }
-
-    /*public Shop queryWithMutex(Long id){//互斥锁解决缓存击穿
-        String key=CACHE_SHOP_KEY + id;
-        // 通过redis查商户缓存
-        String shopJson = stringRedisTemplate.opsForValue().get(key);
-        // 判断redis中是否存在
-        if (StrUtil.isNotBlank(shopJson)) {
-            // 存在则直接返回
-            Shop shop = JSONUtil.toBean(shopJson, Shop.class);
-            return shop;
-        }
-        //判断命中的是否是空值“”
-        if (shopJson!=null){
-            //返回错误信息
-            return null;
-        }
-        //获取互斥锁
-        String lockKey=LOCK_SHOP_KEY+id;
-        Shop shop = null;
-        try {
-            boolean isLock=tryLock(lockKey);
-            //判断是否获取成功
-            if (!isLock){
-                //失败，则休眠并重试
-                Thread.sleep(50);
-                return queryWithMutex(id);
-            }
-            //成功，先二次检查缓存（Double-Check），避免重复查询数据库
-            shopJson = stringRedisTemplate.opsForValue().get(key);
-            if (StrUtil.isNotBlank(shopJson)) {
-                return JSONUtil.toBean(shopJson, Shop.class);
-            }
-            //缓存仍不存在，查数据库
-            shop = getById(id);
-            // 数据库中也不存在，则返回错误
-            if (shop == null) {
-                //将空值写入redis
-                stringRedisTemplate.opsForValue().set(key,"",CACHE_NULL_TTL,TimeUnit.MINUTES);
-                //返回错误信息
-                return null;
-            }
-            // 存在，写入redis并设置超时时间
-            stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop), CACHE_SHOP_TTL,
-                    TimeUnit.MINUTES);
-
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        } finally {
-            //释放互斥锁
-            unLock(lockKey);
-        }
-        return shop;
-    }*/
-
 
     @Override
     @Transactional
@@ -161,6 +113,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             operationLogService.record("shop", "shop_update", "shop", id, String.valueOf(id), null, shop, false, "店铺不存在");
             return Result.fail("SHOP_NOT_FOUND", "店铺不存在");
         }
+        shopOwnershipPolicy.assertWritable(before, UserHolder.getUser());
         // 更新数据库
         updateById(shop);
         // 删除缓存
@@ -240,6 +193,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             operationLogService.record("geo", "shop_geo_update", "shop", request.getId(), String.valueOf(request.getId()), null, request, false, "店铺不存在");
             return Result.fail("SHOP_NOT_FOUND", "店铺不存在");
         }
+        shopOwnershipPolicy.assertWritable(before, UserHolder.getUser());
 
         Shop update = new Shop()
                 .setId(request.getId())
@@ -263,9 +217,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Override
     public Result queryShopByType(Integer typeId, Integer current, Integer size, Double x, Double y) {
         int pageSize = shopPageSize(size);
-        //判断是否需要根据坐标查询
         if (x==null||y==null){
-            //不需要，直接查
             Page<Shop> page = query().eq("type_id", typeId).page(new Page<>(current, pageSize));
             return Result.ok(page);
         }
@@ -358,5 +310,14 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         return geoProperties == null
                 ? SystemConstants.DEFAULT_PAGE_SIZE
                 : geoProperties.resolveShopPageSize(requestedSize);
+    }
+
+    @Override
+    public void assertWritableByCurrentUser(Long shopId) {
+        Shop shop = getById(shopId);
+        if (shop == null) {
+            throw new IllegalArgumentException("店铺不存在");
+        }
+        shopOwnershipPolicy.assertWritable(shop, UserHolder.getUser());
     }
 }

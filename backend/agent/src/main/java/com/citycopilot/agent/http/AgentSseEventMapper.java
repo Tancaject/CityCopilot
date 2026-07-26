@@ -20,6 +20,7 @@ public final class AgentSseEventMapper {
         for (AgentTraceStep step : result.steps()) {
             switch (step.type()) {
                 case "tool_call", "tool_result" -> events.add(new AgentSseEvent("tool", toolPayload(step)));
+                case "confirmation" -> events.add(new AgentSseEvent("confirmation", confirmationPayload(step)));
                 case "error" -> events.add(new AgentSseEvent("error", Map.of(
                         "code", step.errorCode(),
                         "message", step.message()
@@ -44,6 +45,29 @@ public final class AgentSseEventMapper {
             )));
         }
         return events;
+    }
+
+    public static AgentSseEvent fromStep(AgentTraceStep step) {
+        return switch (step.type()) {
+            case "tool_call", "tool_result" -> new AgentSseEvent("tool", toolPayload(step));
+            case "confirmation" -> new AgentSseEvent("confirmation", confirmationPayload(step));
+            case "error" -> new AgentSseEvent("error", Map.of(
+                    "code", step.errorCode(),
+                    "message", step.message()
+            ));
+            default -> null;
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> confirmationPayload(AgentTraceStep step) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("toolName", step.toolName());
+        payload.put("args", step.args());
+        if (step.observation() instanceof Map<?, ?> details) {
+            details.forEach((key, value) -> payload.put(String.valueOf(key), value));
+        }
+        return payload;
     }
 
     private static Map<String, Object> toolPayload(AgentTraceStep step) {

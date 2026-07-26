@@ -2,8 +2,8 @@ package com.citycopilot.agent.ops;
 
 import com.citycopilot.agent.gateway.ToolGateway;
 import com.citycopilot.agent.tool.AgentToolRegistry;
-import com.citycopilot.core.agent.AgentTool;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.tool.AgentTool;
+import com.citycopilot.contract.security.PermissionCodes;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -33,7 +33,7 @@ class OpsAgentServiceTest {
         assertEquals("上海", result.get("scopeCity"));
         assertEquals(25, result.get("limit"));
         assertEquals("start_batch_geocode", result.get("recommendedTool"));
-        assertEquals("plan_only", result.get("executionMode"));
+        assertEquals("legacy_plan_only", result.get("executionMode"));
     }
 
     @Test
@@ -69,8 +69,7 @@ class OpsAgentServiceTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void executesGeoCalibrationToolWithPayloadArgsWhenGatewayIsAvailable() {
+    void legacyGeoCalibrationNeverExecutesWriteToolsWithoutCaseApproval() {
         ToolGateway gateway = new ToolGateway(AgentToolRegistry.fromBeans(List.of(new OpsTools())));
         OpsAgentService service = new OpsAgentService(null, gateway);
 
@@ -79,12 +78,9 @@ class OpsAgentServiceTest {
                 Map.of("city", "上海", "keyword", "火锅", "limit", 25, "onlyMissing", true)
         ));
 
-        assertEquals("live_tools", result.get("executionMode"));
-        assertEquals("success", result.get("executionStatus"));
-        List<Map<String, Object>> executions = (List<Map<String, Object>>) result.get("toolExecutions");
-        assertEquals("start_batch_geocode", executions.get(0).get("tool"));
-        assertTrue(String.valueOf(executions.get(0).get("dataPreview")).contains("上海"));
-        assertTrue(String.valueOf(executions.get(0).get("dataPreview")).contains("火锅"));
+        assertEquals("legacy_plan_only", result.get("executionMode"));
+        assertEquals("ops_case_v2", result.get("migrationTarget"));
+        assertEquals(false, result.containsKey("toolExecutions"));
     }
 
     @Test

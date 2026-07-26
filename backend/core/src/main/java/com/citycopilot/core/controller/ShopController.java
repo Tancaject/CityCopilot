@@ -21,8 +21,6 @@ import jakarta.annotation.Resource;
  * 前端控制器
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @RestController
 @RequestMapping("/shop")
@@ -141,7 +139,6 @@ public class ShopController {
         Page<Shop> page = shopService.query()
                 .like(StrUtil.isNotBlank(name), "name", name)
                 .page(new Page<>(current, geoProperties.resolveShopPageSize(size)));
-        // 返回数据
         return Result.ok(page.getRecords());
     }
 }

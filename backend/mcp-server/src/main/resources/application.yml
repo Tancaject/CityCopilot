@@ -12,7 +12,7 @@ spring:
         version: 0.2.1
         type: SYNC
         stdio: false
-        instructions: CityCopilot local-life tools exposed through the shared AgentToolRegistry and ToolGateway.
+        instructions: CityCopilot local-life tools exposed through the Core internal Tool API.
         sse-endpoint: /mcp/sse
         sse-message-endpoint: /mcp/messages
         capabilities:
@@ -20,6 +20,13 @@ spring:
           resource: false
           prompt: false
           completion: false
+
+citycopilot:
+  core-service:
+    base-url: ${CITYCOPILOT_CORE_BASE_URL:http://127.0.0.1:8081}
+    service-token: ${CITYCOPILOT_INTERNAL_MCP_TOKEN:${CITYCOPILOT_INTERNAL_SERVICE_TOKEN:}}
+    connect-timeout: ${CITYCOPILOT_CORE_CONNECT_TIMEOUT:2s}
+    read-timeout: ${CITYCOPILOT_CORE_READ_TIMEOUT:4s}
 
 management:
   endpoints:

@@ -14,8 +14,4 @@ public class AiProperties {
     private String model = "qwen-plus";
     private Integer timeoutSeconds = 8;
     private Integer maxMessageLength = 300;
-    private Integer publicRateLimitPerMinute = 20;
-    private Integer userRateLimitPerMinute = 40;
-    private Integer adminRateLimitPerMinute = 80;
-    private Integer historyLimit = 6;
 }

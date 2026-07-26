@@ -156,6 +156,10 @@ SET `geo_source` = 'seed',
     `geo_updated_at` = COALESCE(`update_time`, `create_time`, CURRENT_TIMESTAMP)
 WHERE `x` IS NOT NULL AND `y` IS NOT NULL;
 
+ALTER TABLE `tb_shop`
+  ADD COLUMN `owner_user_id` bigint(20) UNSIGNED NULL COMMENT '所属商户用户id' AFTER `type_id`,
+  ADD INDEX `idx_shop_owner_user_id` (`owner_user_id`);
+
 -- ----------------------------
 -- Table structure for tb_shop_type
 -- ----------------------------

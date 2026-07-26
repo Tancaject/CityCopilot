@@ -1,6 +1,6 @@
 package com.citycopilot.agent.tool;
 
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
 
 import java.util.List;
 

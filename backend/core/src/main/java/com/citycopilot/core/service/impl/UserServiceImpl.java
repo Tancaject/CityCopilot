@@ -34,8 +34,6 @@ import static com.citycopilot.core.utils.SystemConstants.USER_NICK_NAME_PREFIX;
  * 服务实现类
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Slf4j
 @Service
@@ -48,21 +46,15 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result sendCode(String phone, HttpSession session) {//发送验证码
-        // 1、提交手机号进行校验
         if (RegexUtils.isPhoneInvalid(phone)){
-            // 2、如果不符合，返回错误信息
             return Result.fail("USER_PHONE_INVALID", "手机号格式错误！");
         }
         if (isLoginCodeRateLimited(phone)) {
             return Result.fail("LOGIN_CODE_RATE_LIMITED", "验证码发送过于频繁，请稍后再试");
         }
-        // 3、符合则生成验证码
         String code= RandomUtil.randomNumbers(6);//生成6位的验证码
-        // 4、保存验证码到redis
         stringRedisTemplate.opsForValue().set(LOGIN_CODE_KEY+phone,code,LOGIN_CODE_TTL, TimeUnit.MINUTES);//以用户的手机号作为key进行保存,有效期2分钟
-        // 5、发送验证码
         log.debug("验证码发送成功，验证码:{}",code);
-        // 6、返回ok
         return Result.ok();
     }
 
@@ -98,12 +90,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         //设置token有效期 30分钟
         String tokenKey=LOGIN_USER_KEY+token;
         stringRedisTemplate.expire(tokenKey,LOGIN_USER_TTL,TimeUnit.MINUTES);
-        //返回token
         return Result.ok(token);
     }
 
     private User createUserWithPhone(String phone) {
-        //创建用户
         User user=new User();
         user.setPhone(phone);
         user.setNickName(USER_NICK_NAME_PREFIX+RandomUtil.randomString(10));
@@ -129,16 +119,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result sign() {
-        //获取登录用户id
         Long userId = UserHolder.getUser().getId();
-        //获取当前时间
         LocalDateTime time = LocalDateTime.now();
         //拼接key
         String keySuffix = time.format(DateTimeFormatter.ofPattern("yyyyMM"));
         String key=USER_SIGN_KEY+userId+":"+keySuffix;
-        //获取今天是本月第几天
         int dayofMonth=time.getDayOfMonth();
-        //判断今天是否已签到
         Boolean signed = stringRedisTemplate.opsForValue().getBit(key, dayofMonth - 1);
         if (Boolean.TRUE.equals(signed)) {
             return Result.fail("SIGN_ALREADY_DONE", "今天已经签到了");
@@ -159,16 +145,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result signCount() {
-        //获取登录用户id
         Long userId = UserHolder.getUser().getId();
-        //获取当前时间
         LocalDateTime time = LocalDateTime.now();
         //拼接key
         String keySuffix = time.format(DateTimeFormatter.ofPattern("yyyyMM"));
         String key=USER_SIGN_KEY+userId+":"+keySuffix;
-        //获取今天是本月第几天
         int dayofMonth=time.getDayOfMonth();
-        //获取本月截至今天的签到记录
         List<Long> results = stringRedisTemplate.opsForValue().bitField(
                 key, BitFieldSubCommands.create().get(BitFieldSubCommands.BitFieldType.unsigned(dayofMonth)).valueAt(0)
         );

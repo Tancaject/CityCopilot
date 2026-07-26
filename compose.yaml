@@ -1,0 +1,481 @@
+name: ${COMPOSE_PROJECT_NAME:-citycopilot}
+
+services:
+  mysql:
+    image: mysql:8.4.10
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_MYSQL_MEMORY_LIMIT:-1g}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${CITYCOPILOT_MYSQL_ROOT_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      MYSQL_DATABASE: citycopilot
+      MYSQL_USER: ${CITYCOPILOT_DB_USERNAME:-citycopilot}
+      MYSQL_PASSWORD: ${CITYCOPILOT_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      TZ: ${CITYCOPILOT_TIMEZONE:-Asia/Singapore}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_MYSQL_PORT:-3307}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./citycopilot-v2.sql:/docker-entrypoint-initdb.d/001-citycopilot.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot -e 'SELECT 1 FROM user_account LIMIT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - citycopilot
+
+  agent-mysql:
+    image: mysql:8.4.10
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_AGENT_MYSQL_MEMORY_LIMIT:-512m}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${CITYCOPILOT_AGENT_MYSQL_ROOT_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      MYSQL_DATABASE: citycopilot_agent
+      MYSQL_USER: ${CITYCOPILOT_AGENT_DB_USERNAME:-citycopilot_agent}
+      MYSQL_PASSWORD: ${CITYCOPILOT_AGENT_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      TZ: ${CITYCOPILOT_TIMEZONE:-Asia/Singapore}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_AGENT_MYSQL_PORT:-3308}:3306"
+    volumes:
+      - agent-mysql-data:/var/lib/mysql
+      - ./deploy/mysql/agent/001-agent-schema.sql:/docker-entrypoint-initdb.d/001-agent-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot_agent -e 'SELECT 1 FROM ops_case LIMIT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - citycopilot
+
+  commerce-mysql:
+    image: mysql:8.4.10
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_COMMERCE_MYSQL_MEMORY_LIMIT:-512m}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${CITYCOPILOT_COMMERCE_MYSQL_ROOT_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      MYSQL_DATABASE: citycopilot_commerce
+      MYSQL_USER: ${CITYCOPILOT_COMMERCE_DB_USERNAME:-citycopilot_commerce}
+      MYSQL_PASSWORD: ${CITYCOPILOT_COMMERCE_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      TZ: ${CITYCOPILOT_TIMEZONE:-Asia/Singapore}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_COMMERCE_MYSQL_PORT:-3309}:3306"
+    volumes:
+      - commerce-mysql-data:/var/lib/mysql
+      - ./deploy/mysql/commerce/001-commerce-schema.sql:/docker-entrypoint-initdb.d/001-commerce-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot_commerce -e 'SELECT 1 FROM commerce_order LIMIT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - citycopilot
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_REDIS_MEMORY_LIMIT:-256m}
+    environment:
+      REDIS_PASSWORD: ${CITYCOPILOT_REDIS_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      TZ: ${CITYCOPILOT_TIMEZONE:-Asia/Singapore}
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_REDIS_PORT:-6380}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping 2>/dev/null | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - citycopilot
+
+  redis-init:
+    image: redis:7-alpine
+    restart: "no"
+    mem_limit: 64m
+    environment:
+      REDIS_PASSWORD: ${CITYCOPILOT_REDIS_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      COMMERCE_REDIS_PASSWORD: ${CITYCOPILOT_COMMERCE_REDIS_PASSWORD:?Run tools/citycopilot.ps1 start first}
+    command:
+      - sh
+      - -ec
+      - |
+        export REDISCLI_AUTH="$${REDIS_PASSWORD}"
+        result="$$(redis-cli -h redis XGROUP CREATE stream.coupon-orders g1 0 MKSTREAM 2>&1 || true)"
+        echo "$${result}"
+        echo "$${result}" | grep -Eq '^(OK|BUSYGROUP)'
+        redis-cli -h redis SETNX commerce:seckill:stock:100 100 >/dev/null
+        redis-cli -h redis ACL SETUSER commerce reset on ">$${COMMERCE_REDIS_PASSWORD}" "~commerce:*" "+@all" "-@dangerous" "+info" >/dev/null
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - citycopilot
+
+  rocketmq-permissions:
+    image: alpine:3.22
+    restart: "no"
+    user: "0:0"
+    command: sh -ec "mkdir -p /namesrv-logs/rocketmqlogs /broker-logs/rocketmqlogs /broker-store && chown -R 3000:3000 /namesrv-logs /broker-logs /broker-store"
+    volumes:
+      - rocketmq-namesrv-logs:/namesrv-logs
+      - rocketmq-broker-logs:/broker-logs
+      - rocketmq-broker-store:/broker-store
+    networks:
+      - citycopilot
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:${CITYCOPILOT_ROCKETMQ_SERVER_VERSION:-5.5.0}
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_ROCKETMQ_NAMESRV_MEMORY_LIMIT:-512m}
+    environment:
+      JAVA_OPT_EXT: "-Xms192m -Xmx192m -Xmn64m"
+    command: sh mqnamesrv
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_ROCKETMQ_NAMESRV_PORT:-9876}:9876"
+    volumes:
+      - rocketmq-namesrv-logs:/home/rocketmq/logs
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/9876'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+    depends_on:
+      rocketmq-permissions:
+        condition: service_completed_successfully
+    networks:
+      - citycopilot
+
+  rocketmq-broker:
+    image: apache/rocketmq:${CITYCOPILOT_ROCKETMQ_SERVER_VERSION:-5.5.0}
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_ROCKETMQ_BROKER_MEMORY_LIMIT:-1g}
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn192m -XX:MaxDirectMemorySize=192m"
+    command: sh mqbroker -c /home/rocketmq/rocketmq-5.5.0/conf/broker.conf
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_ROCKETMQ_BROKER_PORT:-10911}:10911"
+    volumes:
+      - ./deploy/rocketmq/broker.conf:/home/rocketmq/rocketmq-5.5.0/conf/broker.conf:ro
+      - rocketmq-broker-store:/home/rocketmq/store
+      - rocketmq-broker-logs:/home/rocketmq/logs
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/10911'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    networks:
+      - citycopilot
+
+  rocketmq-init:
+    image: apache/rocketmq:${CITYCOPILOT_ROCKETMQ_SERVER_VERSION:-5.5.0}
+    restart: "no"
+    mem_limit: 256m
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: "-Xms96m -Xmx96m -Xmn32m"
+    command:
+      - sh
+      - -ec
+      - |
+        sh mqadmin updateTopic -n rocketmq-namesrv:9876 -b rocketmq-broker:10911 -t citycopilot-commerce-events-v1
+        sh mqadmin updateTopic -n rocketmq-namesrv:9876 -b rocketmq-broker:10911 -t citycopilot-ops-events-v1
+    depends_on:
+      rocketmq-broker:
+        condition: service_healthy
+    networks:
+      - citycopilot
+
+  rocketmq-proxy:
+    image: apache/rocketmq:${CITYCOPILOT_ROCKETMQ_SERVER_VERSION:-5.5.0}
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_ROCKETMQ_PROXY_MEMORY_LIMIT:-768m}
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: "-Xms384m -Xmx384m -Xmn128m -XX:MaxDirectMemorySize=128m"
+    command: sh mqproxy
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_ROCKETMQ_PROXY_GRPC_PORT:-18081}:8081"
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_ROCKETMQ_PROXY_REMOTING_PORT:-18080}:8080"
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+      rocketmq-broker:
+        condition: service_healthy
+      rocketmq-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8081'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    networks:
+      - citycopilot
+
+  rocketmq-dashboard:
+    image: apacherocketmq/rocketmq-dashboard:2.1.0
+    profiles: ["mq-dashboard"]
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876"
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_ROCKETMQ_DASHBOARD_PORT:-18082}:8080"
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+      rocketmq-broker:
+        condition: service_healthy
+    networks:
+      - citycopilot
+
+  core:
+    image: citycopilot/core:local
+    build:
+      context: .
+      dockerfile: deploy/docker/backend.Dockerfile
+      args:
+        MODULE: core
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_CORE_MEMORY_LIMIT:-1g}
+    init: true
+    environment:
+      TZ: ${CITYCOPILOT_TIMEZONE:-Asia/Singapore}
+      CITYCOPILOT_DB_URL: jdbc:mysql://mysql:3306/citycopilot?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      CITYCOPILOT_DB_USERNAME: ${CITYCOPILOT_DB_USERNAME:-citycopilot}
+      CITYCOPILOT_DB_PASSWORD: ${CITYCOPILOT_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_REDIS_HOST: redis
+      CITYCOPILOT_REDIS_PORT: 6379
+      CITYCOPILOT_REDIS_PASSWORD: ${CITYCOPILOT_REDIS_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_REDIS_DATABASE: 0
+      CITYCOPILOT_INTERNAL_SERVICE_TOKEN: ${CITYCOPILOT_INTERNAL_SERVICE_TOKEN:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_INTERNAL_AGENT_TOKEN: ${CITYCOPILOT_INTERNAL_AGENT_TOKEN:-}
+      CITYCOPILOT_INTERNAL_OPS_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_TOKEN:-}
+      CITYCOPILOT_INTERNAL_OPS_READER_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_READER_TOKEN:-}
+      CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN:-}
+      CITYCOPILOT_INTERNAL_MCP_TOKEN: ${CITYCOPILOT_INTERNAL_MCP_TOKEN:-}
+      CITYCOPILOT_INTERNAL_COMMERCE_TOKEN: ${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_COMMERCE_ENABLED: ${CITYCOPILOT_COMMERCE_ENABLED:-true}
+      CITYCOPILOT_COMMERCE_BASE_URL: http://commerce:8083
+      CITYCOPILOT_UPLOAD_ROOT: /app/uploads
+      CITYCOPILOT_AI_ENABLED: "false"
+      CITYCOPILOT_AMAP_WEB_SERVICE_KEY: ${CITYCOPILOT_AMAP_WEB_SERVICE_KEY:-}
+      CITYCOPILOT_ROCKETMQ_ENABLED: ${CITYCOPILOT_ROCKETMQ_ENABLED:-true}
+      CITYCOPILOT_ROCKETMQ_ENDPOINTS: rocketmq-proxy:8081
+      CITYCOPILOT_SECKILL_RECONCILIATION_INTERVAL_MS: ${CITYCOPILOT_SECKILL_RECONCILIATION_INTERVAL_MS:-5000}
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_CORE_PORT:-8081}:8081"
+    volumes:
+      - uploads-data:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redis-init:
+        condition: service_completed_successfully
+      rocketmq-proxy:
+        condition: service_healthy
+      commerce:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 25s
+    networks:
+      - citycopilot
+
+  commerce:
+    image: citycopilot/commerce:local
+    build:
+      context: .
+      dockerfile: deploy/docker/backend.Dockerfile
+      args:
+        MODULE: commerce-service
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_COMMERCE_MEMORY_LIMIT:-768m}
+    init: true
+    environment:
+      TZ: ${CITYCOPILOT_TIMEZONE:-Asia/Singapore}
+      CITYCOPILOT_COMMERCE_PORT: 8083
+      CITYCOPILOT_COMMERCE_DB_URL: jdbc:mysql://commerce-mysql:3306/citycopilot_commerce?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      CITYCOPILOT_COMMERCE_DB_USERNAME: ${CITYCOPILOT_COMMERCE_DB_USERNAME:-citycopilot_commerce}
+      CITYCOPILOT_COMMERCE_DB_PASSWORD: ${CITYCOPILOT_COMMERCE_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_REDIS_HOST: redis
+      CITYCOPILOT_REDIS_PORT: 6379
+      CITYCOPILOT_REDIS_USERNAME: commerce
+      CITYCOPILOT_REDIS_PASSWORD: ${CITYCOPILOT_COMMERCE_REDIS_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_INTERNAL_COMMERCE_TOKEN: ${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_PLACE_BASE_URL: http://core:8081
+      CITYCOPILOT_ROCKETMQ_ENABLED: ${CITYCOPILOT_ROCKETMQ_ENABLED:-true}
+      CITYCOPILOT_ROCKETMQ_ENDPOINTS: rocketmq-proxy:8081
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_COMMERCE_PORT:-8083}:8083"
+    depends_on:
+      commerce-mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redis-init:
+        condition: service_completed_successfully
+      rocketmq-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8083/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - citycopilot
+
+  agent:
+    image: citycopilot/agent:local
+    build:
+      context: .
+      dockerfile: deploy/docker/backend.Dockerfile
+      args:
+        MODULE: agent
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_AGENT_MEMORY_LIMIT:-768m}
+    init: true
+    environment:
+      TZ: ${CITYCOPILOT_TIMEZONE:-Asia/Singapore}
+      AGENT_SERVER_PORT: 8082
+      CITYCOPILOT_AGENT_REDIS_HOST: redis
+      CITYCOPILOT_AGENT_REDIS_PORT: 6379
+      CITYCOPILOT_AGENT_REDIS_PASSWORD: ${CITYCOPILOT_REDIS_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      AGENT_REDIS_DATABASE: 1
+      CITYCOPILOT_AGENT_DB_URL: jdbc:mysql://agent-mysql:3306/citycopilot_agent?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      CITYCOPILOT_AGENT_DB_USERNAME: ${CITYCOPILOT_AGENT_DB_USERNAME:-citycopilot_agent}
+      CITYCOPILOT_AGENT_DB_PASSWORD: ${CITYCOPILOT_AGENT_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_CORE_BASE_URL: http://core:8081
+      CITYCOPILOT_INTERNAL_SERVICE_TOKEN: ${CITYCOPILOT_INTERNAL_SERVICE_TOKEN:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_INTERNAL_AGENT_TOKEN: ${CITYCOPILOT_INTERNAL_AGENT_TOKEN:-}
+      CITYCOPILOT_INTERNAL_OPS_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_TOKEN:-}
+      CITYCOPILOT_INTERNAL_OPS_READER_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_READER_TOKEN:-}
+      CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN:-}
+      CITYCOPILOT_AI_ENABLED: ${CITYCOPILOT_AI_ENABLED:-false}
+      CITYCOPILOT_AI_API_KEY: ${CITYCOPILOT_AI_API_KEY:-}
+      CITYCOPILOT_AI_API_URL: ${CITYCOPILOT_AI_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
+      CITYCOPILOT_AI_MODEL: ${CITYCOPILOT_AI_MODEL:-qwen-plus}
+      CITYCOPILOT_ROCKETMQ_ENABLED: ${CITYCOPILOT_ROCKETMQ_ENABLED:-true}
+      CITYCOPILOT_ROCKETMQ_ENDPOINTS: rocketmq-proxy:8081
+      OPS_AGENT_V2_ENABLED: ${OPS_AGENT_V2_ENABLED:-true}
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_AGENT_PORT:-8082}:8082"
+    depends_on:
+      agent-mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      core:
+        condition: service_healthy
+      rocketmq-proxy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8082/agent/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - citycopilot
+
+  mcp:
+    image: citycopilot/mcp-server:local
+    build:
+      context: .
+      dockerfile: deploy/docker/backend.Dockerfile
+      args:
+        MODULE: mcp-server
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_MCP_MEMORY_LIMIT:-512m}
+    init: true
+    environment:
+      TZ: ${CITYCOPILOT_TIMEZONE:-Asia/Singapore}
+      CITYCOPILOT_CORE_BASE_URL: http://core:8081
+      CITYCOPILOT_INTERNAL_SERVICE_TOKEN: ${CITYCOPILOT_INTERNAL_SERVICE_TOKEN:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_INTERNAL_MCP_TOKEN: ${CITYCOPILOT_INTERNAL_MCP_TOKEN:-}
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_MCP_PORT:-8090}:8090"
+    depends_on:
+      core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/mcp/tools/list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - citycopilot
+
+  frontend:
+    image: citycopilot/frontend:local
+    build:
+      context: .
+      dockerfile: deploy/docker/frontend.Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_DEFAULT_CITY: ${VITE_DEFAULT_CITY:-杭州}
+        VITE_AMAP_JS_KEY: ${VITE_AMAP_JS_KEY:-}
+        VITE_AMAP_SECURITY_CODE: ${VITE_AMAP_SECURITY_CODE:-}
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_FRONTEND_MEMORY_LIMIT:-128m}
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_HTTP_PORT:-8080}:8080"
+    volumes:
+      - uploads-data:/data/citycopilot/uploads:ro
+    depends_on:
+      core:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - citycopilot
+
+networks:
+  citycopilot:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  agent-mysql-data:
+  commerce-mysql-data:
+  redis-data:
+  uploads-data:
+  rocketmq-namesrv-logs:
+  rocketmq-broker-store:
+  rocketmq-broker-logs:

@@ -2,8 +2,13 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: city-copilot-agent
+  - job_name: citycopilot-core
     metrics_path: /actuator/prometheus
     static_configs:
       - targets:
           - host.docker.internal:8081
+  - job_name: citycopilot-agent
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - host.docker.internal:8082

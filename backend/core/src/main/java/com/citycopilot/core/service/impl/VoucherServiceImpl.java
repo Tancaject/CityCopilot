@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.citycopilot.core.dto.Result;
+import com.citycopilot.core.commerce.CommercePortClient;
 import com.citycopilot.core.entity.SeckillVoucher;
 import com.citycopilot.core.entity.Voucher;
 import com.citycopilot.core.mapper.VoucherMapper;
@@ -16,6 +17,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -31,8 +33,6 @@ import static com.citycopilot.core.utils.RedisConstants.SECKILL_STOCK_KEY;
  *  服务实现类
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Slf4j
 @Service
@@ -46,17 +46,26 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
     private IShopService shopService;
     @Resource
     private OperationLogService operationLogService;
+    @Resource
+    private CommercePortClient commercePortClient;
+    @Value("${citycopilot.commerce.enabled:false}")
+    private boolean commerceEnabled;
 
     @Override
     public Result queryVoucherOfShop(Long shopId) {
+        if (commerceEnabled) {
+            return commercePortClient.vouchers(shopId, false, null, null);
+        }
         // 查询优惠券信息
         List<Voucher> vouchers = getBaseMapper().queryVoucherOfShop(shopId);
-        // 返回结果
         return Result.ok(vouchers);
     }
 
     @Override
     public Result queryAdminVouchers(Integer current, Long shopId, String keyword, Integer status) {
+        if (commerceEnabled) {
+            return commercePortClient.vouchers(shopId, true, keyword, status);
+        }
         int pageNo = current == null || current < 1 ? 1 : current;
         Page<Voucher> page = query()
                 .eq(shopId != null, "shop_id", shopId)
@@ -71,10 +80,14 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
     @Override
     @Transactional
     public Result createVoucher(Voucher voucher) {
+        if (commerceEnabled) {
+            return commercePortClient.createVoucher(voucher);
+        }
         Result validation = validateNewVoucher(voucher);
         if (!Boolean.TRUE.equals(validation.getSuccess())) {
             return validation;
         }
+        shopService.assertWritableByCurrentUser(voucher.getShopId());
         LocalDateTime now = LocalDateTime.now();
         voucher.setType(normalizeType(voucher.getType()));
         voucher.setStatus(normalizeStatus(voucher.getStatus(), 1));
@@ -95,6 +108,12 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
     @Override
     @Transactional
     public Result updateVoucher(Voucher voucher) {
+        if (commerceEnabled) {
+            if (voucher == null || voucher.getId() == null) {
+                return Result.fail("BAD_REQUEST", "优惠券id不能为空");
+            }
+            return commercePortClient.updateVoucher(voucher.getId(), voucher);
+        }
         if (voucher == null || voucher.getId() == null) {
             return Result.fail("BAD_REQUEST", "优惠券id不能为空");
         }
@@ -102,6 +121,7 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
         if (existing == null) {
             return Result.fail("VOUCHER_NOT_FOUND", "优惠券不存在");
         }
+        shopService.assertWritableByCurrentUser(existing.getShopId());
         SeckillVoucher existingSeckill = isSeckill(existing.getType()) ? seckillVoucherService.getById(existing.getId()) : null;
         Result validation = validateExistingVoucher(voucher, existing, existingSeckill);
         if (!Boolean.TRUE.equals(validation.getSuccess())) {
@@ -144,6 +164,9 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
     @Override
     @Transactional
     public Result updateVoucherStatus(Long id, Integer status) {
+        if (commerceEnabled) {
+            return commercePortClient.updateVoucher(id, Map.of("status", status));
+        }
         if (id == null) {
             return Result.fail("BAD_REQUEST", "优惠券id不能为空");
         }
@@ -154,6 +177,7 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
         if (before == null) {
             return Result.fail("VOUCHER_NOT_FOUND", "优惠券不存在");
         }
+        shopService.assertWritableByCurrentUser(before.getShopId());
         attachSeckillFields(List.of(before));
         update()
                 .eq("id", id)

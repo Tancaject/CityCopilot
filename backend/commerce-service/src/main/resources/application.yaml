@@ -1,0 +1,39 @@
+server:
+  port: ${CITYCOPILOT_COMMERCE_PORT:8083}
+
+spring:
+  application:
+    name: citycopilot-commerce-service
+  datasource:
+    url: ${CITYCOPILOT_COMMERCE_DB_URL:jdbc:mysql://127.0.0.1:3309/citycopilot_commerce?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+    username: ${CITYCOPILOT_COMMERCE_DB_USERNAME:citycopilot_commerce}
+    password: ${CITYCOPILOT_COMMERCE_DB_PASSWORD:}
+  data:
+    redis:
+      host: ${CITYCOPILOT_REDIS_HOST:127.0.0.1}
+      port: ${CITYCOPILOT_REDIS_PORT:6379}
+      username: ${CITYCOPILOT_REDIS_USERNAME:}
+      password: ${CITYCOPILOT_REDIS_PASSWORD:}
+
+citycopilot:
+  commerce:
+    service-token: ${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:}
+    stream-enabled: ${CITYCOPILOT_COMMERCE_STREAM_ENABLED:true}
+    consumer-name: ${HOSTNAME:commerce-local}
+    place-base-url: ${CITYCOPILOT_PLACE_BASE_URL:http://127.0.0.1:8081}
+    rocketmq-enabled: ${CITYCOPILOT_ROCKETMQ_ENABLED:true}
+    rocketmq-endpoints: ${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    root: INFO

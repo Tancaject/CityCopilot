@@ -1,7 +1,7 @@
 package com.citycopilot.agent.gateway;
 
 import com.citycopilot.agent.tool.AgentToolRegistry;
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

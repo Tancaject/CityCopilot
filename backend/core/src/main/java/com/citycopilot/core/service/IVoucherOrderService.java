@@ -1,17 +1,19 @@
 package com.citycopilot.core.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
+import com.citycopilot.contract.tool.ToolApprovalPolicy;
+import com.citycopilot.contract.tool.ToolRiskLevel;
+import com.citycopilot.contract.tool.ToolSideEffect;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.entity.VoucherOrder;
+import com.citycopilot.core.domain.order.OrderProcessingResult;
 
 /**
  * <p>
  *  服务类
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 public interface IVoucherOrderService extends IService<VoucherOrder> {
 
@@ -20,9 +22,15 @@ public interface IVoucherOrderService extends IService<VoucherOrder> {
             description = "Place a seckill voucher order for the current user",
             requiredPermissions = {"order:write"},
             rateLimitPerMinute = 20,
-            idempotent = false
+            idempotent = false,
+            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
+            risk = ToolRiskLevel.HIGH,
+            approval = ToolApprovalPolicy.USER_CONFIRMATION,
+            scope = "commerce:order"
     )
     Result seckillVoucher(Long voucherId);
+
+    Result seckillVoucher(Long voucherId, String idempotencyKey);
 
     @AgentTool(name = "get_my_orders", description = "List current user's voucher orders")
     Result queryMyOrders(Integer current);
@@ -35,7 +43,11 @@ public interface IVoucherOrderService extends IService<VoucherOrder> {
             name = "cancel_order",
             description = "Cancel current user's voucher order",
             requiredPermissions = {"order:write"},
-            idempotent = false
+            idempotent = false,
+            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
+            risk = ToolRiskLevel.HIGH,
+            approval = ToolApprovalPolicy.USER_CONFIRMATION,
+            scope = "commerce:order"
     )
     Result cancelOrder(Long orderId);
 
@@ -43,7 +55,11 @@ public interface IVoucherOrderService extends IService<VoucherOrder> {
             name = "pay_order",
             description = "Pay a voucher order",
             requiredPermissions = {"order:write"},
-            idempotent = false
+            idempotent = false,
+            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
+            risk = ToolRiskLevel.HIGH,
+            approval = ToolApprovalPolicy.USER_CONFIRMATION,
+            scope = "commerce:payment"
     )
     Result payOrder(Long orderId, Integer payType);
 
@@ -53,9 +69,13 @@ public interface IVoucherOrderService extends IService<VoucherOrder> {
             name = "refund_order",
             description = "Refund a paid voucher order",
             requiredPermissions = {"order:write"},
-            idempotent = false
+            idempotent = false,
+            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
+            risk = ToolRiskLevel.HIGH,
+            approval = ToolApprovalPolicy.USER_CONFIRMATION,
+            scope = "commerce:refund"
     )
     Result refundOrder(Long orderId);
 
-    void createVoucherOrder(VoucherOrder voucherOrder);
+    OrderProcessingResult createVoucherOrder(VoucherOrder voucherOrder);
 }

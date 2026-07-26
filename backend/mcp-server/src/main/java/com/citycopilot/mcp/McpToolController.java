@@ -1,6 +1,6 @@
 package com.citycopilot.mcp;
 
-import com.citycopilot.agent.gateway.ToolResult;
+import com.citycopilot.contract.tool.ToolInvocationResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,7 +25,7 @@ public class McpToolController {
     }
 
     @PostMapping("/call")
-    public ToolResult call(@RequestBody McpToolCallRequest request) {
+    public ToolInvocationResponse call(@RequestBody McpToolCallRequest request) {
         return toolService.call(request);
     }
 }

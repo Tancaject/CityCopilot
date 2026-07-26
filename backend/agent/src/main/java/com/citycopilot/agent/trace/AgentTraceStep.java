@@ -1,6 +1,7 @@
 package com.citycopilot.agent.trace;
 
 import com.citycopilot.agent.gateway.ToolResult;
+import com.citycopilot.agent.confirmation.PendingAction;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -25,6 +26,22 @@ public record AgentTraceStep(
 
     public static AgentTraceStep finalAnswer(int index, String answer) {
         return new AgentTraceStep(index, "final", null, Map.of(), null, null, answer);
+    }
+
+    public static AgentTraceStep confirmation(int index, PendingAction action) {
+        return new AgentTraceStep(
+                index,
+                "confirmation",
+                action.toolName(),
+                copyArgs(action.args()),
+                Map.of(
+                        "pendingId", action.pendingId(),
+                        "summary", action.summary(),
+                        "expiresAt", action.expiresAt().toString()
+                ),
+                null,
+                "等待用户确认"
+        );
     }
 
     public static AgentTraceStep error(int index, String errorCode, String message) {

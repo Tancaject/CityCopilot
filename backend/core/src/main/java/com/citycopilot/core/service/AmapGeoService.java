@@ -3,7 +3,7 @@ package com.citycopilot.core.service;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.hutool.json.JSONUtil;
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.core.config.AmapProperties;
 import com.citycopilot.core.config.GeoProperties;
 import com.citycopilot.core.dto.AmapPoiDTO;
@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.lang.reflect.Array;
 import java.net.URI;
 import java.time.LocalDate;
 import java.time.Duration;
@@ -147,7 +148,7 @@ public class AmapGeoService {
                 .queryParam("citylimit", cityLimitEnabled())
                 .queryParam("offset", 10)
                 .queryParam("page", 1)
-                .queryParam("extensions", "base")
+                .queryParam("extensions", "all")
                 .build()
                 .encode()
                 .toUri();
@@ -168,6 +169,10 @@ public class AmapGeoService {
     }
 
     public Result searchAroundPoi(Double x, Double y, String keywords, Integer current, Integer size) {
+        return searchAroundPoi(x, y, keywords, null, current, size);
+    }
+
+    public Result searchAroundPoi(Double x, Double y, String keywords, String types, Integer current, Integer size) {
         String operation = "poi_around";
         if (!isValidCoordinate(x, y)) {
             return Result.fail("SHOP_GEO_INVALID", "坐标参数不合法");
@@ -179,8 +184,9 @@ public class AmapGeoService {
         int page = current == null || current < 1 ? 1 : current;
         int offset = size == null || size < 1 ? 10 : Math.min(size, 25);
         String keywordScope = StrUtil.blankToDefault(keywords, "");
+        String typeScope = StrUtil.blankToDefault(types, "");
         String cacheKey = CACHE_AMAP_POI_KEY + "around:" + cacheKey(
-                x + "," + y + "|" + keywordScope + "|" + page + "|" + offset,
+                x + "," + y + "|" + keywordScope + "|" + typeScope + "|" + page + "|" + offset,
                 String.valueOf(nearbyRadiusMeters())
         );
         Map<?, ?> cached = readCachedResponse(cacheKey);
@@ -200,9 +206,10 @@ public class AmapGeoService {
                 .queryParam("location", x + "," + y)
                 .queryParam("radius", Math.round(nearbyRadiusMeters()))
                 .queryParamIfPresent("keywords", StrUtil.isBlank(keywordScope) ? Optional.empty() : Optional.of(keywordScope))
+                .queryParamIfPresent("types", StrUtil.isBlank(typeScope) ? Optional.empty() : Optional.of(typeScope))
                 .queryParam("offset", offset)
                 .queryParam("page", page)
-                .queryParam("extensions", "base")
+                .queryParam("extensions", "all")
                 .queryParam("sortrule", "distance")
                 .build()
                 .encode()
@@ -315,17 +322,108 @@ public class AmapGeoService {
                 .setType(valueOf(poi.get("type")))
                 .setTypecode(valueOf(poi.get("typecode")))
                 .setAddress(valueOf(poi.get("address")))
+                .setTel(valueOf(poi.get("tel")))
+                .setBusinessArea(valueOf(poi.get("business_area")))
+                .setTag(valueOf(poi.get("tag")))
                 .setProvinceName(valueOf(poi.get("pname")))
                 .setCityName(valueOf(poi.get("cityname")))
                 .setAdName(valueOf(poi.get("adname")))
                 .setAdcode(valueOf(poi.get("adcode")))
                 .setX(x)
                 .setY(y)
-                .setDistance(parseCoordinate(valueOf(poi.get("distance"))));
+                .setDistance(parseCoordinate(valueOf(poi.get("distance"))))
+                .setImages(firstPhotoUrl(poi.get("photos")))
+                .setAvgPrice(parseAveragePrice(firstNonBlank(
+                        nestedValue(poi, "biz_ext", "cost"),
+                        nestedValue(poi, "business", "cost")
+                )))
+                .setScore(parsePoiScore(firstNonBlank(
+                        nestedValue(poi, "biz_ext", "rating"),
+                        nestedValue(poi, "business", "rating")
+                )));
+    }
+
+    private String nestedValue(Map<?, ?> source, String objectKey, String valueKey) {
+        Object nested = source.get(objectKey);
+        if (!(nested instanceof Map<?, ?> nestedMap)) {
+            return null;
+        }
+        return valueOf(nestedMap.get(valueKey));
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (StrUtil.isNotBlank(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String firstPhotoUrl(Object photosValue) {
+        if (photosValue instanceof List<?> photos) {
+            for (Object photo : photos) {
+                String url = photoUrl(photo);
+                if (StrUtil.isNotBlank(url)) {
+                    return url;
+                }
+            }
+            return null;
+        }
+        return photoUrl(photosValue);
+    }
+
+    private String photoUrl(Object photo) {
+        if (!(photo instanceof Map<?, ?> photoMap)) {
+            return null;
+        }
+        return valueOf(photoMap.get("url"));
+    }
+
+    private Long parseAveragePrice(String value) {
+        Double amount = parseCoordinate(value);
+        if (amount == null || amount <= 0D) {
+            return null;
+        }
+        return Math.round(amount);
+    }
+
+    private Integer parsePoiScore(String value) {
+        Double rating = parseCoordinate(value);
+        if (rating == null || rating <= 0D) {
+            return null;
+        }
+        return (int) Math.round(rating * 10D);
     }
 
     private String valueOf(Object value) {
-        return value == null ? null : String.valueOf(value);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof List<?> values) {
+            for (Object item : values) {
+                String text = valueOf(item);
+                if (StrUtil.isNotBlank(text)) {
+                    return text;
+                }
+            }
+            return null;
+        }
+        if (value.getClass().isArray()) {
+            int length = Array.getLength(value);
+            for (int index = 0; index < length; index++) {
+                String text = valueOf(Array.get(value, index));
+                if (StrUtil.isNotBlank(text)) {
+                    return text;
+                }
+            }
+            return null;
+        }
+        if (value instanceof Map<?, ?> values && values.isEmpty()) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return StrUtil.isBlank(text) || "[]".equals(text) || "{}".equals(text) ? null : text;
     }
 
     private Double parseCoordinate(String value) {

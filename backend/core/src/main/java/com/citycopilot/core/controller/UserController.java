@@ -27,8 +27,6 @@ import java.time.LocalDate;
  * 前端控制器
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Slf4j
 @RestController
@@ -92,7 +90,6 @@ public class UserController {
         }
         info.setCreateTime(null);
         info.setUpdateTime(null);
-        // 返回
         return Result.ok(info);
     }
 

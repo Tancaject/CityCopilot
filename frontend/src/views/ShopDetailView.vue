@@ -257,7 +257,7 @@ watch(
           </a>
           <span>
             <BadgeCheck :size="17" aria-hidden="true" />
-            {{ shop.geoStatus === 'verified' ? '坐标已校准' : '坐标待复核' }}
+            {{ shop.geoStatus === 'verified' ? '位置已确认' : '位置待确认' }}
           </span>
         </div>
 

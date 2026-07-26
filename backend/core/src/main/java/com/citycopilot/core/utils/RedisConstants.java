@@ -18,8 +18,13 @@ public class RedisConstants {
     public static final String LOCK_SHOP_KEY = "lock:shop:";
     public static final Long LOCK_SHOP_TTL = 10L;
 
-    public static final String SECKILL_STOCK_KEY = "seckill:stock:";
-    public static final String SECKILL_ORDER_KEY = "seckill:order:";
+    public static final String SECKILL_STOCK_KEY = "coupon:stock:";
+    public static final String SECKILL_ORDER_KEY = "coupon:buyer:";
+    public static final String SECKILL_IDEMPOTENCY_KEY = "coupon:order:idempotency:";
+    public static final String SECKILL_RETRY_KEY = "coupon:order:retry:";
+    public static final String SECKILL_RESERVATION_KEY = "coupon:reservation:";
+    public static final String SECKILL_ORDER_STREAM = "stream.coupon-orders";
+    public static final String SECKILL_DEAD_LETTER_STREAM = "stream.coupon-orders.dlq";
     public static final String BLOG_LIKED_KEY = "blog:liked:";
     public static final String FEED_KEY = "feed:";
     public static final String SHOP_GEO_KEY = "shop:geo:";

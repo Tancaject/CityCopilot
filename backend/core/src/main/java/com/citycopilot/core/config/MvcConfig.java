@@ -1,6 +1,7 @@
 package com.citycopilot.core.config;
 
 import com.citycopilot.core.security.PermissionPolicy;
+import com.citycopilot.core.security.InternalServiceTokenInterceptor;
 import com.citycopilot.core.utils.AdminInterceptor;
 import com.citycopilot.core.utils.LoginInterceptor;
 import com.citycopilot.core.utils.RefreshTokenInterceptor;
@@ -22,10 +23,15 @@ public class MvcConfig implements WebMvcConfigurer {
     private UploadProperties uploadProperties;
     @Resource
     private PermissionPolicy permissionPolicy;
+    @Resource
+    private InternalApiProperties internalApiProperties;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         String uploadPublicPattern = normalizePublicPrefix(uploadProperties.getPublicPrefix()) + "**";
+        registry.addInterceptor(new InternalServiceTokenInterceptor(internalApiProperties))
+                .addPathPatterns("/internal/**")
+                .order(-1);
         // 第一个拦截器：刷新 token，拦截所有请求
         registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate))
                 .addPathPatterns("/**")
@@ -54,7 +60,11 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/agent/chat",
                         "/mcp/tools/list",
                         "/actuator/**",
+                        "/v3/api-docs/**",
+                        "/swagger-ui/**",
+                        "/swagger-ui.html",
                         "/health",
+                        "/internal/**",
                         "/user/code",
                         "/user/login",
                         "/shop/**",

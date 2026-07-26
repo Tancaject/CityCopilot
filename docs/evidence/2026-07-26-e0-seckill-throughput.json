@@ -1,0 +1,22 @@
+{
+  "scenario": "POST /voucher-order/seckill/100 with one authenticated user per request",
+  "requests": 1000,
+  "concurrency": 200,
+  "duration_seconds": 1.217,
+  "throughput_rps": 821.89,
+  "successes": 1000,
+  "errors": 0,
+  "error_rate": 0.0,
+  "latency_ms": {
+    "mean": 146.79,
+    "p50": 111.18,
+    "p95": 320.6,
+    "p99": 441.43,
+    "max": 1024.24
+  },
+  "error_codes": {},
+  "client": {
+    "python": "3.12.10",
+    "platform": "Windows-11-10.0.26200-SP0"
+  }
+}

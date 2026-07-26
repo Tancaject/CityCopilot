@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue';
 import { Activity, Braces, ClipboardCheck, Database, FileText, LayoutDashboard, LogOut, MapPin, ReceiptText, Rss, Search, ShieldCheck, SquarePen, Store, Ticket, UserRound } from '@lucide/vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import AiAssistantPanel from './components/AiAssistantPanel.vue';
@@ -9,7 +9,6 @@ import { hasPermission } from './utils/permissions';
 const route = useRoute();
 const router = useRouter();
 const searchTerm = ref('');
-const cityName = import.meta.env.VITE_DEFAULT_CITY || '杭州';
 
 const isLoginRoute = computed(() => route.name === 'login');
 const isOpsRoute = computed(() => typeof route.path === 'string' && route.path.startsWith('/admin'));
@@ -45,6 +44,7 @@ const visibleAdminLinks = computed(() =>
     { enabled: canAccessAudit.value, name: 'admin-audit', label: '审计', detail: '操作日志', icon: Database },
     { enabled: canAccessAudit.value, name: 'admin-api', label: '契约', detail: 'API 自检', icon: Braces },
     { enabled: canAccessAudit.value, name: 'admin-agent-traces', label: 'Traces', detail: 'Agent 轨迹', icon: Activity },
+    { enabled: canAccessAudit.value, name: 'admin-ops-cases', label: 'Agent', detail: '诊断与审批', icon: ShieldCheck },
   ].filter((link) => link.enabled),
 );
 
@@ -72,6 +72,11 @@ async function handleSearch() {
     query: name ? { name } : {},
   });
 }
+
+watchEffect(() => {
+  if (typeof document === 'undefined') return;
+  document.body.dataset.scene = isOpsRoute.value ? 'admin' : 'user';
+});
 
 onMounted(() => {
   window.addEventListener('citycopilot:auth-expired', handleAuthExpired);
@@ -152,11 +157,6 @@ onUnmounted(() => {
             <Search :size="18" aria-hidden="true" />
           </button>
         </form>
-
-        <button class="city-button" type="button">
-          <MapPin :size="17" aria-hidden="true" />
-          {{ cityName }}
-        </button>
 
         <nav class="top-actions" aria-label="内容入口">
           <RouterLink :to="{ name: 'feed' }">

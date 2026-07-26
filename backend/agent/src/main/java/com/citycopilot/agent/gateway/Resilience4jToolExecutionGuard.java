@@ -51,11 +51,14 @@ public class Resilience4jToolExecutionGuard implements ToolExecutionGuard {
                 circuitBreakers.computeIfAbsent(tool.name(), CircuitBreaker::ofDefaults),
                 invocation
         );
-        Callable<Object> retriedWithTimeout = Retry.decorateCallable(
+        Callable<Object> timed = () -> callWithTimeout(tool, guarded);
+        if (!tool.idempotent()) {
+            return timed.call();
+        }
+        return Retry.decorateCallable(
                 retries.computeIfAbsent(tool.name(), this::retry),
-                () -> callWithTimeout(tool, guarded)
-        );
-        return retriedWithTimeout.call();
+                timed
+        ).call();
     }
 
     private Object callWithTimeout(ToolMetadata tool, Callable<Object> guarded) throws Exception {

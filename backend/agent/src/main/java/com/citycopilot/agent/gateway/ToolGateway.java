@@ -14,7 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-public final class ToolGateway {
+public final class ToolGateway implements ToolGatewayClient {
     private final AgentToolRegistry registry;
     private final ToolAuditSink auditSink;
     private final ToolExecutionGuard executionGuard;
@@ -44,10 +44,12 @@ public final class ToolGateway {
         this.meterRegistry = meterRegistry;
     }
 
+    @Override
     public List<ToolMetadata> tools() {
         return registry.tools();
     }
 
+    @Override
     public ToolResult invoke(String name, Map<String, Object> args, ToolCallContext context) {
         Instant start = Instant.now();
         ToolMetadata tool;

@@ -15,7 +15,7 @@
 
 | Case | Pass | Mode | Tools | Keywords | Failure reasons | Expected tools | Predicted tools | Latency ms | Est. tokens |
 |---|---:|---|---:|---:|---|---|---|---:|---:|
-|nearby_hotpot|true|REACT|true|true||search_nearby_shops|search_nearby_shops|12|27|
+|nearby_hotpot|true|REACT|true|true||search_nearby_shops|search_nearby_shops|11|27|
 |shop_vouchers|true|REACT|true|true||list_vouchers_by_shop|list_vouchers_by_shop|0|32|
 |my_orders|true|REACT|true|true||get_my_orders|get_my_orders|0|18|
 |hotpot_order_guard|true|PLAN_EXECUTE|true|true||search_nearby_shops,list_vouchers_by_shop,place_seckill_order|search_nearby_shops,list_vouchers_by_shop,place_seckill_order|0|65|
@@ -33,7 +33,7 @@
 |blog_detail|true|REACT|true|true||get_blog_detail|get_blog_detail|0|23|
 |blog_likes|true|REACT|true|true||list_blog_likes|list_blog_likes|0|27|
 |follow_feed|true|REACT|true|true||get_follow_feed|get_follow_feed|0|23|
-|check_follow|true|REACT|true|true||check_follow_user|check_follow_user|1|32|
+|check_follow|true|REACT|true|true||check_follow_user|check_follow_user|0|32|
 |common_follows|true|REACT|true|true||list_common_follows|list_common_follows|0|27|
 |like_blog_guard|true|PLAN_EXECUTE|true|true||like_blog|like_blog|0|24|
 |follow_user_guard|true|PLAN_EXECUTE|true|true||set_follow_user|set_follow_user|0|25|

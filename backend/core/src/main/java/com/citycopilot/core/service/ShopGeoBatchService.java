@@ -3,7 +3,11 @@ package com.citycopilot.core.service;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
+import com.citycopilot.contract.tool.ToolApprovalPolicy;
+import com.citycopilot.contract.tool.ToolAudience;
+import com.citycopilot.contract.tool.ToolRiskLevel;
+import com.citycopilot.contract.tool.ToolSideEffect;
 import com.citycopilot.core.dto.GeoBatchJobDTO;
 import com.citycopilot.core.dto.GeoPointDTO;
 import com.citycopilot.core.dto.Result;
@@ -57,7 +61,12 @@ public class ShopGeoBatchService {
             name = "start_batch_geocode",
             description = "Start a batch geocode job for shops",
             requiredPermissions = {PermissionCodes.GEO_WRITE},
-            idempotent = false
+            idempotent = false,
+            audience = ToolAudience.OPS,
+            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
+            risk = ToolRiskLevel.HIGH,
+            approval = ToolApprovalPolicy.OPS_APPROVAL,
+            scope = "place:geo"
     )
     public GeoBatchJobDTO startGeocodeJob(String city, String keyword, Boolean verified, Boolean onlyMissing, Integer limit) {
         int size = normalizeLimit(limit);
@@ -70,7 +79,9 @@ public class ShopGeoBatchService {
     @AgentTool(
             name = "list_geo_batch_jobs",
             description = "List shop geocode batch jobs",
-            requiredPermissions = {PermissionCodes.GEO_READ}
+            requiredPermissions = {PermissionCodes.GEO_READ},
+            audience = ToolAudience.OPS,
+            scope = "place:geo"
     )
     public Page<ShopGeoBatchJob> queryJobs(Integer current, String status) {
         int pageNo = current == null || current < 1 ? 1 : current;
@@ -111,7 +122,12 @@ public class ShopGeoBatchService {
             name = "retry_geo_batch_failed_items",
             description = "Retry failed items from a geocode batch job",
             requiredPermissions = {PermissionCodes.GEO_WRITE},
-            idempotent = false
+            idempotent = false,
+            audience = ToolAudience.OPS,
+            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
+            risk = ToolRiskLevel.HIGH,
+            approval = ToolApprovalPolicy.OPS_APPROVAL,
+            scope = "place:geo"
     )
     public Result retryFailedItems(String sourceJobId, Boolean verified, Integer limit) {
         ShopGeoBatchJob source = findJob(sourceJobId);

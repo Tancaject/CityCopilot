@@ -5,7 +5,8 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
+import com.citycopilot.contract.tool.ToolAudience;
 import com.citycopilot.core.config.AuditProperties;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.entity.OperationLog;
@@ -67,7 +68,9 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
     @AgentTool(
             name = "query_audit_logs",
             description = "Query operation audit logs",
-            requiredPermissions = {PermissionCodes.AUDIT_READ}
+            requiredPermissions = {PermissionCodes.AUDIT_READ},
+            audience = ToolAudience.OPS,
+            scope = "ops:audit"
     )
     public Page<OperationLog> queryLogs(
             Integer current,
@@ -134,7 +137,9 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
     @AgentTool(
             name = "get_audit_retention_status",
             description = "Get audit retention and cleanup status",
-            requiredPermissions = {PermissionCodes.AUDIT_READ}
+            requiredPermissions = {PermissionCodes.AUDIT_READ},
+            audience = ToolAudience.OPS,
+            scope = "ops:audit"
     )
     public Map<String, Object> retentionStatus() {
         LocalDateTime cutoff = retentionCutoff();

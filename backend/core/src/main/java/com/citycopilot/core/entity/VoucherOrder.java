@@ -3,6 +3,8 @@ package com.citycopilot.core.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.Version;
+import com.citycopilot.core.domain.order.OrderStatus;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
@@ -15,13 +17,11 @@ import java.time.LocalDateTime;
  * 
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
-@TableName("tb_voucher_order")
+@TableName("coupon_order")
 public class VoucherOrder implements Serializable {
 
     private static final long serialVersionUID = 1L;
@@ -51,6 +51,18 @@ public class VoucherOrder implements Serializable {
      * 订单状态，1：未支付；2：已支付；3：已核销；4：已取消；5：退款中；6：已退款
      */
     private Integer status;
+
+    @Version
+    private Integer version;
+
+    public OrderStatus orderStatus() {
+        return OrderStatus.fromCode(status);
+    }
+
+    public VoucherOrder setOrderStatus(OrderStatus orderStatus) {
+        this.status = orderStatus == null ? null : orderStatus.code();
+        return this;
+    }
 
     /**
      * 下单时间

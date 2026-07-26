@@ -17,6 +17,8 @@
     </parent>
 
     <modules>
+        <module>backend/contracts</module>
+        <module>backend/commerce-service</module>
         <module>backend/core</module>
         <module>backend/agent</module>
         <module>backend/mcp-server</module>
@@ -31,6 +33,9 @@
         <spring-ai-alibaba.version>1.0.0.4</spring-ai-alibaba.version>
         <spring-ai.version>1.0.7</spring-ai.version>
         <resilience4j.version>2.2.0</resilience4j.version>
+        <testcontainers.version>1.21.4</testcontainers.version>
+        <rocketmq.server.version>5.5.0</rocketmq.server.version>
+        <rocketmq.client.java.version>5.2.0</rocketmq.client.java.version>
     </properties>
 
     <dependencyManagement>
@@ -80,6 +85,25 @@
                     <skip>true</skip>
                     <mainClass>com.citycopilot.eval.EvalRunner</mainClass>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <includes>
+                        <include>**/*IT.java</include>
+                    </includes>
+                    <failIfNoTests>false</failIfNoTests>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
         <pluginManagement>

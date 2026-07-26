@@ -1,6 +1,7 @@
 package com.citycopilot.core.controller;
 
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
+import com.citycopilot.contract.tool.ToolAudience;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
@@ -45,7 +46,9 @@ public class AdminController {
     @AgentTool(
             name = "ops_summary",
             description = "Get local-life operations summary",
-            requiredPermissions = {PermissionCodes.ADMIN_ACCESS}
+            requiredPermissions = {PermissionCodes.ADMIN_ACCESS},
+            audience = ToolAudience.OPS,
+            scope = "ops:summary"
     )
     public Result opsSummary() {
         LocalDateTime today = LocalDate.now().atStartOfDay();

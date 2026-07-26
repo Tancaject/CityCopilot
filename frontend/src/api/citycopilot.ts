@@ -3,7 +3,6 @@ import type {
   ApiEndpoint,
   ApiErrorDefinition,
   AiChatRequest,
-  AiChatResponse,
   AmapPoi,
   AmapServiceStatus,
   AuditStatus,
@@ -25,6 +24,10 @@ import type {
   VoucherOrder,
   AgentSseEvent,
   AgentTrace,
+  OpsCase,
+  OpsCaseDetail,
+  OpsPlanStep,
+  OpsPlanSubmission,
 } from '../types';
 
 interface PageResult<T> {
@@ -195,7 +198,12 @@ export function updateAdminVoucherStatus(id: number, status: number) {
 }
 
 export function seckillVoucher(voucherId: number) {
-  return postData<number>(`/voucher-order/seckill/${voucherId}`);
+  const idempotencyKey = crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return postData<number>(`/voucher-order/seckill/${voucherId}`, undefined, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  });
 }
 
 export function fetchVoucherOrder(orderId: number) {
@@ -253,10 +261,6 @@ export function syncShopGeoIndex() {
   return postData<number>('/geo/shop-index/sync');
 }
 
-export function sendAiChat(payload: AiChatRequest) {
-  return postData<AiChatResponse>('/ai/chat', payload);
-}
-
 export async function streamAgentChat(
   payload: AiChatRequest,
   onEvent: (event: AgentSseEvent) => void,
@@ -298,6 +302,14 @@ export async function streamAgentChat(
   if (tail) {
     onEvent(tail);
   }
+}
+
+export function confirmAgentAction(pendingId: string) {
+  return postData<Record<string, unknown>>(`/agent/confirm/${pendingId}`);
+}
+
+export function cancelAgentAction(pendingId: string) {
+  return postData<Record<string, unknown>>(`/agent/confirm/${pendingId}/cancel`);
 }
 
 function parseSseFrame(frame: string): AgentSseEvent | undefined {
@@ -391,6 +403,40 @@ export function exportOperationLogs(params: {
 
 export function fetchAuditStatus() {
   return getData<AuditStatus>('/admin/audit-logs/status');
+}
+
+export function fetchOpsCases(limit = 50) {
+  return getData<OpsCase[]>('/agent/ops/v2/cases', { params: { limit } });
+}
+
+export function fetchOpsCase(caseId: string) {
+  return getData<OpsCaseDetail>(`/agent/ops/v2/cases/${caseId}`);
+}
+
+export function createOpsPlan(
+  caseId: string,
+  diagnosis: Record<string, unknown>,
+  steps: OpsPlanStep[],
+) {
+  return postData<OpsPlanSubmission>(`/agent/ops/v2/cases/${caseId}/plans`, {
+    diagnosis,
+    steps,
+  });
+}
+
+export function decideOpsApproval(approvalId: string, planHash: string, approved: boolean) {
+  return postData<OpsCase>(`/agent/ops/v2/approvals/${approvalId}/decision`, {
+    planHash,
+    approved,
+  });
+}
+
+export function retryOpsCase(caseId: string) {
+  return postData<OpsCase>(`/agent/ops/v2/cases/${caseId}/retry`);
+}
+
+export function cancelOpsCase(caseId: string) {
+  return postData<OpsCase>(`/agent/ops/v2/cases/${caseId}/cancel`);
 }
 
 export function cleanupAuditLogs() {

@@ -6,6 +6,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      '/api/agent': {
+        target: 'http://127.0.0.1:8082',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ''),
+      },
       '/api': {
         target: 'http://127.0.0.1:8081',
         changeOrigin: true,

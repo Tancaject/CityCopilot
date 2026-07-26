@@ -1,14 +1,8 @@
 package com.citycopilot.mcp;
 
-import com.citycopilot.agent.gateway.ToolAuditSink;
-import com.citycopilot.agent.gateway.ToolGateway;
-import com.citycopilot.agent.gateway.ToolResult;
-import com.citycopilot.agent.tool.AgentToolRegistry;
-import com.citycopilot.core.agent.AgentTool;
-import com.citycopilot.core.dto.UserDTO;
-import com.citycopilot.core.security.PermissionPolicy;
-import com.citycopilot.core.utils.UserHolder;
-import org.junit.jupiter.api.AfterEach;
+import com.citycopilot.contract.security.ServiceUser;
+import com.citycopilot.contract.tool.ToolDefinition;
+import com.citycopilot.contract.tool.ToolInvocationResponse;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -17,121 +11,51 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class McpToolServiceTest {
 
-    @AfterEach
-    void clearUser() {
-        UserHolder.removeUser();
-    }
-
     @Test
-    void listsAndCallsToolsThroughSharedGateway() {
-        AgentToolRegistry registry = AgentToolRegistry.fromBeans(List.of(new DemoTools()));
-        McpToolService service = new McpToolService(
-                registry,
-                new ToolGateway(registry, ToolAuditSink.noop()),
-                new PermissionPolicy()
+    void listsOnlyToolsAuthorizedByCoreSession() {
+        McpCoreClient client = mock(McpCoreClient.class);
+        when(client.session(any())).thenReturn(
+                new ServiceUser(9L, "merchant", null, "merchant", Set.of("order:write"), true)
         );
-
-        assertTrue(service.toolsList().stream().anyMatch(tool -> "echo".equals(tool.get("name"))));
-
-        Object result = service.call(new McpToolCallRequest(
-                "echo",
-                Map.of("text", "city"),
-                "mcp-user",
-                Set.of()
-        )).data();
-
-        assertEquals("city", result);
-    }
-
-    @Test
-    void hidesUnauthorizedToolsFromAnonymousToolsList() {
-        AgentToolRegistry registry = AgentToolRegistry.fromBeans(List.of(new DemoTools()));
-        McpToolService service = new McpToolService(
-                registry,
-                new ToolGateway(registry, ToolAuditSink.noop()),
-                new PermissionPolicy()
-        );
+        when(client.tools(any())).thenReturn(List.of(
+                tool("echo", List.of()),
+                tool("pay_order", List.of("order:write")),
+                tool("admin_only", List.of("admin:access"))
+        ));
+        McpToolService service = new McpToolService(client);
 
         List<Map<String, Object>> tools = service.toolsList();
 
         assertTrue(tools.stream().anyMatch(tool -> "echo".equals(tool.get("name"))));
-        assertTrue(tools.stream().noneMatch(tool -> "pay_order".equals(tool.get("name"))));
-    }
-
-    @Test
-    void listsAuthorizedToolsForAuthenticatedUser() {
-        UserDTO user = new UserDTO();
-        user.setId(9L);
-        user.setRole("merchant");
-        UserHolder.saveUser(user);
-
-        AgentToolRegistry registry = AgentToolRegistry.fromBeans(List.of(new DemoTools()));
-        McpToolService service = new McpToolService(
-                registry,
-                new ToolGateway(registry, ToolAuditSink.noop()),
-                new PermissionPolicy()
-        );
-
-        List<Map<String, Object>> tools = service.toolsList();
-
         assertTrue(tools.stream().anyMatch(tool -> "pay_order".equals(tool.get("name"))));
+        assertTrue(tools.stream().noneMatch(tool -> "admin_only".equals(tool.get("name"))));
     }
 
     @Test
-    void ignoresCallerSuppliedPermissions() {
-        AgentToolRegistry registry = AgentToolRegistry.fromBeans(List.of(new DemoTools()));
-        McpToolService service = new McpToolService(
-                registry,
-                new ToolGateway(registry, ToolAuditSink.noop()),
-                new PermissionPolicy()
+    void ignoresCallerSuppliedIdentityAndDelegatesAuthorizationToCore() {
+        McpCoreClient client = mock(McpCoreClient.class);
+        when(client.invoke(anyString(), any(), any())).thenReturn(
+                ToolInvocationResponse.failure("permission_denied", "denied", false)
         );
+        McpToolService service = new McpToolService(client);
 
-        ToolResult result = service.call(new McpToolCallRequest(
-                "pay_order",
-                Map.of("orderId", 123L),
-                "victim",
-                Set.of("*", "order:write")
+        ToolInvocationResponse result = service.call(new McpToolCallRequest(
+                "pay_order", Map.of("orderId", 123L), "spoofed", Set.of("*")
         ));
 
         assertEquals("permission_denied", result.error().code());
+        verify(client).invoke(anyString(), any(), any());
     }
 
-    @Test
-    void usesAuthenticatedUserPermissionsFromServerContext() {
-        UserDTO user = new UserDTO();
-        user.setId(9L);
-        user.setRole("merchant");
-        UserHolder.saveUser(user);
-
-        AgentToolRegistry registry = AgentToolRegistry.fromBeans(List.of(new DemoTools()));
-        McpToolService service = new McpToolService(
-                registry,
-                new ToolGateway(registry, ToolAuditSink.noop()),
-                new PermissionPolicy()
-        );
-
-        ToolResult result = service.call(new McpToolCallRequest(
-                "pay_order",
-                Map.of("orderId", 123L),
-                "spoofed",
-                Set.of()
-        ));
-
-        assertEquals("paid-123", result.data());
-    }
-
-    static final class DemoTools {
-        @AgentTool(name = "echo", description = "Echo text")
-        public String echo(String text) {
-            return text;
-        }
-
-        @AgentTool(name = "pay_order", description = "Pay order", requiredPermissions = {"order:write"})
-        public String pay(Long orderId) {
-            return "paid-" + orderId;
-        }
+    private ToolDefinition tool(String name, List<String> permissions) {
+        return new ToolDefinition(name, name, permissions, 60, true, List.of());
     }
 }

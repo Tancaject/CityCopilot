@@ -16,13 +16,11 @@ import java.time.LocalDateTime;
  * 
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
-@TableName("tb_shop")
+@TableName("shop")
 public class Shop implements Serializable {
 
     private static final long serialVersionUID = 1L;
@@ -42,6 +40,11 @@ public class Shop implements Serializable {
      * 商铺类型的id
      */
     private Long typeId;
+
+    /**
+     * Owning merchant user. Null means the shop has not been assigned.
+     */
+    private Long ownerUserId;
 
     /**
      * 商铺图片，多个图片以','隔开

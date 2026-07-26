@@ -1,7 +1,7 @@
 package com.citycopilot.core.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.ShopGeoUpdateDTO;
 import com.citycopilot.core.entity.Shop;
@@ -11,10 +11,9 @@ import com.citycopilot.core.entity.Shop;
  *  服务类
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 public interface IShopService extends IService<Shop> {
+    void assertWritableByCurrentUser(Long shopId);
 
     @AgentTool(name = "get_shop_detail", description = "Get shop detail by shop id")
     Result queryShopById(Long id);

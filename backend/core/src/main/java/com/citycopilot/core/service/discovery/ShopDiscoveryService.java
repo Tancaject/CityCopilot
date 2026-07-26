@@ -37,10 +37,20 @@ public class ShopDiscoveryService {
         int pageSize = actualQuery.resolvePageSize(geoProperties);
         int from = (current - 1) * pageSize;
 
+        List<ShopDiscoveryItemDTO> merged = mergeCandidates(collectCandidates(actualQuery));
+
+        if (from >= merged.size()) {
+            return Result.ok(List.of(), (long) merged.size());
+        }
+        int to = Math.min(from + pageSize, merged.size());
+        return Result.ok(merged.subList(from, to), (long) merged.size());
+    }
+
+    private List<ShopDiscoveryItemDTO> collectCandidates(ShopDiscoveryQuery query) {
         List<ShopDiscoveryItemDTO> candidates = new ArrayList<>();
         for (ShopDiscoveryProvider provider : providers) {
             try {
-                List<ShopDiscoveryItemDTO> items = provider.discover(actualQuery);
+                List<ShopDiscoveryItemDTO> items = provider.discover(query);
                 if (items != null) {
                     candidates.addAll(items);
                 }
@@ -48,19 +58,17 @@ public class ShopDiscoveryService {
                 log.warn("Shop discovery provider {} failed: {}", provider.getClass().getSimpleName(), error.getMessage());
             }
         }
+        return candidates;
+    }
 
+    private List<ShopDiscoveryItemDTO> mergeCandidates(List<ShopDiscoveryItemDTO> candidates) {
         List<ShopDiscoveryItemDTO> sortedCandidates = candidates.stream()
                 .filter(this::hasDisplayName)
                 .sorted(discoveryComparator())
                 .toList();
         List<ShopDiscoveryItemDTO> merged = new ArrayList<>();
         sortedCandidates.forEach(item -> addOrReplaceDuplicate(merged, item));
-
-        if (from >= merged.size()) {
-            return Result.ok(List.of(), (long) merged.size());
-        }
-        int to = Math.min(from + pageSize, merged.size());
-        return Result.ok(merged.subList(from, to), (long) merged.size());
+        return merged;
     }
 
     private boolean hasDisplayName(ShopDiscoveryItemDTO item) {

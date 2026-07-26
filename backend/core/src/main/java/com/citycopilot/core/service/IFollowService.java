@@ -1,7 +1,8 @@
 package com.citycopilot.core.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
+import com.citycopilot.contract.tool.ToolSideEffect;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.entity.Follow;
 import com.citycopilot.core.security.PermissionCodes;
@@ -11,8 +12,6 @@ import com.citycopilot.core.security.PermissionCodes;
  *  服务类
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 public interface IFollowService extends IService<Follow> {
 
@@ -20,7 +19,9 @@ public interface IFollowService extends IService<Follow> {
             name = "set_follow_user",
             description = "Follow or unfollow another user",
             requiredPermissions = {PermissionCodes.USER_WRITE},
-            idempotent = false
+            idempotent = false,
+            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
+            scope = "community:follow"
     )
     Result follow(Long followUserId, Boolean isFollow);
 

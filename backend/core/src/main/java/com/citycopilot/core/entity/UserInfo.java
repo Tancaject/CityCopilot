@@ -16,13 +16,12 @@ import java.time.LocalDateTime;
  * 
  * </p>
  *
- * @author 虎哥
  * @since 2021-12-24
  */
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
-@TableName("tb_user_info")
+@TableName("user_profile")
 public class UserInfo implements Serializable {
 
     private static final long serialVersionUID = 1L;

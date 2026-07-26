@@ -1,6 +1,6 @@
 package com.citycopilot.agent.tool;
 
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
 import org.springframework.aop.support.AopUtils;
 
 import java.lang.reflect.Method;
@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class AgentToolRegistry {
     private final Map<String, ToolMetadata> tools;
@@ -82,14 +83,25 @@ public final class AgentToolRegistry {
                 bean,
                 method.getDeclaringClass(),
                 method,
-                parametersOf(method)
+                parametersOf(method, Set.of(annotation.optionalParameters())),
+                annotation.audience(),
+                annotation.sideEffect(),
+                annotation.risk(),
+                annotation.approval(),
+                annotation.scope()
         );
     }
 
-    private static List<ToolParameter> parametersOf(Method method) {
+    private static List<ToolParameter> parametersOf(Method method, Set<String> optionalParameters) {
         List<ToolParameter> parameters = new ArrayList<>();
         for (Parameter parameter : method.getParameters()) {
-            parameters.add(new ToolParameter(parameter.getName(), parameter.getType(), true));
+            String name = parameter.getName();
+            boolean required = !optionalParameters.contains(name)
+                    && (parameter.getType().isPrimitive()
+                    || name.equalsIgnoreCase("id")
+                    || name.toLowerCase().endsWith("id")
+                    || name.equalsIgnoreCase("address"));
+            parameters.add(new ToolParameter(name, parameter.getType(), required));
         }
         return parameters;
     }

@@ -25,8 +25,6 @@ import java.util.stream.Collectors;
  *  服务实现类
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
  */
 @Service
 public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> implements IFollowService {
@@ -68,7 +66,6 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override
     public Result followCommons(Long id) {
-        //获取当前用户
         Long userId=UserHolder.getUser().getId();
         String key="follow:"+userId;
         String key2="follow:"+id;//目标用户的id

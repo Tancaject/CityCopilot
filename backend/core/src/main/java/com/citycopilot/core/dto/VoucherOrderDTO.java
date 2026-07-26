@@ -19,6 +19,7 @@ public class VoucherOrderDTO {
     private Integer status;
     private String state;
     private String statusText;
+    private String failureCode;
     private LocalDateTime createTime;
     private LocalDateTime payTime;
     private LocalDateTime useTime;

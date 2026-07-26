@@ -3,7 +3,9 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { AlertCircle, BadgeCheck, Heart, Loader2, MapPin, Navigation, RefreshCw, Sparkles, Store, Ticket } from '@lucide/vue';
 import { fetchBlog, fetchHotBlogs, fetchShopTypes, likeBlog } from '../api/citycopilot';
+import ConsumerLocationSelector from '../components/ConsumerLocationSelector.vue';
 import { authState } from '../composables/auth';
+import { ensureDefaultCurrentLocation } from '../composables/location';
 import { assetUrl, blogCover } from '../utils/assets';
 import type { Blog, ShopType } from '../types';
 
@@ -111,7 +113,10 @@ async function toggleLike(blog: Blog) {
   }
 }
 
-onMounted(loadHome);
+onMounted(() => {
+  void loadHome();
+  void ensureDefaultCurrentLocation();
+});
 </script>
 
 <template>
@@ -125,6 +130,7 @@ onMounted(loadHome);
       <p>
         同一屏看分类、热门笔记、优惠券和位置线索。目标不是展示更多卡片，而是帮用户更快决定一家现在值得去的店。
       </p>
+      <ConsumerLocationSelector />
       <div class="home-command-actions">
         <RouterLink :to="{ name: 'shops' }">
           <Navigation :size="18" aria-hidden="true" />

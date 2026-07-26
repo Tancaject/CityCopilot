@@ -84,6 +84,9 @@ export interface ShopDiscoveryItem {
   images?: string;
   area?: string;
   address?: string;
+  tel?: string;
+  businessArea?: string;
+  tag?: string;
   x?: number;
   y?: number;
   poiId?: string;
@@ -118,12 +121,19 @@ export interface AmapPoi {
   type?: string;
   typecode?: string;
   address?: string;
+  tel?: string;
+  businessArea?: string;
+  tag?: string;
   provinceName?: string;
   cityName?: string;
   adName?: string;
   adcode?: string;
   x: number;
   y: number;
+  distance?: number;
+  images?: string;
+  avgPrice?: number;
+  score?: number;
 }
 
 export interface AmapServiceStatus {
@@ -162,11 +172,6 @@ export interface AiAssistantShop {
   reason?: string;
 }
 
-export interface AiChatMessage {
-  role: 'user' | 'assistant';
-  text: string;
-}
-
 export interface AiChatRequest {
   message: string;
   scene?: 'user' | 'admin';
@@ -176,18 +181,6 @@ export interface AiChatRequest {
   currentShopId?: number;
   x?: number;
   y?: number;
-  history?: AiChatMessage[];
-}
-
-export interface AiChatResponse {
-  conversationId?: string;
-  scene: string;
-  intent: string;
-  message: string;
-  confidence?: number;
-  shops?: AiAssistantShop[];
-  actions?: AiAssistantAction[];
-  diagnostics?: Record<string, unknown>;
 }
 
 export interface AgentToolEvent {
@@ -220,6 +213,48 @@ export interface AgentTrace {
   finalAnswer?: string;
   durationMs: number;
   createdAt?: string;
+}
+
+export interface OpsCase {
+  id: string;
+  incidentKey: string;
+  eventId: string;
+  caseType: string;
+  status: string;
+  version: number;
+  currentStep: number;
+  retryCount: number;
+  cancellationRequested: boolean;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OpsPlanStep {
+  toolName: string;
+  arguments: Record<string, unknown>;
+  purpose: string;
+}
+
+export interface OpsCaseDetail {
+  case: OpsCase;
+  evidence: Array<Record<string, unknown>>;
+  plan?: {
+    id: string;
+    planHash: string;
+    status: string;
+    diagnosis: Record<string, unknown>;
+    steps: OpsPlanStep[];
+  };
+  executions: Array<Record<string, unknown>>;
+  transitions: Array<Record<string, unknown>>;
+}
+
+export interface OpsPlanSubmission {
+  case: OpsCase;
+  approvalId: string;
+  planHash: string;
+  approvalExpiresAt: string;
 }
 
 export interface GeoBatchJob {

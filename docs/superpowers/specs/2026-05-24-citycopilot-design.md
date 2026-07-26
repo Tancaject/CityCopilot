@@ -5,23 +5,19 @@
 - 目标投递：2026 校招 Java 后端（含 AI Agent 方向）
 - 时间窗口：4-6 周（v0.1 MVP 第 3 周末投递，后续面试间隙打磨）
 
-## 0. 当前实施状态（2026-05-25）
+## 0. 当前实施状态（2026-05-29）
 
-详细执行状态以 `docs/superpowers/plans/2026-05-24-citycopilot-implementation.md` 的 **Current Execution Status** 为准。当前进度摘要如下：
+详细执行状态以 `docs/superpowers/plans/2026-05-24-citycopilot-implementation.md` 的当前状态表为准。当前进度摘要如下：
 
-<<<<<<< HEAD
-- **已完成**：Maven 本地解阻、多模块 `backend/core`、`backend/agent`、`backend/mcp-server`、`backend/eval`、Spring bean 扫描式 Tool Registry、ToolGateway 校验/权限/审计/标准错误、ReAct、基础 Plan-Execute、`/agent/chat` SSE、前端工具卡片、trace 列表/详情、HTTP MCP-style tools/list/tools/call、27 个已注册工具名、Resilience4j、单 YAML 套件 10 条 eval case、Actuator/Prometheus/Grafana JSON、README/RESUME 初版。
-=======
-- **已完成**：Maven 本地解阻、多模块 `backend/core`、`backend/agent`、`backend/mcp-server`、`backend/eval`、Spring bean 扫描式 Tool Registry、ToolGateway 校验/权限/审计/标准错误、ReAct、LLM-first Plan-Execute-Replan、Critic Agent 高风险拦截、`/agent/chat` SSE、前端工具卡片、trace 列表/详情、Spring AI MCP tool callbacks、HTTP MCP-style tools/list/tools/call、MCP 8090 配置和 HTTP/SSE 客户端样例、27 个已注册工具名、Resilience4j、Ops Agent live ToolGateway 执行、单 YAML 套件 30 条 eval case、离线 eval 指标报告、Actuator/Prometheus/Grafana JSON、工具/LLM 自定义 metrics、README/RESUME 初版。
->>>>>>> 4c697ae (新增 /shop/discovery 统一发现接口：ShopController.java (line 107))
+- **已完成**：Maven 本地解阻、多模块 `backend/core`、`backend/agent`、`backend/mcp-server`、`backend/eval`、Spring bean 扫描式 Tool Registry、ToolGateway 校验/权限/审计/标准错误、ReAct、LLM-first Plan-Execute-Replan、Critic Agent 高风险拦截、`/agent/chat` SSE、前端工具卡片、trace 列表/详情、Spring AI MCP SSE tool callbacks、HTTP MCP-style tools/list/tools/call、MCP 8090 配置和 HTTP/SSE 客户端样例、27 个已注册工具名、Resilience4j、Ops Agent live ToolGateway 执行、30 条 eval case、离线 eval 指标报告、Actuator/Prometheus/Grafana JSON、工具/LLM 自定义 metrics、`/shop/discovery` 混合发现、共享消费位置选择和秒杀压测工具。
 - **已修复的安全问题**：MCP 不再信任调用方权限、Agent 异步线程保留用户身份、trace 后端加 `audit:read`、秒杀退款不再破坏一人一单、Redisson/stream worker 不可用时不再先扣库存、null 工具参数不再打断审计/trace。
-- **仍未完成**：MCP 客户端真实连通验收、真实 provider 准确率/延迟/token 指标、真实 MySQL/Redis/AMap/DashScope 环境验收、demo 视频。
+- **仍未完成**：真实 MCP 客户端连通验收、真实 provider 准确率/延迟/token 指标、真实 MySQL/Redis/AMap/DashScope 环境验收、demo 视频、历史 Nginx 静态资源收尾。
 
 ## 1. 项目身份
 
 ### 1.1 一句话定位
 
-CityCopilot 是一个基于 Spring AI Alibaba 的"动作型"AI Agent 本地生活平台。用户用自然语言表达意图（"附近 50 块以内有券的火锅，帮我下单"），由 Agent 自主完成意图理解 → 工具调用 → 多步推理 → 事务性执行的全流程。后端通过统一 Tool Registry 将业务能力同时暴露为 LLM Function Calling 工具与 MCP server tools，使整个本地生活系统可被 Claude / Cursor 等任意 MCP 客户端直接调用。
+CityCopilot 是一个基于 OpenAI-compatible LLM 接口和 Spring AI MCP Server 的"动作型"AI Agent 本地生活平台。用户用自然语言表达意图（"附近 50 块以内有券的火锅，帮我下单"），由 Agent 自主完成意图理解 → 工具调用 → 多步推理 → 事务性执行的全流程。后端通过统一 Tool Registry 将业务能力同时暴露给对话 Agent、HTTP-compatible tools 和 Spring AI MCP SSE tool callbacks。
 
 ### 1.2 与其他项目的差异化
 
@@ -30,9 +26,9 @@ CityCopilot 是一个基于 Spring AI Alibaba 的"动作型"AI Agent 本地生�
 
 ### 1.3 校招卖点（按面试官关注度排序）
 
-1. Spring AI Alibaba 工业级框架使用（非自拼 RestTemplate）
+1. OpenAI-compatible provider 接入，可用 DashScope/兼容端点切换
 2. ReAct + Plan-Execute-Replan 双模式 Agent
-3. 自研 Tool Registry：一份 `@AgentTool` 注解同时驱动 Function Calling 与 MCP server
+3. 自研 Tool Registry：一份 `@AgentTool` 注解同时驱动 Agent 工具调用、HTTP tools 和 MCP SSE callbacks
 4. MCP server 实现（2025-2026 大厂内部高频术语）
 5. Multi-Agent 编排（Dialog / Ops / Critic）
 6. Eval Harness 出可写进简历的客观指标（准确率、延迟、token）
@@ -65,7 +61,7 @@ CityCopilot 是一个基于 Spring AI Alibaba 的"动作型"AI Agent 本地生�
                 │  │ Resilience4j (限流/熔断/重试)      │ │
                 │  └──────┬────────────────────┬────────┘ │
                 └─────────┼────────────────────┼──────────┘
-                          │ in-process call    │ stdio/HTTP
+                          │ in-process call    │ HTTP/SSE
                 ┌─────────▼──────────┐  ┌──────▼──────────┐
                 │ core 模块 (业务)    │  │ mcp-server 模块  │
                 │ Shop/Voucher/      │  │ tools/list       │
@@ -75,8 +71,8 @@ CityCopilot 是一个基于 Spring AI Alibaba 的"动作型"AI Agent 本地生�
                           │
                 ┌─────────▼──────────┐  ┌──────────────────┐
                 │ MySQL + Redis      │  │ LLM Provider     │
-                │ (现有, 含分布式锁、 │  │ Spring AI        │
-                │  Lua、Geo、Stream) │  │ Alibaba          │
+                │ (现有, 含分布式锁、 │  │ OpenAI-compatible│
+                │  Lua、Geo、Stream) │  │ DashScope 等     │
                 └────────────────────┘  └──────────────────┘
 
 旁路：
@@ -97,9 +93,9 @@ city-copilot/
  │  │                 Orchestrator、Tool Registry、@AgentTool 注解、
  │  │                 ReAct / Plan-Execute 实现、Multi-Agent、
  │  │                 SSE 接口、Traces 落 Redis
- │  ├─ mcp-server/   MCP 协议实现
+ │  ├─ mcp-server/   MCP SSE + HTTP 兼容工具接口
  │  │                 复用 agent 模块的 Tool Registry
- │  │                 stdio + HTTP 双协议
+ │  │                 Spring AI MCP SSE + HTTP tools/list/tools/call
  │  └─ eval/         评估子系统
  │                    CLI、yaml 用例集、报告生成
  └─ deploy/       部署与可观测
@@ -115,7 +111,7 @@ city-copilot/
 2. **Agent 编排 = ReAct + Plan-Execute-Replan 双模式**：router 按意图复杂度自动选择。
 3. **MCP server 与业务服务共享 Tool Registry**：一份注解，两处生效。
 4. **现有 hmdp 业务代码不重写**：仅在 service 方法上加 `@AgentTool` 注解。
-5. **Spring AI Alibaba 替换现有手写 RestTemplate LLM 调用**：对标校招标杆项目（yu-ai-agent / OnCall Agent）。
+5. **LLM 调用走 OpenAI-compatible provider 抽象**：默认 DashScope 兼容接口，保留启发式 fallback，Eval 也支持 provider 模式。
 6. **模块化单体而非真微服务**：保留 Agent 主线深度，用模块边界 + 异步事件 + 可观测性 + 熔断限流向面试官传达"我懂分布式"的信号词。
 
 ## 3. 核心组件详细设计
@@ -141,8 +137,9 @@ public @interface AgentTool {
 1. Spring 启动时扫描所有 `@AgentTool` 方法
 2. 对每个方法生成 JSON Schema（参数类型 + 注解 `@Schema` 描述）
 3. 同时注册到：
-   - LLM Function Calling 列表（Spring AI Alibaba 的 `FunctionCallback`）
-   - MCP server 的 `tools/list` 响应
+   - Agent 执行器的可调用工具清单
+   - HTTP-compatible `tools/list` 响应
+   - Spring AI MCP SSE tool callbacks
 4. 调用统一过 `ToolGateway.invoke(toolName, args, ctx)`：
    - 参数 JSON Schema 校验
    - 权限码校验（复用现有 `PermissionPolicy`）
@@ -151,13 +148,14 @@ public @interface AgentTool {
    - 错误标准化为 `ToolError(code, message, retryable)`
    - 异步落 trace 到 Redis
 
-#### v0.2 工具清单（15-20 个）
+#### v0.2 工具清单（当前主源码 27 个 `@AgentTool`）
 
 | 工具名 | 业务方法 | 模块 |
 |---|---|---|
 | search_nearby_shops | ShopService.searchNearby | core |
 | search_shops_by_type | ShopService.queryShopByType | core |
 | get_shop_detail | ShopService.queryById | core |
+| geocode_address / search_geo_poi / get_geo_provider_status | AmapGeoService.* | core |
 | list_vouchers_by_shop | VoucherService.queryVoucherOfShop | core |
 | place_seckill_order | VoucherOrderService.seckillVoucher | core |
 | get_my_orders | VoucherOrderService.listOfCurrentUser | core |
@@ -166,7 +164,6 @@ public @interface AgentTool {
 | get_follow_feed | BlogService.queryBlogOfFollow | core |
 | get_blog_detail | BlogService.queryBlogById | core |
 | publish_blog | BlogService.saveBlog | core |
-| geocode_shop / poi_match_shop | AmapGeoService.* | core |
 | start_batch_geocode | ShopGeoBatchService.create | core |
 | query_audit_logs | OperationLogService.query | core |
 | ops_summary | AdminController.opsSummary | core |
@@ -239,20 +236,21 @@ final = LLM(answer_prompt + prior_outputs)
 #### 协议覆盖（基于 MCP 当前规范）
 
 - `initialize` / `initialized`
-- `tools/list`：返回 Tool Registry 全集
+- `tools/list`：返回当前用户可见的 Tool Registry 子集
 - `tools/call`：转发给 ToolGateway，复用同一限流 / 审计链路
 - `prompts/list`（v0.2 可选）：返回项目预置 prompt 模板
 - `resources/list`（v0.2 可选）：暴露店铺类目等只读资源
 
 #### 传输
 
-- **stdio**：默认，给 Claude Desktop / Cursor 用
-- **HTTP / SSE**：给浏览器端或远程 MCP client 用
+- **Spring AI MCP SSE**：当前启用，`GET /mcp/sse` + session message endpoint `/mcp/messages`
+- **HTTP 兼容工具接口**：`GET /mcp/tools/list`、`POST /mcp/tools/call`，用于 smoke 和兼容调用
+- **stdio**：当前配置为 `stdio: false`，如需 Claude Desktop/Cursor stdio 形态，需要另开配置和验收
 
 #### 安全
 
-- stdio 模式默认本地、无认证
-- HTTP 模式必须带 Bearer token；复用现有 token 拦截器；并以 token 对应用户的权限码做工具过滤（无权工具直接在 `tools/list` 时隐藏）
+- HTTP 工具接口复用现有登录态；并以 token 对应用户的权限码做工具过滤（无权工具直接在 `tools/list` 时隐藏）
+- 不允许 MCP 调用方在请求体里伪造 `userId` 或 `permissions`
 
 ### 3.5 Eval Harness
 
@@ -344,8 +342,8 @@ mvn -pl backend/eval test -DllmModel=qwen-plus  # 切换模型对比
 **第 1 周**：基础重构 + 改名
 - Maven 拆 4 模块
 - 仓库改名 `hmdp` → `city-copilot`
-- 引入 Spring AI Alibaba，跑通 `/agent/ping`
-- 旧 `AiAssistantService` 已下线，前端统一走 `/agent/chat`
+- 接入 OpenAI-compatible provider，跑通 `/agent/ping`
+- 前端主链路统一走 `/agent/chat`；旧 `AiAssistantService` / `/ai/chat` 仍保留为兼容兜底，后续需决定是否彻底移除
 - 新 README
 
 **第 2 周**：Tool Registry + ReAct + SSE（= v0.1 MVP）
@@ -358,10 +356,10 @@ mvn -pl backend/eval test -DllmModel=qwen-plus  # 切换模型对比
 
 **第 3 周**：Plan-Execute + MCP server + 工具补全
 - Plan-Execute-Replan + Router
-- 工具数量补到 15-20 个
-- MCP server（stdio + HTTP）
+- 工具数量从目标 15-20 个扩展到当前 27 个
+- MCP server（Spring AI SSE + HTTP-compatible tools）
 - Resilience4j 接入 ToolGateway
-- Claude Desktop 配置 demo 文档
+- HTTP/SSE MCP 客户端样例和验收文档；Claude Desktop/Cursor stdio 形态待另行验收
 
 **第 4 周**：Ops Agent + Eval + 可观测性（= v0.2）
 - Redis Stream `agent.ops.tasks` + Ops Agent worker
@@ -371,7 +369,7 @@ mvn -pl backend/eval test -DllmModel=qwen-plus  # 切换模型对比
 - Critic Agent（可选）
 
 **第 5-6 周**（面试已开始）：打磨
-- 秒杀压测对比图
+- 秒杀压测数字和对比图
 - Eval 数字优化
 - demo 视频
 - 1-2 篇技术博客
@@ -387,19 +385,18 @@ mvn -pl backend/eval test -DllmModel=qwen-plus  # 切换模型对比
 
 ```markdown
 **CityCopilot** — Acting AI Agent for Local Life Services
-基于 Spring AI Alibaba 的"动作型" AI Agent 本地生活平台（Java 17, Spring Boot 3.2）
+基于 OpenAI-compatible LLM 接口与 Spring AI MCP Server 的"动作型" AI Agent 本地生活平台（Java 17, Spring Boot 3.2）
 
 - 模块化单体架构（4 个 Maven 模块），自研 Tool Registry 通过 @AgentTool 注解
-  将 20+ 业务接口同时暴露为 LLM Function Calling 工具与 MCP server tools，
+  将 27 个业务工具同时暴露给对话 Agent、HTTP tools 和 Spring AI MCP SSE callbacks，
   一份注解两处生效
 - Orchestrator 支持 ReAct + Plan-Execute-Replan 双模式，按意图复杂度自动路由；
   SSE 流式响应；防循环 / 防幻觉 / 上下文 token 预算
 - 多 Agent 协作：Dialog Agent（同步对话）+ Ops Agent（Redis Stream
   驱动的异步运营任务）
-- 实现 MCP server（stdio + HTTP），业务能力可被 Claude / Cursor
-  等任意 MCP 客户端直连调用
+- 实现 MCP server（Spring AI MCP SSE + HTTP-compatible tools），业务能力可被支持 HTTP/SSE 的 MCP 客户端调用；stdio 形态待另行验收
 - Eval Harness：30 条离线用例，模式准确率 100%，工具调用准确率 100%，关键词命中率 100%，平均 eval 延迟 1 ms，平均估算 token 27；真实 provider 指标待接入
-- 底层：Redis Lua 秒杀（QPS A→B）、Redisson 分布式锁、Redis GEO、
+- 底层：Redis Lua 秒杀（200 并发约 2700 QPS、P99 105ms、错误率 0%；5000 抢 100 零超卖）、Redisson 分布式锁、Redis GEO、
   Resilience4j 限流熔断
 - 可观测：Micrometer + Prometheus + Grafana 看板覆盖业务 / Agent / 工具维度
 ```
@@ -416,13 +413,13 @@ mvn -pl backend/eval test -DllmModel=qwen-plus  # 切换模型对比
 
 | 风险 | 概率 | 缓解 |
 |---|---|---|
-| Spring AI Alibaba 文档不完善导致开发卡顿 | 中 | 已有标杆项目 yu-ai-agent 可参考；准备好 Spring AI（非 Alibaba 分支）作备选 |
-| Spring AI Alibaba 与现有 Spring Boot 3.2.2 / MyBatis-Plus / Redisson / Hutool 依赖冲突 | 中 | 第 1 周首日先做依赖兼容性 POC（mvn dependency:tree），冲突时优先升级 Spring AI Alibaba 而非降级业务依赖；版本固化到 pom 后再继续 |
+| OpenAI-compatible provider 返回格式或稳定性波动 | 中 | Agent 层保留启发式 fallback；真实 provider 指标需和离线 eval 分开记录 |
+| Spring AI MCP 与现有 Spring Boot 3.2.2 / MyBatis-Plus / Redisson / Hutool 依赖冲突 | 中 | 用 Maven 模块边界隔离 MCP Server；冲突时优先保持业务模块稳定 |
 | MCP 规范快速演化导致实现过时 | 中 | 跟随 modelcontextprotocol.io 官方 spec；保留版本号 |
 | LLM provider 选型（DashScope / 百炼 / OpenAI 兼容） | 低 | 通过配置切换；Eval 模块支持模型对比 |
 | Plan-Execute 实现复杂度被低估 | 中 | MVP 模式可降级为只 ReAct；Plan-Execute 在第 3 周末完成最低可用版本 |
 | Eval 用例编写工作量大 | 中 | 用例从 10 条起步（v0.1.5），逐步扩到 30；先有数字再优化数字 |
-| 旧 `AiAssistantService` 规则代码价值如何处理 | 已决策 | 已移除旧服务和 `/ai/chat`，以 `/agent/chat`、Tool Registry、ReAct/Plan-Execute 作为唯一对话链路 |
+| 旧 `AiAssistantService` 规则代码价值如何处理 | 待收尾 | 当前 `/agent/chat` 是主链路，旧 `/ai/chat` 仍作为前端兜底兼容路径；彻底移除需要同步删前后端 fallback |
 
 ## 9. 待用户决定的开放项
 

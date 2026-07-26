@@ -2,7 +2,7 @@ package com.citycopilot.agent.schema;
 
 import com.citycopilot.agent.tool.AgentToolRegistry;
 import com.citycopilot.agent.tool.ToolMetadata;
-import com.citycopilot.core.agent.AgentTool;
+import com.citycopilot.contract.tool.AgentTool;
 
 import java.util.List;
 import java.util.Map;

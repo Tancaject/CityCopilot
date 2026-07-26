@@ -109,6 +109,12 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredPermissions: ['audit:read'] },
   },
   {
+    path: '/admin/ops-cases',
+    name: 'admin-ops-cases',
+    component: () => import('../views/AdminOpsCasesView.vue'),
+    meta: { requiresAuth: true, requiredPermissions: ['audit:read'] },
+  },
+  {
     path: '/403',
     name: 'forbidden',
     component: () => import('../views/ForbiddenView.vue'),

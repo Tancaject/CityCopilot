@@ -1,5 +1,5 @@
 param(
-    [string]$BaseUrl = "http://localhost:8081",
+    [string]$BaseUrl = "http://localhost:8082",
     [string]$TaskType = "daily-report",
     [string]$PayloadJson = "{}",
     [int]$TimeoutSec = 10

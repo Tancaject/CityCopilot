@@ -3,15 +3,15 @@ server:
 
 spring:
   application:
-    name: city-copilot
+    name: citycopilot-core-service
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: "${CITYCOPILOT_DB_URL:jdbc:mysql://127.0.0.1:3306/citycopilot?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}"
     username: "${CITYCOPILOT_DB_USERNAME:root}"
-    password: "${CITYCOPILOT_DB_PASSWORD:12345}"
+    password: "${CITYCOPILOT_DB_PASSWORD:}"
   data:
     redis:
-      host: "${CITYCOPILOT_REDIS_HOST:172.19.235.221}"
+      host: "${CITYCOPILOT_REDIS_HOST:127.0.0.1}"
       port: "${CITYCOPILOT_REDIS_PORT:6379}"
       password: "${CITYCOPILOT_REDIS_PASSWORD:}"
       database: "${CITYCOPILOT_REDIS_DATABASE:0}"
@@ -21,6 +21,10 @@ spring:
           max-idle: 10
           min-idle: 1
           time-between-eviction-runs: 10s
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
   jackson:
     default-property-inclusion: non_null
 
@@ -32,6 +36,20 @@ logging:
     com.citycopilot.core: debug
 
 citycopilot:
+  commerce:
+    enabled: "${CITYCOPILOT_COMMERCE_ENABLED:false}"
+    base-url: "${CITYCOPILOT_COMMERCE_BASE_URL:http://127.0.0.1:8083}"
+    service-token: "${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:}"
+  internal-api:
+    service-token: "${CITYCOPILOT_INTERNAL_SERVICE_TOKEN:}"
+    service-tokens:
+      agent-service: "${CITYCOPILOT_INTERNAL_AGENT_TOKEN:}"
+      ops-agent: "${CITYCOPILOT_INTERNAL_OPS_TOKEN:}"
+      ops-reader: "${CITYCOPILOT_INTERNAL_OPS_READER_TOKEN:}"
+      ops-executor: "${CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN:}"
+      mcp-server: "${CITYCOPILOT_INTERNAL_MCP_TOKEN:}"
+      commerce-service: "${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:}"
+    idempotency-ttl: "${CITYCOPILOT_INTERNAL_IDEMPOTENCY_TTL:24h}"
   audit:
     retention-days: "${CITYCOPILOT_AUDIT_RETENTION_DAYS:90}"
     export-limit: "${CITYCOPILOT_AUDIT_EXPORT_LIMIT:1000}"
@@ -94,15 +112,32 @@ citycopilot:
     model: "${CITYCOPILOT_AI_MODEL:qwen-plus}"
     timeout-seconds: 8
     max-message-length: 300
-    public-rate-limit-per-minute: 20
-    user-rate-limit-per-minute: 40
-    admin-rate-limit-per-minute: 80
-    history-limit: 6
   redisson:
     enabled: "${CITYCOPILOT_REDISSON_ENABLED:true}"
   seckill:
     stream-worker:
       enabled: "${CITYCOPILOT_SECKILL_STREAM_WORKER_ENABLED:true}"
+      max-retries: "${CITYCOPILOT_SECKILL_STREAM_MAX_RETRIES:3}"
+    reconciliation:
+      interval-ms: "${CITYCOPILOT_SECKILL_RECONCILIATION_INTERVAL_MS:60000}"
+      auto-heal: "${CITYCOPILOT_SECKILL_RECONCILIATION_AUTO_HEAL:false}"
+    recovery:
+      interval-ms: "${CITYCOPILOT_SECKILL_RECOVERY_INTERVAL_MS:30000}"
+      reserved-timeout-seconds: "${CITYCOPILOT_SECKILL_RESERVED_TIMEOUT_SECONDS:300}"
+  rocketmq:
+    enabled: "${CITYCOPILOT_ROCKETMQ_ENABLED:false}"
+    producer-enabled: "${CITYCOPILOT_ROCKETMQ_PRODUCER_ENABLED:true}"
+    consumer-enabled: "${CITYCOPILOT_ROCKETMQ_CONSUMER_ENABLED:true}"
+    endpoints: "${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}"
+    commerce-topic: citycopilot-commerce-events-v1
+    ops-topic: citycopilot-ops-events-v1
+    audit-consumer-group: citycopilot-event-audit-v1
+    request-timeout: "${CITYCOPILOT_ROCKETMQ_REQUEST_TIMEOUT:3s}"
+    max-attempts: "${CITYCOPILOT_ROCKETMQ_MAX_ATTEMPTS:3}"
+    relay-batch-size: "${CITYCOPILOT_ROCKETMQ_RELAY_BATCH_SIZE:50}"
+    claim-lease: "${CITYCOPILOT_ROCKETMQ_CLAIM_LEASE:30s}"
+    retry-backoff: "${CITYCOPILOT_ROCKETMQ_RETRY_BACKOFF:5s}"
+    relay-interval-ms: "${CITYCOPILOT_ROCKETMQ_RELAY_INTERVAL_MS:1000}"
 
 management:
   endpoints:

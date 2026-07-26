@@ -10,5 +10,7 @@ Tech: Java 17, Spring Boot 3.2, MyBatis-Plus, MySQL, Redis, Resilience4j, Microm
 - Hardened tool execution with permission checks, parameter validation, standardized tool errors, audit logging, Resilience4j retry/rate-limit/circuit-breaker/timeout controls, and protected trace APIs.
 - Implemented eval harness with 30 YAML cases, Markdown reporting, and failure-reason distribution. Latest offline run: 100% mode accuracy, 100% tool-call accuracy, 100% keyword accuracy, 0 ms average eval latency, and 27 estimated tokens per case.
 - Added observability through Actuator, Prometheus scrape config, Grafana dashboard JSON, and custom Micrometer metrics for tool and LLM calls.
+- Implemented mixed nearby discovery that merges orderable local shops with AMap POI results from the shared consumer location state, preserving source, orderability, and routing hints for UI and Agent flows.
+- Captured seckill load-test evidence: 200 concurrent users at about 2700 QPS with P99 105 ms and 0% errors; 5000 users competing for 100 stock completed with zero oversell.
 
-Open before final resume use: run live provider eval with DashScope credentials using the eval provider mode, perform real MySQL/Redis/AMap acceptance, capture MCP client smoke evidence, tune live Ops Agent task payloads, and record seckill load-test numbers.
+Open before final resume use: run live provider eval with DashScope credentials using the eval provider mode, perform real MySQL/Redis/AMap/DashScope acceptance, capture MCP client smoke evidence, tune live Ops Agent task payloads, and record a final demo.

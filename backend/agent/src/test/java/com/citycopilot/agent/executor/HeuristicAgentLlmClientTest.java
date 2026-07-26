@@ -2,7 +2,7 @@ package com.citycopilot.agent.executor;
 
 import com.citycopilot.agent.gateway.ToolResult;
 import com.citycopilot.agent.trace.AgentTraceStep;
-import com.citycopilot.core.config.AiProperties;
+import com.citycopilot.agent.config.AgentAiProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -14,7 +14,7 @@ class HeuristicAgentLlmClientTest {
 
     @Test
     void reportsFailedToolObservationInsteadOfSuccess() {
-        HeuristicAgentLlmClient client = new HeuristicAgentLlmClient(new AiProperties());
+        HeuristicAgentLlmClient client = new HeuristicAgentLlmClient(new AgentAiProperties());
         AgentTraceStep failedObservation = AgentTraceStep.toolResult(
                 1,
                 "search_nearby_shops",

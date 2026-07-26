@@ -1,9 +1,9 @@
 package com.citycopilot.agent.ops;
 
 import com.citycopilot.agent.gateway.ToolCallContext;
-import com.citycopilot.agent.gateway.ToolGateway;
+import com.citycopilot.agent.gateway.ToolGatewayClient;
 import com.citycopilot.agent.gateway.ToolResult;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.security.PermissionCodes;
 import cn.hutool.json.JSONUtil;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,18 +34,18 @@ public class OpsAgentService {
     private static final int MAX_RESULT_LIMIT = 100;
 
     private final StringRedisTemplate redisTemplate;
-    private final ToolGateway toolGateway;
+    private final ToolGatewayClient toolGateway;
 
     @Autowired
-    public OpsAgentService(StringRedisTemplate redisTemplate, ObjectProvider<ToolGateway> toolGateway) {
+    public OpsAgentService(StringRedisTemplate redisTemplate, ObjectProvider<ToolGatewayClient> toolGateway) {
         this(redisTemplate, toolGateway.getIfAvailable());
     }
 
     OpsAgentService(StringRedisTemplate redisTemplate) {
-        this(redisTemplate, (ToolGateway) null);
+        this(redisTemplate, (ToolGatewayClient) null);
     }
 
-    OpsAgentService(StringRedisTemplate redisTemplate, ToolGateway toolGateway) {
+    OpsAgentService(StringRedisTemplate redisTemplate, ToolGatewayClient toolGateway) {
         this.redisTemplate = redisTemplate;
         this.toolGateway = toolGateway;
     }
@@ -158,13 +158,8 @@ public class OpsAgentService {
                 "按批次启动 geocode job",
                 "失败项进入 retry_geo_batch_failed_items"
         ));
-        attachExecutions(result, List.of(new OpsToolCall("start_batch_geocode", args(
-                "arg0", result.get("scopeCity"),
-                "arg1", stringValue(body, "keyword", ""),
-                "arg2", booleanValue(body, "verified", false),
-                "arg3", result.get("onlyMissing"),
-                "arg4", result.get("limit")
-        ))));
+        result.put("executionMode", "legacy_plan_only");
+        result.put("migrationTarget", "ops_case_v2");
         return result;
     }
 
@@ -256,7 +251,10 @@ public class OpsAgentService {
     }
 
     private Map<String, Object> executeTool(OpsToolCall call) {
-        ToolResult result = toolGateway.invoke(call.toolName(), call.args(), opsContext());
+        ToolCallContext context = opsContext().withIdempotencyKey(
+                "ops:" + call.toolName() + ":" + Integer.toHexString(call.args().hashCode())
+        );
+        ToolResult result = toolGateway.invoke(call.toolName(), call.args(), context);
         Map<String, Object> execution = new LinkedHashMap<>();
         execution.put("tool", call.toolName());
         execution.put("args", call.args());

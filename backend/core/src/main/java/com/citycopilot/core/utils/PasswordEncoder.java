@@ -26,7 +26,6 @@ public class PasswordEncoder {
             throw new RuntimeException("密码格式不正确！");
         }
         String[] arr = encodedPassword.split("@");
-        // 获取盐
         String salt = arr[0];
         // 比较
         return encodedPassword.equals(encode(rawPassword, salt));

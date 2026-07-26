@@ -1,0 +1,146 @@
+/* ============================================================
+   CityCopilot · Consumer Scene Warm Overrides
+   Re-skin the legacy dark hero (.home-command) and any other
+   dark-by-default chrome on consumer (user-scene) pages.
+   Loaded AFTER tokens.css. Admin scene untouched.
+   ============================================================ */
+
+body[data-scene="user"] .home-command {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  background:
+    radial-gradient(140% 110% at 0% 0%, oklch(96% 0.045 70) 0%, transparent 55%),
+    radial-gradient(120% 100% at 100% 100%, oklch(94% 0.040 50) 0%, transparent 60%),
+    linear-gradient(180deg, var(--paper-80) 0%, var(--paper-100) 100%);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-tight);
+}
+
+body[data-scene="user"] .home-command::before {
+  background:
+    linear-gradient(90deg, oklch(22% 0.018 60 / 0.045) 1px, transparent 1px),
+    linear-gradient(0deg, oklch(22% 0.018 60 / 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+body[data-scene="user"] .home-command .eyebrow {
+  color: var(--color-ember-strong);
+}
+
+body[data-scene="user"] .home-command h1 {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 48;
+  letter-spacing: -0.035em;
+}
+
+body[data-scene="user"] .home-command p {
+  color: var(--text-secondary);
+}
+
+/* Primary CTA — solid ember */
+body[data-scene="user"] .home-command-actions a {
+  background: linear-gradient(135deg, var(--color-ember), var(--color-ember-strong));
+  color: oklch(99% 0.01 70);
+  border: 1px solid oklch(70% 0.18 42 / 0.4);
+  box-shadow: 0 12px 28px oklch(70% 0.18 42 / 0.22);
+  transition: transform var(--dur-fast) var(--ease-out-expo), box-shadow var(--dur-fast) var(--ease-out-expo);
+}
+
+body[data-scene="user"] .home-command-actions a:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 36px oklch(70% 0.18 42 / 0.32);
+}
+
+/* Secondary — paper ghost */
+body[data-scene="user"] .home-command-actions a + a {
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-primary);
+  border: 1px solid var(--hairline-strong);
+  box-shadow: none;
+  backdrop-filter: blur(6px);
+}
+
+body[data-scene="user"] .home-command-actions a + a:hover {
+  background: #ffffff;
+  border-color: oklch(70% 0.18 42 / 0.35);
+}
+
+/* Live panel inside hero — frosted paper card */
+body[data-scene="user"] .home-live-panel {
+  border: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-tight);
+}
+
+body[data-scene="user"] .home-live-head span {
+  color: var(--color-ember-strong);
+}
+
+body[data-scene="user"] .home-live-head strong {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-feature-settings: "tnum";
+}
+
+body[data-scene="user"] .home-signal-grid article {
+  border: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--text-primary);
+}
+
+body[data-scene="user"] .home-signal-grid svg {
+  color: var(--color-moss);
+}
+
+body[data-scene="user"] .home-signal-grid span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+body[data-scene="user"] .home-signal-grid strong {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-feature-settings: "tnum";
+  font-variation-settings: "opsz" 22;
+}
+
+body[data-scene="user"] .home-signal-grid small {
+  color: var(--text-secondary);
+}
+
+body[data-scene="user"] .home-lead-note {
+  background: #ffffff;
+  color: var(--text-primary);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-tight);
+}
+
+body[data-scene="user"] .home-lead-note small {
+  color: var(--color-ember-strong);
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Reset H1 inheritance — Geist optical-size  */
+body[data-scene="user"] .home-command h1 span {
+  display: block;
+}
+
+/* Note signal (real探店 badge) — warmer moss */
+body[data-scene="user"] .note-signal {
+  background: oklch(54% 0.10 145 / 0.14);
+  color: oklch(38% 0.10 145);
+}
+
+/* Slight ops-strip warmth */
+body[data-scene="user"] .home-ops-strip svg {
+  color: var(--color-ember-strong);
+}
