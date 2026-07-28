@@ -10,6 +10,9 @@ import com.citycopilot.agent.gateway.ToolCallContext;
 import com.citycopilot.agent.gateway.ToolGatewayClient;
 import com.citycopilot.agent.gateway.ToolResult;
 import com.citycopilot.agent.memory.ConversationMemory;
+import com.citycopilot.agent.memory.ConversationScope;
+import com.citycopilot.agent.memory.LongTermPreferenceMemory;
+import com.citycopilot.agent.memory.PreferenceMemoryWriteException;
 import com.citycopilot.agent.router.AgentRouter;
 import com.citycopilot.agent.router.Mode;
 import com.citycopilot.agent.security.AgentRequestContext;
@@ -32,10 +35,12 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
@@ -49,6 +54,7 @@ public class AgentController {
     private final PendingActionStore pendingActionStore;
     private final ToolGatewayClient toolGateway;
     private final ConversationMemory conversationMemory;
+    private final LongTermPreferenceMemory preferenceMemory;
 
     public AgentController(
             ReActExecutor reActExecutor,
@@ -57,7 +63,8 @@ public class AgentController {
             TraceStore traceStore,
             PendingActionStore pendingActionStore,
             ToolGatewayClient toolGateway,
-            ConversationMemory conversationMemory
+            ConversationMemory conversationMemory,
+            LongTermPreferenceMemory preferenceMemory
     ) {
         this.reActExecutor = reActExecutor;
         this.planExecuteExecutor = planExecuteExecutor;
@@ -66,6 +73,7 @@ public class AgentController {
         this.pendingActionStore = pendingActionStore;
         this.toolGateway = toolGateway;
         this.conversationMemory = conversationMemory;
+        this.preferenceMemory = preferenceMemory;
     }
 
     @GetMapping("/ping")
@@ -176,12 +184,30 @@ public class AgentController {
             AgentRequestContextHolder.set(requestContext);
             emit(emitter, new AgentSseEvent("status", Map.of("phase", "agent_started")));
             String message = request == null ? null : request.getMessage();
-            String sessionId = request == null ? null : request.getConversationId();
+            String sessionId = ConversationScope.sessionKey(
+                    requestContext.user(),
+                    request == null ? null : request.getConversationId()
+            );
             String contextualMessage = conversationMemory.contextualize(sessionId, message);
             ToolCallContext context = AgentSecurity.toolContextFrom(
                     requestContext.user(), requestContext.authorization(), requestContext.requestId()
             );
             Map<String, Object> hints = hintsFrom(request);
+            LongTermPreferenceMemory.Mutation memoryMutation = applyLongTermPreferences(
+                    request,
+                    requestContext.user(),
+                    message,
+                    hints
+            );
+            if (memoryMutation.changed() && memoryMutation.memoryOnly()) {
+                AgentExecutionResult result = memoryResult(memoryMutation.responseMessage());
+                for (AgentSseEvent event : AgentSseEventMapper.toEvents(result)) {
+                    emit(emitter, event);
+                }
+                conversationMemory.appendTurn(sessionId, message, result.finalAnswer());
+                emitter.complete();
+                return;
+            }
             Mode mode = router.classify(message);
             AgentExecutionResult result;
             if (mode == Mode.PLAN_EXECUTE) {
@@ -204,6 +230,8 @@ public class AgentController {
             }
             conversationMemory.appendTurn(sessionId, message, result.finalAnswer());
             emitter.complete();
+        } catch (PreferenceMemoryWriteException error) {
+            preferenceMemoryFallback(emitter);
         } catch (Exception error) {
             fallback(emitter, error);
         } finally {
@@ -220,6 +248,63 @@ public class AgentController {
         if (request.getX() != null) hints.put("x", request.getX());
         if (request.getY() != null) hints.put("y", request.getY());
         return hints;
+    }
+
+    private LongTermPreferenceMemory.Mutation applyLongTermPreferences(
+            AgentChatRequest request,
+            ServiceUser user,
+            String message,
+            Map<String, Object> hints
+    ) {
+        if (!isConsumerScene(request) || user == null || !user.authenticated() || user.id() == null) {
+            return LongTermPreferenceMemory.Mutation.none();
+        }
+        LongTermPreferenceMemory.Mutation mutation = preferenceMemory.applyExplicitMessage(user.id(), message);
+        Map<String, Object> preferences = preferenceMemory.promptContext(user.id());
+        if (!preferences.isEmpty()) {
+            hints.put("userPreferences", preferences);
+        }
+        if (mutation.changed()) {
+            hints.put("preferenceMemoryUpdate", Map.of(
+                    "savedCount", mutation.savedCount(),
+                    "deletedCount", mutation.deletedCount()
+            ));
+        }
+        return mutation;
+    }
+
+    private boolean isConsumerScene(AgentChatRequest request) {
+        return request == null || request.getScene() == null || !"admin".equalsIgnoreCase(request.getScene());
+    }
+
+    private AgentExecutionResult memoryResult(String answer) {
+        String traceId = UUID.randomUUID().toString();
+        AgentTraceStep finalStep = AgentTraceStep.finalAnswer(1, answer);
+        AgentExecutionResult result = new AgentExecutionResult(
+                traceId,
+                "MEMORY",
+                List.of(finalStep),
+                answer,
+                0
+        );
+        traceStore.save(new AgentTrace(traceId, "MEMORY", result.steps(), answer, 0, Instant.now()));
+        return result;
+    }
+
+    private void preferenceMemoryFallback(SseEmitter emitter) {
+        try {
+            emit(emitter, new AgentSseEvent("error", Map.of(
+                    "code", "preference_memory_unavailable",
+                    "message", "长期偏好暂时无法保存，请稍后重试。"
+            )));
+            emit(emitter, new AgentSseEvent("final", Map.of(
+                    "message", "这次长期偏好没有保存成功，请稍后重试。",
+                    "fallback", false
+            )));
+            emitter.complete();
+        } catch (Exception fallbackError) {
+            emitter.completeWithError(fallbackError);
+        }
     }
 
     private void fallback(SseEmitter emitter, Exception error) {

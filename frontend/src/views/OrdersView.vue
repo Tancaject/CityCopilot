@@ -14,16 +14,16 @@ const orders = ref<VoucherOrder[]>([]);
 const currentPage = ref(1);
 const loading = ref(false);
 const loadingMore = ref(false);
-const cancelingId = ref<number | null>(null);
-const payingId = ref<number | null>(null);
-const refundingId = ref<number | null>(null);
+const cancelingId = ref<string | null>(null);
+const payingId = ref<string | null>(null);
+const refundingId = ref<string | null>(null);
 const hasMore = ref(true);
 const errorMessage = ref('');
 const pendingOrderAction = ref<{ type: OrderAction; order: VoucherOrder } | null>(null);
 
 const highlightedOrderId = computed(() => {
-  const value = Number(route.query.highlight);
-  return Number.isFinite(value) && value > 0 ? value : null;
+  const value = typeof route.query.highlight === 'string' ? route.query.highlight.trim() : '';
+  return /^[1-9]\d*$/.test(value) ? value : null;
 });
 const pendingOrderDialog = computed(() => {
   const pending = pendingOrderAction.value;
@@ -84,7 +84,7 @@ function updateOrder(updated: VoucherOrder) {
 
 function mergeOrders(nextOrders: VoucherOrder[], reset = false) {
   const source = reset ? [] : orders.value;
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   orders.value = source.concat(nextOrders).filter((order) => {
     if (!order.id || seen.has(order.id)) {
       return false;

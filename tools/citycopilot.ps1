@@ -3,7 +3,6 @@ param(
     [ValidateSet("start", "stop", "restart", "status", "logs", "reset")]
     [string]$Action = "start",
     [string]$Service,
-    [switch]$NoBuild,
     [switch]$Force
 )
 
@@ -13,14 +12,16 @@ Set-StrictMode -Version Latest
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $ComposeFile = Join-Path $ProjectRoot "compose.yaml"
 $EnvFile = Join-Path $ProjectRoot ".env"
-$Services = @(
+$InfrastructureServices = @(
     "mysql",
     "agent-mysql",
     "commerce-mysql",
     "redis",
     "rocketmq-namesrv",
     "rocketmq-broker",
-    "rocketmq-proxy",
+    "rocketmq-proxy"
+)
+$ApplicationServices = @(
     "core",
     "commerce",
     "agent",
@@ -67,6 +68,16 @@ function Ensure-EnvironmentFile {
                 $newCredentials += "$key=$(New-CityCopilotSecret 48)"
             }
         }
+        foreach ($setting in @(
+            "CITYCOPILOT_AGENT_MYSQL_PORT=3308",
+            "CITYCOPILOT_COMMERCE_MYSQL_PORT=3309",
+            "CITYCOPILOT_COMMERCE_ENABLED=true"
+        )) {
+            $parts = $setting.Split("=", 2)
+            if (-not $existingKeys.ContainsKey($parts[0])) {
+                $newCredentials += $setting
+            }
+        }
         if ($newCredentials.Count -gt 0) {
             $writer = New-Object System.IO.StreamWriter(
                 $EnvFile,
@@ -80,7 +91,7 @@ function Ensure-EnvironmentFile {
             } finally {
                 $writer.Dispose()
             }
-            Write-Host "Added separate internal service credentials to the local .env." -ForegroundColor Green
+            Write-Host "Added missing local environment settings to .env." -ForegroundColor Green
         }
         return
     }
@@ -217,11 +228,28 @@ function Read-CityCopilotEnvironment {
     return $values
 }
 
-function Wait-CityCopilotHealthy {
+function Remove-ApplicationContainers {
+    foreach ($name in $ApplicationServices) {
+        $queryArguments = @("--profile", "app", "ps", "-a", "-q", $name)
+        $ids = @(Get-ComposeOutput @queryArguments)
+        foreach ($id in $ids) {
+            if ([string]::IsNullOrWhiteSpace($id)) {
+                continue
+            }
+            & docker rm -f $id | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to remove the Docker application container for $name."
+            }
+        }
+    }
+}
+
+function Wait-ServicesHealthy {
+    param([string[]]$Names)
     $deadline = (Get-Date).AddMinutes(4)
     while ((Get-Date) -lt $deadline) {
         $pending = @()
-        foreach ($name in $Services) {
+        foreach ($name in $Names) {
             $id = (Get-ComposeOutput ps -q $name | Select-Object -First 1)
             if ([string]::IsNullOrWhiteSpace($id)) {
                 $pending += "${name}:not-created"
@@ -243,32 +271,27 @@ function Wait-CityCopilotHealthy {
         Start-Sleep -Seconds 5
     }
     Invoke-Compose ps
-    throw "The stack did not become healthy within four minutes. Run '.\tools\citycopilot.ps1 logs'."
+    throw "The infrastructure did not become healthy within four minutes. Run '.\tools\citycopilot.ps1 logs'."
 }
 
-function Test-CityCopilotRoutes {
-    $environment = Read-CityCopilotEnvironment
-    $httpPort = $environment["CITYCOPILOT_HTTP_PORT"]
-    $mcpPort = $environment["CITYCOPILOT_MCP_PORT"]
-    if ([string]::IsNullOrWhiteSpace($httpPort)) { $httpPort = "8080" }
-    if ([string]::IsNullOrWhiteSpace($mcpPort)) { $mcpPort = "8090" }
-
-    $homeResponse = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$httpPort/" -TimeoutSec 10
-    if ($homeResponse.StatusCode -ne 200) { throw "Frontend smoke failed." }
-
-    $core = Invoke-RestMethod -Uri "http://127.0.0.1:$httpPort/health" -TimeoutSec 10
-    if ($core.data.status -ne "up") { throw "Core health is not up." }
-
-    $agent = Invoke-RestMethod -Uri "http://127.0.0.1:$httpPort/api/agent/ready" -TimeoutSec 10
-    if ($agent.status -ne "ok" -or $agent.core -ne "up" -or $agent.toolCount -lt 1) {
-        throw "Agent-to-Core readiness smoke failed."
+function Start-Infrastructure {
+    $arguments = @(
+        "compose",
+        "--project-directory", $ProjectRoot,
+        "--env-file", $EnvFile,
+        "-f", $ComposeFile,
+        "up", "-d", "--remove-orphans"
+    )
+    $composeProcess = Start-Process -FilePath "docker" -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    try {
+        Wait-ServicesHealthy -Names $InfrastructureServices
+    } finally {
+        $composeProcess.Refresh()
+        if (-not $composeProcess.HasExited) {
+            Stop-Process -Id $composeProcess.Id -Force
+            $composeProcess.WaitForExit()
+        }
     }
-
-    $null = Invoke-RestMethod -Uri "http://127.0.0.1:$httpPort/api/shop-type/list" -TimeoutSec 10
-    $mcp = Invoke-RestMethod -Uri "http://127.0.0.1:$mcpPort/actuator/health" -TimeoutSec 10
-    if ($mcp.status -ne "UP") { throw "MCP health is not up." }
-    $mcpTools = @(Invoke-RestMethod -Uri "http://127.0.0.1:$mcpPort/mcp/tools/list" -TimeoutSec 10)
-    if ($mcpTools.Count -lt 1) { throw "MCP-to-Core tool catalog smoke failed." }
 }
 
 Ensure-EnvironmentFile
@@ -277,35 +300,41 @@ switch ($Action) {
     "start" {
         Ensure-DockerDaemon
         Invoke-Compose config --quiet
-        $arguments = @("up", "-d", "--remove-orphans")
-        if (-not $NoBuild) { $arguments += "--build" }
-        Invoke-Compose @arguments
-        Wait-CityCopilotHealthy
-        Test-CityCopilotRoutes
+        Remove-ApplicationContainers
+        Start-Infrastructure
         Invoke-Compose ps
         $environment = Read-CityCopilotEnvironment
-        Write-Host "CityCopilot is ready: http://127.0.0.1:$($environment['CITYCOPILOT_HTTP_PORT'])" -ForegroundColor Green
+        Write-Host ("Infrastructure is ready: MySQL {0}/{1}/{2}, Redis {3}, RocketMQ Proxy 18081." -f
+            $environment["CITYCOPILOT_MYSQL_PORT"],
+            $environment["CITYCOPILOT_AGENT_MYSQL_PORT"],
+            $environment["CITYCOPILOT_COMMERCE_MYSQL_PORT"],
+            $environment["CITYCOPILOT_REDIS_PORT"]) -ForegroundColor Green
+        Write-Host "Start Commerce, Core, Agent, MCP, and the Vue frontend from the IDE." -ForegroundColor Green
     }
     "stop" {
         Ensure-DockerDaemon
-        Invoke-Compose down --remove-orphans
-        Write-Host "CityCopilot stopped. Named volumes were preserved." -ForegroundColor Green
+        $arguments = @("--profile", "app", "down", "--remove-orphans")
+        Invoke-Compose @arguments
+        Write-Host "CityCopilot infrastructure stopped. Named volumes were preserved." -ForegroundColor Green
     }
     "restart" {
         Ensure-DockerDaemon
-        Invoke-Compose restart
-        Wait-CityCopilotHealthy
-        Test-CityCopilotRoutes
-        Write-Host "CityCopilot restarted and passed smoke checks." -ForegroundColor Green
+        Remove-ApplicationContainers
+        $arguments = @("restart") + $InfrastructureServices
+        Invoke-Compose @arguments
+        Wait-ServicesHealthy -Names $InfrastructureServices
+        Write-Host "CityCopilot infrastructure restarted and is healthy." -ForegroundColor Green
     }
     "status" {
         Ensure-DockerDaemon
-        Invoke-Compose ps
+        $arguments = @("--profile", "app", "ps", "-a")
+        Invoke-Compose @arguments
     }
     "logs" {
         Ensure-DockerDaemon
         $arguments = @("logs", "--tail", "200", "--follow")
         if (-not [string]::IsNullOrWhiteSpace($Service)) { $arguments += $Service }
+        $arguments = @("--profile", "app") + $arguments
         Invoke-Compose @arguments
     }
     "reset" {
@@ -313,7 +342,8 @@ switch ($Action) {
         if (-not $Force) {
             throw "Reset permanently deletes MySQL, Docker Redis, and uploaded-file volumes. WSL Redis is not affected. Rerun with -Force to confirm."
         }
-        Invoke-Compose down --volumes --remove-orphans
+        $arguments = @("--profile", "app", "down", "--volumes", "--remove-orphans")
+        Invoke-Compose @arguments
         Write-Host "CityCopilot data volumes were deleted. Run start to initialize a clean stack." -ForegroundColor Yellow
     }
 }

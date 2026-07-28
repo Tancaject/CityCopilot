@@ -14,6 +14,7 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -53,7 +54,8 @@ public class CommercePortClient {
                     })
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
-            return Result.ok(response == null ? null : response.get("orderId"));
+            Object orderId = response == null ? null : response.get("orderId");
+            return Result.ok(orderId == null ? null : String.valueOf(orderId));
         } catch (RestClientResponseException error) {
             return failure(error);
         } catch (RestClientException error) {
@@ -70,7 +72,7 @@ public class CommercePortClient {
                     .headers(headers -> headers(headers, userId()))
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
-            return Result.ok(response == null ? List.of() : response);
+            return Result.ok(response == null ? List.of() : response.stream().map(this::stringifyOrderId).toList());
         } catch (RestClientResponseException error) {
             return failure(error);
         } catch (RestClientException error) {
@@ -87,7 +89,7 @@ public class CommercePortClient {
                     .headers(headers -> headers(headers, userId()))
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
-            return Result.ok(response);
+            return Result.ok(stringifyOrderId(response));
         } catch (RestClientResponseException error) {
             return failure(error);
         } catch (RestClientException error) {
@@ -108,7 +110,7 @@ public class CommercePortClient {
                     ))
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
-            return Result.ok(response);
+            return Result.ok(stringifyOrderId(response));
         } catch (RestClientResponseException error) {
             return failure(error);
         } catch (RestClientException error) {
@@ -203,6 +205,22 @@ public class CommercePortClient {
     private void headers(HttpHeaders headers, long userId) {
         headers.set(SERVICE_TOKEN, token);
         headers.set(USER_ID, String.valueOf(userId));
+    }
+
+    private Map<String, Object> stringifyOrderId(Map<String, Object> response) {
+        if (response == null) {
+            return null;
+        }
+        Map<String, Object> normalized = new LinkedHashMap<>(response);
+        Object id = normalized.get("id");
+        if (id != null) {
+            normalized.put("id", String.valueOf(id));
+        }
+        Object orderId = normalized.get("orderId");
+        if (orderId != null) {
+            normalized.put("orderId", String.valueOf(orderId));
+        }
+        return normalized;
     }
 
     private long userId() {

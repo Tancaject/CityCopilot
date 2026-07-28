@@ -26,6 +26,23 @@ class AgentSecurityTest {
     }
 
     @Test
+    void requiresAuthoritativeUserIdForDurableUserData() {
+        ResponseStatusException anonymous = assertThrows(
+                ResponseStatusException.class,
+                () -> AgentSecurity.requireAuthenticated(ServiceUser.anonymous())
+        );
+        ResponseStatusException missingId = assertThrows(
+                ResponseStatusException.class,
+                () -> AgentSecurity.requireAuthenticated(
+                        new ServiceUser(null, "invalid", null, "user", Set.of(), true)
+                )
+        );
+
+        assertEquals(401, anonymous.getStatusCode().value());
+        assertEquals(401, missingId.getStatusCode().value());
+    }
+
+    @Test
     void requiresAuditReadForTraceAccess() {
         ServiceUser user = new ServiceUser(7L, "merchant", null, "merchant", Set.of("order:read"), true);
 

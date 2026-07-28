@@ -367,7 +367,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         if (idempotencyRedisKey != null) {
             String existingOrderId = stringRedisTemplate.opsForValue().get(idempotencyRedisKey);
             if (existingOrderId != null) {
-                return Result.ok(Long.valueOf(existingOrderId));
+                return Result.ok(existingOrderId);
             }
         }
         long orderId = redisIdWorker.nextId("order");
@@ -380,7 +380,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             if (!Boolean.TRUE.equals(claimed)) {
                 String existingOrderId = stringRedisTemplate.opsForValue().get(idempotencyRedisKey);
                 if (existingOrderId != null) {
-                    return Result.ok(Long.valueOf(existingOrderId));
+                    return Result.ok(existingOrderId);
                 }
                 return Result.fail("SECKILL_IDEMPOTENCY_CONFLICT", "请求正在处理中，请稍后查询订单");
             }
@@ -398,7 +398,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             //不为0.没有购买资格
             return Result.fail(res==1 ? "SECKILL_STOCK_NOT_ENOUGH" : "SECKILL_DUPLICATE_ORDER", res==1?"库存不足！":"不能重复下单！");
         }
-        return Result.ok(orderId);
+        return Result.ok(String.valueOf(orderId));
     }
 
     private String idempotencyRedisKey(Long userId, Long voucherId, String idempotencyKey) {

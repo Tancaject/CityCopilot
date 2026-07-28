@@ -26,10 +26,15 @@ public final class AgentSecurity {
         );
     }
 
-    public static void requireAuditRead(ServiceUser user) {
-        if (user == null || !user.authenticated()) {
+    public static ServiceUser requireAuthenticated(ServiceUser user) {
+        if (user == null || !user.authenticated() || user.id() == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "AUTH_REQUIRED");
         }
+        return user;
+    }
+
+    public static void requireAuditRead(ServiceUser user) {
+        requireAuthenticated(user);
         Set<String> permissions = user.permissions();
         if (!permissions.contains("*") && !permissions.contains(PermissionCodes.AUDIT_READ)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "PERMISSION_DENIED");
@@ -41,9 +46,7 @@ public final class AgentSecurity {
     }
 
     public static void requirePermission(ServiceUser user, String permission) {
-        if (user == null || !user.authenticated()) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "AUTH_REQUIRED");
-        }
+        requireAuthenticated(user);
         Set<String> permissions = user.permissions();
         if (!permissions.contains("*") && !permissions.contains(permission)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "PERMISSION_DENIED");

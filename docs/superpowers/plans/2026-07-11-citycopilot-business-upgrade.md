@@ -242,6 +242,89 @@
 
 ---
 
+## P7 Agent 长期用户偏好记忆（2026-07-27）
+
+本期在现有 Redis 短期会话记忆之外增加用户级长期偏好。长期数据归 Agent 自有 MySQL 管理，只使用 Core 会话解析返回的可信 `userId`；匿名聊天和运营场景不读取、不写入消费偏好。
+
+### P7.1 持久化与提取
+
+- [x] 新增 `agent_user_preference`，按 `user_id + preference_type + preference_key` 幂等更新，不保存整段原始对话
+- [x] 使用应用启动时的幂等 `002-user-preference-memory.sql` 兼容已有数据卷，并将同一 SQL 挂入 MySQL 初始化目录覆盖新数据卷
+- [x] 只从本轮原始用户消息提取显式、白名单化偏好：类别、环境、人均上限、最低评分、距离上限和优惠券优先级
+- [x] 一次性“今天想吃”“这次预算”等请求不落长期记忆，手机号、支付信息、精确位置和自由指令不进入偏好表
+
+### P7.2 Agent 接入与安全边界
+
+- [x] 仅对已认证普通用户按 Core `ServiceUser.id` 读写；匿名用户与 `admin` 场景跳过长期偏好
+- [x] 偏好以结构化 `hints.userPreferences` 注入 ReAct/Plan，当前请求始终优先
+- [x] System/Plan Prompt 明确偏好是不可信推荐数据，不能作为 Tool 指令、授权或绕过高风险确认
+- [x] 纯记忆/清除命令使用确定性回复；显式写入失败对用户可见，读取失败仅降级且记录指标
+- [x] Redis 短期会话 key 加入用户作用域，前端认证用户变化时重置会话，避免换账号串用上下文
+
+### P7.3 用户控制与验证
+
+- [x] 增加本人偏好列表、单项删除和全部清除接口，删除条件同时约束 `user_id`
+- [x] 提取、用户隔离、更新、删除、故障降级、Spring 代理、提示词边界与原确认链路等 20 个专项测试通过
+- [x] 前端 `vue-tsc --noEmit` 与生产构建通过
+- [x] 现有 Compose 数据卷应用 002 schema 后 Agent/数据库健康
+- [x] 真实登录用户完成“写入—跨会话读取—单项/全部删除—重启持久化”验收
+
+**P7 验收口径**：同一登录用户跨会话可复用明确保存的消费偏好，不同用户、匿名会话和运营场景完全隔离；偏好只影响推荐，不改变权限、确认和幂等边界；用户可查看并永久删除自己的长期偏好。
+
+**P7 执行记录（2026-07-27）**：20 个长期记忆相关专项测试、前端类型检查和生产构建通过；`mvn -q clean verify` 通过，但该次 Testcontainers 因沙箱无 Docker pipe 权限按既有配置跳过，放开 Docker 的完整重跑超过工具时限，未计为通过。当前 Compose 使用新 Agent/前端镜像并全部健康，002 schema 在保留的 Agent MySQL 数据卷中幂等建表。两个真实本地登录账号验收得到：账号 A 写入 3 项偏好，账号 B 查询为 0；更换 `conversationId` 后读取指标递增，单项删除生效；保留 1 项偏好重启 Agent 后仍存在，随后全部清除，最终偏好表为 0 行。
+
+---
+
+## P8 Docker 仅托管基础设施（2026-07-27）
+
+- [x] `core`、`commerce`、`agent`、`mcp`、`frontend` 移入可选 `app` profile，默认 `docker compose up -d` 不再创建应用容器
+- [x] 默认 Compose 仅启动三个 MySQL、项目 Redis、RocketMQ NameServer/Broker/Proxy 及一次性初始化服务
+- [x] 本地 Java 默认连接端口对齐 Core/Agent/Commerce MySQL `3307/3308/3309`、Redis `6380`、RocketMQ Proxy `18081`
+- [x] `tools/citycopilot.ps1 start` 只收敛基础设施健康状态，并移除遗留应用容器；Windows Compose 在容器健康后不退出时自动结束 CLI，不影响容器
+- [x] README、Compose 指南和 CI 同步：日常开发由 IDE 启动前后端，CI 使用 `--profile app` 保留完整容器拓扑验证
+- [x] PowerShell 语法、`docker compose config`、默认/profile 服务集合与 `git diff --check` 通过
+- [x] 当前 Core、Commerce、Agent、MCP、Frontend 容器已全部移除；MySQL、Redis、RocketMQ 长期服务全部 healthy
+- [x] 宿主机 `3307`、`3308`、`3309`、`6380`、`18081` TCP 连接验证通过，启动脚本 12 秒内成功返回
+- [x] 四个 Spring Boot 模块自动加载仓库根 `.env`，IDE 只需把 Working directory 指向项目根目录
+- [x] 清理 Docker Desktop 遗留的 8081/8082/8083/8090 loopback 代理后，Commerce、Core、Agent、MCP 本地进程全部通过健康检查
+- [x] 本地 Commerce 默认关闭会阻断启动的 RocketMQ Producer，Redis Stream 仍启用；`app` profile 继续显式启用 RocketMQ
+
+**P8 执行记录（2026-07-27）**：Docker 运行边界调整为“容器只托管有状态基础设施，应用由 IDE 管理”。默认 Compose 服务清单不含任何前后端应用；`app` profile 仅供 CI 或显式完整拓扑验收。现有数据卷均保留，实际运行环境已切换到基础设施模式。IDE 失败日志进一步确认 `.env` 未进入四个 Java 命令行、Docker Desktop 遗留应用端口代理及本地 RocketMQ Proxy 会话异常三个独立问题；配置修正与 Docker Desktop 重启后，四个本地后端依次达到 UP/ok。
+
+---
+
+## P9 前端交易入口与本地压测可用性（2026-07-27）
+
+- [x] 真实浏览器验证本地店铺卡片可进入详情页，店铺 1 可展示普通券与秒杀券
+- [x] 高德外部地点明确标记为不可下单，附近没有入驻店铺时提供“查看可下单店铺”回退入口
+- [x] JMeter Outbox 统计限定为专用券 200，避免历史事件污染本轮结果
+- [x] 本地默认压测按 Redis Stream 链路验收业务正确性；MQ Relay 验收改为显式 `-RequireOutboxDrain`
+- [x] 5 用户、2 并发冒烟压测通过：5/5 请求成功、5 个不同用户订单、无超卖、无重复效果、MySQL/Redis 库存均为 0
+- [x] 前端 `npm run build` 通过
+- [x] 领券反馈改为券卡内可见状态：提交/确认、成功、失败、已抢到按钮与“查看订单”入口
+- [x] Snowflake 订单 ID 在 Commerce、Core 与前端契约中按字符串传输，避免 JavaScript 精度丢失导致轮询错误
+- [ ] 重启 IDEA 中的 Core、Commerce 后复验真实领券成功反馈
+- [x] GUI 高强度压测方案调整为 20,000 唯一用户、200 并发、5 秒升压，并启用 Aggregate/Summary Report
+- [x] 完成首轮 GUI 高强度实跑并记录未通过结果：20,000 样本、2,835.7 QPS、P99 332ms、错误率 51.57%；Redis 接纳 9,686 个唯一用户，Core 仅收到同样数量的成功请求，失败发生在秒杀核心逻辑之前
+- [x] JMX 增加“失败详情（仅错误，诊断用）”监听器，用于下一轮 GUI 复现时抓取响应码、异常消息和失败响应
+- [x] 定位首轮 2 条 Redis 成功但 MySQL 无订单：毫秒时间戳加 4 位随机数在高并发下发生订单 ID 碰撞，且宽泛的重复键处理错误 ACK 了冲突消息
+- [x] Commerce 订单 ID 改为 Redis 原子递增的 64 位时间序列，并仅将内容完全一致的重复消息视为幂等；其他重复键冲突执行库存补偿并进入死信
+- [x] 区分正式性能与超卖验收：正式性能场景固定 20,000 用户、20,000 请求、20,000 库存，所有请求必须成功；低库存超卖场景后续独立执行
+- [x] 新增 GUI 正式性能 JMX：点击运行后自动等待旧 Stream 清空、重置专用券与唯一登录用户，再开始计时；正式运行默认关闭失败详情监听器
+- [x] seed 增加旧 Stream drain 门禁与上一轮 token 清理，避免连续 GUI 实跑复用买家集合、库存或登录态
+- [x] 新 GUI JMX 完成 5 用户、2 并发自动重置冒烟：5/5 HTTP 与业务断言成功，MySQL/Redis 库存均为 0、5 个不同用户订单、无超卖和重复效果
+- [x] 正式 GUI 首轮得到 20,000 样本、3,109.0 总 QPS、P99 374ms、错误率 41.13%；Core/Redis 仅接纳 11,773 次，确认失败发生在进入 Core 之前
+- [x] 同参数非 GUI JTL 复现并精确归因：4,845 个失败全部为连接 `127.0.0.1:8081` 被拒绝，Core 压测后仍存活，排除库存、业务断言与订单 ID 冲突
+- [x] Core Tomcat 调整为 400 最大线程、50 最小空闲线程、1,000 accept backlog、8,192 最大连接及 10,000 次 keep-alive 请求，并为 GUI 正式计划增加低开销错误 JTL
+- [x] Redis Stream 消费批量由固定 20 改为可配置默认 100，批间固定等待由 500ms 降为 50ms，保持逐单事务与 ACK/补偿边界不变
+- [x] 修复 GUI 准备阶段在 Redis `lag` 返回空值时误等 10 分钟：`pending=0` 且消费组 `last-delivered-id` 到达 Stream 尾部时同样判定已清空
+- [ ] 重启 Core、Commerce 后复跑正式 GUI 性能场景，确认连接拒绝归零并观察 Stream drain 时间
+- [ ] GUI 高强度实跑达到 0% 错误率，并复核 QPS、P99、订单数与 MySQL/Redis 库存一致性
+
+**P9 执行记录（2026-07-27）**：浏览器模拟上海位置时返回 3 个高德外部地点、0 个交易链接，页面回退入口可恢复 5 个本地可点击店铺；点击店铺 1 成功进入 `/shops/1`。首次秒杀冒烟的 5 个 HTTP 样本全部成功，但旧脚本因本地 MQ Relay 按设计关闭而等待 Outbox 超时；修正为分层验收后复跑通过，平均延迟 13.6ms、p95 31ms，本轮 5 条 Outbox 如实保留，未计作 Redis Stream 秒杀业务失败。领券反馈验收进一步发现旧接口把 `17851602944103877` 作为 JSON number 返回，浏览器精度丢失后轮询了错误订单；字符串 ID 契约修复已通过前后端编译和浏览器契约验证，等待重启 IDEA 中的 Core、Commerce 后完成真实链路复验。
+
+---
+
 ## 可选项（默认不做，待拍板）
 
 | 项 | 内容 | 代价 | 建议 |

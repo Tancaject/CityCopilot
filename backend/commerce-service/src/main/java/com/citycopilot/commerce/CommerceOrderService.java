@@ -24,7 +24,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 public class CommerceOrderService {
@@ -38,23 +37,29 @@ public class CommerceOrderService {
     private final StringRedisTemplate redis;
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
+    private final CommerceOrderIdGenerator orderIds;
     private final String consumerName;
     private final boolean streamEnabled;
+    private final int streamBatchSize;
 
     public CommerceOrderService(
             JdbcTemplate jdbc,
             StringRedisTemplate redis,
             TransactionTemplate transactions,
             ObjectMapper objectMapper,
+            CommerceOrderIdGenerator orderIds,
             @Value("${citycopilot.commerce.consumer-name:commerce-local}") String consumerName,
-            @Value("${citycopilot.commerce.stream-enabled:true}") boolean streamEnabled
+            @Value("${citycopilot.commerce.stream-enabled:true}") boolean streamEnabled,
+            @Value("${citycopilot.commerce.stream-batch-size:100}") int streamBatchSize
     ) {
         this.jdbc = jdbc;
         this.redis = redis;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
+        this.orderIds = orderIds;
         this.consumerName = consumerName + "-" + UUID.randomUUID().toString().substring(0, 8);
         this.streamEnabled = streamEnabled;
+        this.streamBatchSize = Math.max(1, streamBatchSize);
     }
 
     @PostConstruct
@@ -87,7 +92,7 @@ public class CommerceOrderService {
         if (!existing.isEmpty()) {
             return orderResult(existing.get(0), "IDEMPOTENT_REPLAY");
         }
-        long orderId = nextOrderId();
+        long orderId = orderIds.nextId();
         Long result = redis.execute(
                 SECKILL_SCRIPT,
                 List.of(STOCK_PREFIX + voucherId, BUYER_PREFIX + voucherId, STREAM),
@@ -106,21 +111,21 @@ public class CommerceOrderService {
             throw new CommerceApiException("COMMERCE_ONE_PER_USER", "User already purchased this voucher", 409);
         }
         return Map.of(
-                "orderId", orderId,
+                "orderId", String.valueOf(orderId),
                 "state", "processing",
                 "code", "COMMERCE_ORDER_ACCEPTED",
                 "idempotencyKey", key
         );
     }
 
-    @Scheduled(fixedDelayString = "${citycopilot.commerce.stream-poll-ms:500}")
+    @Scheduled(fixedDelayString = "${citycopilot.commerce.stream-poll-ms:50}")
     public void consumeOrders() {
         if (!streamEnabled) return;
         List<MapRecord<String, Object, Object>> records;
         try {
             records = redis.opsForStream().read(
                     Consumer.from(GROUP, consumerName),
-                    StreamReadOptions.empty().count(20).block(Duration.ofMillis(250)),
+                    StreamReadOptions.empty().count(streamBatchSize).block(Duration.ofMillis(250)),
                     StreamOffset.create(STREAM, ReadOffset.lastConsumed())
             );
         } catch (Exception unavailable) {
@@ -209,21 +214,38 @@ public class CommerceOrderService {
             });
             redis.opsForStream().acknowledge(STREAM, GROUP, record.getId());
         } catch (DuplicateKeyException duplicate) {
-            redis.opsForStream().acknowledge(STREAM, GROUP, record.getId());
+            Integer identicalOrder = jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM commerce_order
+                    WHERE id=? AND user_id=? AND voucher_id=? AND idempotency_key=?
+                    """, Integer.class, orderId, userId, voucherId, idempotencyKey);
+            if (identicalOrder != null && identicalOrder == 1) {
+                redis.opsForStream().acknowledge(STREAM, GROUP, record.getId());
+                return;
+            }
+            failAndAcknowledge(record, voucherId, userId, duplicate);
         } catch (Exception failure) {
-            compensate(voucherId, userId);
-            jdbc.update("""
-                    INSERT INTO commerce_dead_letter(
-                        source_id,payload_json,error_message
-                    ) VALUES (?,?,?)
-                    ON DUPLICATE KEY UPDATE error_message=VALUES(error_message), retry_count=retry_count+1
-                    """,
-                    record.getId().getValue(),
-                    json(record.getValue()),
-                    truncate(failure.getMessage())
-            );
-            redis.opsForStream().acknowledge(STREAM, GROUP, record.getId());
+            failAndAcknowledge(record, voucherId, userId, failure);
         }
+    }
+
+    private void failAndAcknowledge(
+            MapRecord<String, Object, Object> record,
+            long voucherId,
+            long userId,
+            Exception failure
+    ) {
+        compensate(voucherId, userId);
+        jdbc.update("""
+                INSERT INTO commerce_dead_letter(
+                    source_id,payload_json,error_message
+                ) VALUES (?,?,?)
+                ON DUPLICATE KEY UPDATE error_message=VALUES(error_message), retry_count=retry_count+1
+                """,
+                record.getId().getValue(),
+                json(record.getValue()),
+                truncate(failure.getMessage())
+        );
+        redis.opsForStream().acknowledge(STREAM, GROUP, record.getId());
     }
 
     public Map<String, Object> order(long orderId, long userId, boolean admin) {
@@ -372,12 +394,15 @@ public class CommerceOrderService {
         rename(result, "voucher_rules_snapshot", "voucherRules");
         rename(result, "pay_value_snapshot", "payValue");
         rename(result, "actual_value_snapshot", "actualValue");
+        if (result.get("id") != null) {
+            result.put("id", String.valueOf(result.get("id")));
+        }
         return result;
     }
 
     private Map<String, Object> orderResult(Map<String, Object> row, String code) {
         return Map.of(
-                "orderId", row.get("id"),
+                "orderId", String.valueOf(row.get("id")),
                 "status", row.get("status"),
                 "version", row.get("version"),
                 "state", "completed",
@@ -397,10 +422,6 @@ public class CommerceOrderService {
         Object value = record.getValue().get(key);
         if (value == null) throw new IllegalArgumentException("Stream field missing: " + key);
         return String.valueOf(value);
-    }
-
-    private long nextOrderId() {
-        return System.currentTimeMillis() * 10_000L + ThreadLocalRandom.current().nextInt(10_000);
     }
 
     private void requirePositive(long value, String name) {

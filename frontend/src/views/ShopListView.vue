@@ -4,7 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { AlertCircle, ArrowLeft, BadgeCheck, Loader2, MapPin, Phone, RefreshCw, Search, SlidersHorizontal, Star, Ticket } from '@lucide/vue';
 import { fetchShopDiscovery, fetchShopTypes } from '../api/citycopilot';
 import ConsumerLocationSelector from '../components/ConsumerLocationSelector.vue';
-import { ensureDefaultCurrentLocation, locationState } from '../composables/location';
+import { clearSelectedLocation, ensureDefaultCurrentLocation, locationState } from '../composables/location';
 import { assetUrl, formatDistance, formatPrice, formatScore, shopCover } from '../utils/assets';
 import type { ShopDiscoveryItem, ShopType } from '../types';
 
@@ -40,6 +40,8 @@ const title = computed(() => keyword.value || typeName.value || '全部店铺');
 const nearbyActive = computed(() => Boolean(locationState.point));
 const subtitle = computed(() => (keyword.value ? '搜索结果' : nearbyActive.value ? '消费位置附近' : '分类店铺'));
 const hasShops = computed(() => shops.value.length > 0);
+const orderableShopCount = computed(() => shops.value.filter((shop) => shop.orderable && shop.id).length);
+const hasOnlyExternalShops = computed(() => nearbyActive.value && hasShops.value && orderableShopCount.value === 0);
 const listMode = computed(() => {
   if (keyword.value) {
     return '关键词';
@@ -134,10 +136,14 @@ function visibleTags(shop: ShopDiscoveryItem) {
     categoryLabel(shop),
     shop.businessArea,
     ...splitTags(shop.tag).slice(0, 2),
-    shop.orderable ? '可线上下单' : '',
+    shop.orderable ? '可线上下单' : '外部地点 · 暂不支持下单',
     shop.sold ? `已售 ${shop.sold}` : '',
   ].filter(Boolean) as string[];
   return Array.from(new Set(tags)).slice(0, 5);
+}
+
+function showOrderableShops() {
+  clearSelectedLocation();
 }
 
 function primaryTel(value?: string) {
@@ -272,6 +278,14 @@ watch(
   </section>
 
   <section class="shop-list-panel">
+    <section v-if="hasOnlyExternalShops" class="notice">
+      <Ticket :size="18" aria-hidden="true" />
+      当前地址附近只有外部地点，尚未入驻，不能进入详情或抢券。
+      <button type="button" @click="showOrderableShops">
+        查看可下单店铺
+      </button>
+    </section>
+
     <div v-if="loading" class="feed-skeleton shop-skeleton">
       <article v-for="item in 4" :key="item" class="skeleton-card" />
     </div>
@@ -282,7 +296,9 @@ watch(
         v-for="shop in shops"
         :key="`${shop.source}-${shop.sourceId || shop.id || shop.name}`"
         class="shop-row"
+        :class="{ 'shop-row-readonly': !shop.orderable || !shop.id }"
         :to="shop.orderable && shop.id ? { name: 'shop-detail', params: { id: shop.id } } : undefined"
+        :title="shop.orderable && shop.id ? `查看 ${shop.name} 详情` : `${shop.name} 尚未入驻，暂不支持下单`"
       >
         <img v-if="coverImage(shop)" class="shop-row-cover" :src="coverImage(shop)" :alt="shop.name" />
         <div v-else class="shop-row-cover shop-row-cover-empty" aria-hidden="true">

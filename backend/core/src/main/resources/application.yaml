@@ -1,18 +1,28 @@
 server:
   port: 8081
+  tomcat:
+    threads:
+      max: 400
+      min-spare: 50
+    max-connections: 8192
+    accept-count: 1000
+    max-keep-alive-requests: 10000
+    keep-alive-timeout: 30s
 
 spring:
+  config:
+    import: "optional:file:./.env[.properties]"
   application:
     name: citycopilot-core-service
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: "${CITYCOPILOT_DB_URL:jdbc:mysql://127.0.0.1:3306/citycopilot?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}"
+    url: "${CITYCOPILOT_DB_URL:jdbc:mysql://127.0.0.1:3307/citycopilot?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}"
     username: "${CITYCOPILOT_DB_USERNAME:root}"
     password: "${CITYCOPILOT_DB_PASSWORD:}"
   data:
     redis:
       host: "${CITYCOPILOT_REDIS_HOST:127.0.0.1}"
-      port: "${CITYCOPILOT_REDIS_PORT:6379}"
+      port: "${CITYCOPILOT_REDIS_PORT:6380}"
       password: "${CITYCOPILOT_REDIS_PASSWORD:}"
       database: "${CITYCOPILOT_REDIS_DATABASE:0}"
       lettuce:

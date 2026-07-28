@@ -36,15 +36,15 @@ CityCopilot 是一个面向本地生活场景的 AI Agent 项目，将店铺发�
 
 ## 快速开始
 
-### Docker 一键启动（推荐）
+### Docker 启动基础设施（推荐）
 
-本项目运行时使用 Compose 内独立的 Redis，不连接 WSL Redis。已有 `.env` 时直接执行：
+Docker 默认只启动 MySQL、Redis 和 RocketMQ，不再构建或启动前端及 Java 服务。已有 `.env` 时直接执行：
 
 ```powershell
-docker compose up -d --build
+docker compose up -d
 ```
 
-首次执行需要下载基础镜像并完成 Maven/npm 构建，通常需要数分钟。启动完成后访问 `http://127.0.0.1:8080`。
+Compose 会提供 Core、Agent、Commerce 各自的 MySQL，项目专用 Redis，以及 RocketMQ NameServer、Broker 和 Proxy。前端、Core、Commerce、Agent、MCP 均由 IDE 或本地命令启动。
 
 新环境可先让辅助脚本生成未提交到 Git 的随机密码和内部服务令牌：
 
@@ -56,7 +56,7 @@ docker compose up -d --build
 
 ```powershell
 docker compose ps
-docker compose logs --tail 200 core
+docker compose logs --tail 200 redis
 docker compose restart
 docker compose down --remove-orphans
 ```
@@ -74,44 +74,31 @@ docker compose down --remove-orphans
 #### 1. 准备环境
 
 - JDK 17
-- MySQL 8.x
-- Redis 6.x 或 7.x
 - Node.js 22+
+- 已启动上述 Docker 基础设施
 
-初始化数据库：
+四个 Spring Boot 模块会在工作目录为仓库根目录时自动加载 `.env`，复用 Docker 数据库密码、Redis 密码和内部服务令牌；IDE 无需重复填写环境变量。本地默认连接端口如下：
 
-```powershell
-cmd /c "mysql -uroot -p < citycopilot-v2.sql"
-```
+- Core MySQL：`127.0.0.1:3307`
+- Agent MySQL：`127.0.0.1:3308`
+- Commerce MySQL：`127.0.0.1:3309`
+- Redis：`127.0.0.1:6380`
+- RocketMQ Proxy：`127.0.0.1:18081`
 
-按需覆盖本地配置：
-
-```powershell
-$env:CITYCOPILOT_DB_USERNAME="root"
-$env:CITYCOPILOT_DB_PASSWORD="你的数据库密码"
-$env:CITYCOPILOT_REDIS_HOST="127.0.0.1"
-$env:CITYCOPILOT_AI_API_KEY="你的 DashScope 或 OpenAI-compatible API Key"
-$env:CITYCOPILOT_AMAP_WEB_SERVICE_KEY="你的高德 Web 服务 Key"
-$env:CITYCOPILOT_INTERNAL_SERVICE_TOKEN="替换为较长的随机共享密钥"
-```
-
-AI 和高德服务 Key 均为可选配置；未配置时，对应能力会使用本地 fallback 或降级结果。
+AI 和高德服务 Key 均为可选配置；未配置时，对应能力会使用本地 fallback 或降级结果。本地 Commerce 默认不启动 RocketMQ Producer，避免 Proxy 会话异常阻断应用启动；秒杀消费继续使用 Redis Stream。完整容器 `app` profile 会显式启用 RocketMQ。
 
 #### 2. 启动后端
 
-手动模式需先启动独立 MySQL/Redis/RocketMQ 依赖和 Commerce，再启动 Core：
+建议在 IDE 中依次启动 Commerce、Core、Agent 和 MCP。等价的命令行入口如下，每个服务使用独立终端：
 
 ```powershell
+.\.tools\apache-maven-3.9.9\bin\mvn.cmd -pl backend/commerce-service -am spring-boot:run
 .\.tools\apache-maven-3.9.9\bin\mvn.cmd -pl backend/core -am spring-boot:run
-```
-
-再在终端 2 使用相同的 `CITYCOPILOT_INTERNAL_SERVICE_TOKEN` 启动 Agent：
-
-```powershell
 .\.tools\apache-maven-3.9.9\bin\mvn.cmd -pl backend/agent -am spring-boot:run
+.\.tools\apache-maven-3.9.9\bin\mvn.cmd -pl backend/mcp-server -am spring-boot:run
 ```
 
-Core 默认运行在 `8081`，Agent 默认运行在 `8082`：
+Core、Agent、Commerce、MCP 默认分别运行在 `8081`、`8082`、`8083`、`8090`：
 
 ```powershell
 curl http://localhost:8082/agent/ping

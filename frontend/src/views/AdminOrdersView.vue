@@ -46,8 +46,8 @@ function statusClass(value: VoucherOrder) {
 }
 
 function parseOrderId() {
-  const value = Number(orderIdInput.value.trim());
-  return Number.isFinite(value) && value > 0 ? value : null;
+  const value = orderIdInput.value.trim();
+  return /^[1-9]\d*$/.test(value) ? value : null;
 }
 
 async function loadOrder() {
@@ -72,7 +72,7 @@ async function loadOrder() {
   }
 }
 
-async function loadOrderAudit(orderId: number) {
+async function loadOrderAudit(orderId: string) {
   if (!canReadAudit.value) {
     auditLogs.value = [];
     return;

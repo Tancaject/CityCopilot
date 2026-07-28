@@ -7,6 +7,7 @@ import com.citycopilot.agent.gateway.ToolCallContext;
 import com.citycopilot.agent.gateway.ToolAuditSink;
 import com.citycopilot.agent.gateway.ToolGateway;
 import com.citycopilot.agent.memory.InMemoryConversationMemory;
+import com.citycopilot.agent.memory.LongTermPreferenceMemory;
 import com.citycopilot.agent.tool.AgentToolRegistry;
 import com.citycopilot.agent.trace.InMemoryTraceStore;
 import com.citycopilot.contract.tool.AgentTool;
@@ -26,6 +27,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 class AgentControllerConfirmationTest {
 
@@ -49,7 +51,8 @@ class AgentControllerConfirmationTest {
                 traceStore,
                 store,
                 gateway,
-                new InMemoryConversationMemory()
+                new InMemoryConversationMemory(),
+                mock(LongTermPreferenceMemory.class)
         );
         PendingAction action = store.create(
                 "confirmed_action",

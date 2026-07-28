@@ -1,11 +1,14 @@
 package com.citycopilot.core.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import lombok.Data;
 
 import java.time.LocalDateTime;
 
 @Data
 public class VoucherOrderDTO {
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
     private Long voucherId;
     private Long shopId;

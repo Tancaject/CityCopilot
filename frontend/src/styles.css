@@ -986,6 +986,47 @@ textarea {
   opacity: 0.5;
 }
 
+.voucher-card-success {
+  border-color: rgba(20, 112, 73, 0.28);
+  background: linear-gradient(90deg, #f7fff9 0, #f7fff9 72%, #e2f5e9 100%);
+}
+
+.voucher-card button.voucher-claimed:disabled {
+  background: #147049;
+  opacity: 1;
+}
+
+.voucher-card-feedback {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #edf5fb;
+  color: #1f4a68;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.voucher-card-feedback-success {
+  background: #e3f5e9;
+  color: #146143;
+}
+
+.voucher-card-feedback-error {
+  background: #ffe5db;
+  color: #842a14;
+}
+
+.voucher-feedback-link {
+  margin-left: auto;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
 .voucher-empty {
   min-height: 86px;
 }

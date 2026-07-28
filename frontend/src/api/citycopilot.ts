@@ -201,30 +201,30 @@ export function seckillVoucher(voucherId: number) {
   const idempotencyKey = crypto.randomUUID
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return postData<number>(`/voucher-order/seckill/${voucherId}`, undefined, {
+  return postData<string>(`/voucher-order/seckill/${voucherId}`, undefined, {
     headers: { 'Idempotency-Key': idempotencyKey },
   });
 }
 
-export function fetchVoucherOrder(orderId: number) {
+export function fetchVoucherOrder(orderId: string) {
   return getData<VoucherOrder>(`/voucher-order/${orderId}`);
 }
 
-export function cancelVoucherOrder(orderId: number) {
+export function cancelVoucherOrder(orderId: string) {
   return postData<VoucherOrder>(`/voucher-order/${orderId}/cancel`);
 }
 
-export function payVoucherOrder(orderId: number, payType = 1) {
+export function payVoucherOrder(orderId: string, payType = 1) {
   return postData<VoucherOrder>(`/voucher-order/${orderId}/pay`, undefined, {
     params: { payType },
   });
 }
 
-export function refundVoucherOrder(orderId: number) {
+export function refundVoucherOrder(orderId: string) {
   return postData<VoucherOrder>(`/voucher-order/${orderId}/refund`);
 }
 
-export function useVoucherOrder(orderId: number) {
+export function useVoucherOrder(orderId: string) {
   return postData<VoucherOrder>(`/voucher-order/${orderId}/use`);
 }
 
@@ -382,7 +382,7 @@ export async function fetchOperationLogs(params: {
   module?: string;
   action?: string;
   targetType?: string;
-  targetId?: number;
+  targetId?: number | string;
 }) {
   const payload = await getData<OperationLog[] | PageResult<OperationLog>>('/admin/audit-logs', {
     params,
@@ -447,7 +447,7 @@ export function fetchOpsSummary() {
   return getData<OpsSummary>('/admin/ops/summary');
 }
 
-export function fetchAdminVoucherOrder(orderId: number) {
+export function fetchAdminVoucherOrder(orderId: string) {
   return getData<VoucherOrder>(`/admin/orders/${orderId}`);
 }
 

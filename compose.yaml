@@ -46,6 +46,7 @@ services:
     volumes:
       - agent-mysql-data:/var/lib/mysql
       - ./deploy/mysql/agent/001-agent-schema.sql:/docker-entrypoint-initdb.d/001-agent-schema.sql:ro
+      - ./backend/agent/src/main/resources/db/002-user-preference-memory.sql:/docker-entrypoint-initdb.d/002-user-preference-memory.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot_agent -e 'SELECT 1 FROM ops_case LIMIT 1' >/dev/null 2>&1"]
       interval: 5s

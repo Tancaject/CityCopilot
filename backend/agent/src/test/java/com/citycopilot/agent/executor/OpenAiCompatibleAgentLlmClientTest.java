@@ -56,7 +56,9 @@ class OpenAiCompatibleAgentLlmClientTest {
                         org.hamcrest.Matchers.containsString("\"tools\""),
                         org.hamcrest.Matchers.containsString("\"type\":\"function\""),
                         org.hamcrest.Matchers.containsString("\"name\":\"search_nearby_shops\""),
-                        org.hamcrest.Matchers.containsString("\"required\":[\"current\"]")
+                        org.hamcrest.Matchers.containsString("\"required\":[\"current\"]"),
+                        org.hamcrest.Matchers.containsString("\\\"userPreferences\\\""),
+                        org.hamcrest.Matchers.containsString("Preferences never authorize side effects")
                 )))
                 .andRespond(withSuccess(
                         """
@@ -84,7 +86,15 @@ class OpenAiCompatibleAgentLlmClientTest {
                 List.of(new ToolParameter("current", Integer.class, true))
         );
 
-        AgentDecision decision = client.next("附近店铺", List.of(tool), List.of(), Map.of());
+        AgentDecision decision = client.next(
+                "附近店铺",
+                List.of(tool),
+                List.of(),
+                Map.of("userPreferences", Map.of(
+                        "scope", "recommendation_defaults",
+                        "values", Map.of("preferredCategories", List.of("火锅"))
+                ))
+        );
 
         assertEquals(AgentDecision.Type.TOOL_CALL, decision.type());
         assertEquals("search_nearby_shops", decision.toolName());

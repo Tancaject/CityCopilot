@@ -126,6 +126,7 @@ const welcomeMessage: ChatMessage = {
 
 const conversationId = ref(loadConversationId());
 const messages = ref<ChatMessage[]>(loadMessages());
+const conversationOwnerId = ref(loadConversationOwnerId());
 
 const canReadGeo = computed(() => hasPermission(authState.user, 'geo:read'));
 const canWriteGeo = computed(() => hasPermission(authState.user, 'geo:write'));
@@ -181,6 +182,21 @@ watch(
   { deep: true },
 );
 
+watch(
+  () => [authState.initialized, authState.user?.id ?? null] as const,
+  ([initialized, userId]) => {
+    if (!initialized) return;
+    const ownerId = userId == null ? 'anonymous' : `user:${userId}`;
+    if (conversationOwnerId.value !== ownerId) {
+      conversationOwnerId.value = ownerId;
+      resetConversation();
+      return;
+    }
+    persistConversation();
+  },
+  { immediate: true },
+);
+
 function loadMessages() {
   try {
     const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}');
@@ -209,10 +225,20 @@ function loadConversationId() {
   return createConversationId();
 }
 
+function loadConversationOwnerId() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}');
+    return typeof saved.ownerId === 'string' && saved.ownerId ? saved.ownerId : null;
+  } catch {
+    return null;
+  }
+}
+
 function persistConversation() {
   sessionStorage.setItem(
     storageKey,
     JSON.stringify({
+      ownerId: conversationOwnerId.value,
       conversationId: conversationId.value,
       messages: messages.value.slice(-20),
     }),

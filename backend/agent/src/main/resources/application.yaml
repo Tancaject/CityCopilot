@@ -2,6 +2,8 @@ server:
   port: ${AGENT_SERVER_PORT:8082}
 
 spring:
+  config:
+    import: optional:file:./.env[.properties]
   application:
     name: citycopilot-agent-service
   datasource:
@@ -9,10 +11,14 @@ spring:
     url: ${CITYCOPILOT_AGENT_DB_URL:jdbc:mysql://127.0.0.1:3308/citycopilot_agent?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
     username: ${CITYCOPILOT_AGENT_DB_USERNAME:citycopilot_agent}
     password: ${CITYCOPILOT_AGENT_DB_PASSWORD:}
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/002-user-preference-memory.sql
   data:
     redis:
       host: ${CITYCOPILOT_AGENT_REDIS_HOST:${CITYCOPILOT_REDIS_HOST:127.0.0.1}}
-      port: ${CITYCOPILOT_AGENT_REDIS_PORT:${CITYCOPILOT_REDIS_PORT:6379}}
+      port: ${CITYCOPILOT_AGENT_REDIS_PORT:${CITYCOPILOT_REDIS_PORT:6380}}
       password: ${CITYCOPILOT_AGENT_REDIS_PASSWORD:${CITYCOPILOT_REDIS_PASSWORD:}}
       database: ${AGENT_REDIS_DATABASE:1}
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
-import { AlertCircle, ArrowLeft, BadgeCheck, Clock, Loader2, MapPin, RefreshCw, Star, Ticket } from '@lucide/vue';
+import { AlertCircle, ArrowLeft, BadgeCheck, CheckCircle2, Clock, Loader2, MapPin, RefreshCw, Star, Ticket } from '@lucide/vue';
 import { fetchShop, fetchVoucherOrder, fetchVouchers, seckillVoucher } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import ShopMapPanel from '../components/ShopMapPanel.vue';
@@ -23,8 +23,11 @@ const orderingId = ref<number | null>(null);
 const errorMessage = ref('');
 const voucherError = ref('');
 const orderMessage = ref('');
-const latestOrderId = ref<number | null>(null);
+const latestOrderId = ref<string | null>(null);
 const orderPolling = ref(false);
+const feedbackVoucherId = ref<number | null>(null);
+const feedbackState = ref<'idle' | 'submitting' | 'processing' | 'success' | 'error'>('idle');
+const claimedVoucherId = ref<number | null>(null);
 let orderPollTimer: number | undefined;
 
 const gallery = computed(() => {
@@ -50,6 +53,9 @@ async function loadShop() {
   errorMessage.value = '';
   voucherError.value = '';
   orderMessage.value = '';
+  feedbackVoucherId.value = null;
+  feedbackState.value = 'idle';
+  claimedVoucherId.value = null;
   try {
     shop.value = null;
     shop.value = await fetchShop(props.id);
@@ -113,10 +119,19 @@ function voucherState(voucher: Voucher) {
 }
 
 function voucherButtonText(voucher: Voucher) {
-  const state = voucherState(voucher);
-  if (state === 'normal') {
-    return '领取';
+  if (!voucher.type) {
+    return '暂未开放';
   }
+  if (claimedVoucherId.value === voucher.id) {
+    return '已抢到';
+  }
+  if (
+    feedbackVoucherId.value === voucher.id
+    && (feedbackState.value === 'submitting' || feedbackState.value === 'processing')
+  ) {
+    return '处理中';
+  }
+  const state = voucherState(voucher);
   if (state === 'pending') {
     return '未开始';
   }
@@ -132,18 +147,39 @@ function voucherButtonText(voucher: Voucher) {
   return '限时抢购';
 }
 
+function isVoucherPending(voucher: Voucher) {
+  return (
+    feedbackVoucherId.value === voucher.id
+    && (feedbackState.value === 'submitting' || feedbackState.value === 'processing')
+  );
+}
+
+function isVoucherBusy(voucher: Voucher) {
+  return (
+    feedbackVoucherId.value === voucher.id
+    && (
+      feedbackState.value === 'submitting'
+      || (feedbackState.value === 'processing' && orderPolling.value)
+    )
+  );
+}
+
 function isVoucherDisabled(voucher: Voucher) {
-  return voucher.type ? voucherState(voucher) !== 'available' || orderingId.value === voucher.id : false;
+  if (!voucher.type) {
+    return true;
+  }
+  return (
+    voucherState(voucher) !== 'available'
+    || orderingId.value === voucher.id
+    || isVoucherPending(voucher)
+    || claimedVoucherId.value === voucher.id
+  );
 }
 
 async function handleVoucher(voucher: Voucher) {
   clearOrderPolling();
   orderMessage.value = '';
   latestOrderId.value = null;
-  if (!voucher.type) {
-    orderMessage.value = '普通券领取暂未开放';
-    return;
-  }
   if (!authState.isLoggedIn) {
     await router.push({ name: 'login', query: { redirect: route.fullPath } });
     return;
@@ -151,20 +187,25 @@ async function handleVoucher(voucher: Voucher) {
   if (isVoucherDisabled(voucher)) {
     return;
   }
+  feedbackVoucherId.value = voucher.id;
+  feedbackState.value = 'submitting';
+  orderMessage.value = '正在提交抢购请求，请稍候…';
   orderingId.value = voucher.id;
   try {
     const orderId = await seckillVoucher(voucher.id);
     latestOrderId.value = orderId;
-    orderMessage.value = `抢购已提交，订单号 ${orderId}，正在确认状态`;
-    pollOrder(orderId);
+    feedbackState.value = 'processing';
+    orderMessage.value = `请求已提交，订单 ${orderId} 正在确认`;
+    pollOrder(orderId, voucher.id);
   } catch (error) {
+    feedbackState.value = 'error';
     orderMessage.value = error instanceof Error ? error.message : '抢购失败';
   } finally {
     orderingId.value = null;
   }
 }
 
-async function pollOrder(orderId: number, attempt = 0) {
+async function pollOrder(orderId: string, voucherId: number, attempt = 0) {
   orderPolling.value = true;
   try {
     const order = await fetchVoucherOrder(orderId);
@@ -174,15 +215,19 @@ async function pollOrder(orderId: number, attempt = 0) {
         clearOrderPolling();
         return;
       }
-      orderPollTimer = window.setTimeout(() => pollOrder(orderId, attempt + 1), 1000);
+      orderPollTimer = window.setTimeout(() => pollOrder(orderId, voucherId, attempt + 1), 1000);
       return;
     }
     orderPollTimer = undefined;
     orderPolling.value = false;
-    orderMessage.value = `抢购成功，订单号 ${order.id}，${order.statusText || '状态已确认'}`;
+    claimedVoucherId.value = voucherId;
+    feedbackState.value = 'success';
+    orderMessage.value = `领取成功，订单 ${order.id} 已生成（${order.statusText || '状态已确认'}）`;
+    void loadVouchers();
   } catch (error) {
     orderPollTimer = undefined;
     orderPolling.value = false;
+    feedbackState.value = 'error';
     orderMessage.value = error instanceof Error ? error.message : '订单状态确认失败';
   }
 }
@@ -213,15 +258,6 @@ watch(
         <RefreshCw :size="16" aria-hidden="true" />
         重试
       </button>
-    </section>
-
-    <section v-if="orderMessage" class="notice">
-      <Loader2 v-if="orderPolling" class="spin" :size="18" aria-hidden="true" />
-      <Ticket v-else :size="18" aria-hidden="true" />
-      {{ orderMessage }}
-      <RouterLink v-if="latestOrderId" class="notice-link" :to="{ name: 'orders', query: { highlight: latestOrderId } }">
-        查看订单
-      </RouterLink>
     </section>
 
     <div v-if="loading" class="loading-row detail-loading">
@@ -298,7 +334,12 @@ watch(
           </div>
 
           <div v-else-if="vouchers.length" class="voucher-list">
-            <article v-for="voucher in vouchers" :key="voucher.id" class="voucher-card">
+            <article
+              v-for="voucher in vouchers"
+              :key="voucher.id"
+              class="voucher-card"
+              :class="{ 'voucher-card-success': claimedVoucherId === voucher.id }"
+            >
               <div>
                 <strong>{{ voucher.title }}</strong>
                 <span>{{ voucher.subTitle || voucher.rules || '到店使用' }}</span>
@@ -308,10 +349,36 @@ watch(
                 <b>{{ formatCents(voucher.payValue) }}</b>
                 <small>{{ formatCents(voucher.actualValue) }}</small>
               </div>
-              <button type="button" :disabled="isVoucherDisabled(voucher)" @click="handleVoucher(voucher)">
-                <Loader2 v-if="orderingId === voucher.id" class="spin" :size="16" aria-hidden="true" />
+              <button
+                type="button"
+                :class="{ 'voucher-claimed': claimedVoucherId === voucher.id }"
+                :disabled="isVoucherDisabled(voucher)"
+                @click="handleVoucher(voucher)"
+              >
+                <Loader2 v-if="isVoucherBusy(voucher)" class="spin" :size="16" aria-hidden="true" />
+                <CheckCircle2 v-else-if="claimedVoucherId === voucher.id" :size="16" aria-hidden="true" />
                 {{ voucherButtonText(voucher) }}
               </button>
+              <div
+                v-if="feedbackVoucherId === voucher.id && orderMessage"
+                class="voucher-card-feedback"
+                :class="`voucher-card-feedback-${feedbackState}`"
+                :role="feedbackState === 'error' ? 'alert' : 'status'"
+                aria-live="polite"
+              >
+                <Loader2 v-if="isVoucherBusy(voucher)" class="spin" :size="17" aria-hidden="true" />
+                <CheckCircle2 v-else-if="feedbackState === 'success'" :size="17" aria-hidden="true" />
+                <AlertCircle v-else-if="feedbackState === 'error'" :size="17" aria-hidden="true" />
+                <Ticket v-else :size="17" aria-hidden="true" />
+                <span>{{ orderMessage }}</span>
+                <RouterLink
+                  v-if="latestOrderId"
+                  class="voucher-feedback-link"
+                  :to="{ name: 'orders', query: { highlight: latestOrderId } }"
+                >
+                  查看订单
+                </RouterLink>
+              </div>
             </article>
           </div>
 

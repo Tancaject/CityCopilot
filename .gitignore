@@ -81,3 +81,7 @@ Thumbs.db
 
 ### Local tools ###
 .tools/
+
+### Load-test runtime artifacts ###
+tools/loadtest/results/
+tools/loadtest/commerce-tokens.csv

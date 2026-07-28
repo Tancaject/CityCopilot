@@ -367,7 +367,7 @@ export interface Voucher {
 }
 
 export interface VoucherOrder {
-  id: number;
+  id: string;
   voucherId?: number;
   shopId?: number;
   shopName?: string;

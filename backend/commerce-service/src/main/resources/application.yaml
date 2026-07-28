@@ -2,6 +2,8 @@ server:
   port: ${CITYCOPILOT_COMMERCE_PORT:8083}
 
 spring:
+  config:
+    import: optional:file:./.env[.properties]
   application:
     name: citycopilot-commerce-service
   datasource:
@@ -11,7 +13,7 @@ spring:
   data:
     redis:
       host: ${CITYCOPILOT_REDIS_HOST:127.0.0.1}
-      port: ${CITYCOPILOT_REDIS_PORT:6379}
+      port: ${CITYCOPILOT_REDIS_PORT:6380}
       username: ${CITYCOPILOT_REDIS_USERNAME:}
       password: ${CITYCOPILOT_REDIS_PASSWORD:}
 
@@ -20,8 +22,10 @@ citycopilot:
     service-token: ${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:}
     stream-enabled: ${CITYCOPILOT_COMMERCE_STREAM_ENABLED:true}
     consumer-name: ${HOSTNAME:commerce-local}
+    stream-batch-size: ${CITYCOPILOT_COMMERCE_STREAM_BATCH_SIZE:100}
+    stream-poll-ms: ${CITYCOPILOT_COMMERCE_STREAM_POLL_MS:50}
     place-base-url: ${CITYCOPILOT_PLACE_BASE_URL:http://127.0.0.1:8081}
-    rocketmq-enabled: ${CITYCOPILOT_ROCKETMQ_ENABLED:true}
+    rocketmq-enabled: ${CITYCOPILOT_ROCKETMQ_ENABLED:false}
     rocketmq-endpoints: ${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}
 
 management:
