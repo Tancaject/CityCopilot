@@ -11,15 +11,10 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "citycopilot.rocketmq")
 public class RocketMqProperties {
     private boolean enabled;
-    private boolean producerEnabled = true;
     private boolean consumerEnabled = true;
     private String endpoints = "127.0.0.1:8081";
     private String commerceTopic = "citycopilot-commerce-events-v1";
     private String opsTopic = "citycopilot-ops-events-v1";
     private String auditConsumerGroup = "citycopilot-event-audit-v1";
     private Duration requestTimeout = Duration.ofSeconds(3);
-    private int maxAttempts = 3;
-    private int relayBatchSize = 50;
-    private Duration claimLease = Duration.ofSeconds(30);
-    private Duration retryBackoff = Duration.ofSeconds(5);
 }

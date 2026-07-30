@@ -1091,11 +1091,11 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <label class="compact-field">
-              <span>经度 X</span>
+              <span>经度 X（GCJ-02）</span>
               <input v-model="manualForm.x" inputmode="decimal" required />
             </label>
             <label class="compact-field">
-              <span>纬度 Y</span>
+              <span>纬度 Y（GCJ-02）</span>
               <input v-model="manualForm.y" inputmode="decimal" required />
             </label>
             <label class="compact-field">

@@ -3,12 +3,13 @@
 - 状态：`Proposed`
 - 版本：`v1.0`
 - 日期：`2026-07-26`
+- 基线性质：`2026-07-26 历史快照；不是当前工作树说明`
 - 目标读者：项目维护者、Java 后端/AI Agent 面试官、后续实施 Agent
 - 实施分支约束：遵循仓库 `AGENTS.md`，默认只在 `main` 工作；本文不授权自动提交或推送
 
 ## 1. 文档目的
 
-本文定义 CityCopilot 从当前 `Core + Agent + MCP` 双服务形态，演进为“高并发本地生活交易平台 + 可信双 Agent + 有边界的事件驱动微服务”的实施路线。
+本文记录 CityCopilot 从 `2026-07-26` 的 `Core + Agent + MCP` 基线，演进为“高并发本地生活交易平台 + 可信双 Agent + 有边界的事件驱动微服务”的实施路线。当前实现事实以 [README](../../README.md)、[后端模块说明](../../backend/README.md)、[Commerce 边界 ADR](../adr/0006-commerce-place-service-boundaries.md) 和 [mutation coverage](commerce-mutation-coverage.md) 为准。
 
 它解决的不是“如何把更多技术名词放进项目”，而是以下三个相互关联的问题：
 
@@ -43,11 +44,11 @@
 
 | 标签 | 含义 |
 |---|---|
-| `CURRENT-CODE` | 当前工作树中能从源码或配置直接确认 |
-| `CURRENT-VERIFIED` | 本轮或紧邻本轮已实际运行并取得结果 |
+| `CURRENT-CODE` | 仅指本文创建时（2026-07-26）的工作树快照 |
+| `CURRENT-VERIFIED` | 仅指本文创建时或紧邻当时实际运行的结果 |
 | `TARGET` | 尚未实现或尚未验证的目标 |
 
-## 4. 当前基线
+## 4. 2026-07-26 历史基线
 
 ### 4.1 仓库与工作树
 
@@ -59,7 +60,7 @@
 
 因此，所有结构性重构开始前必须先完成 E0 基线收敛。禁止在未审阅的情况下把 268 个条目整体提交，也禁止通过 `reset --hard` 或覆盖式 checkout 清理用户改动。
 
-### 4.2 当前部署拓扑
+### 4.2 当时部署拓扑
 
 `CURRENT-CODE`：
 
@@ -83,7 +84,7 @@
 
 当前得到的是独立进程、独立重启和独立扩缩容入口，不是多主机高可用。
 
-### 4.3 当前可保留资产
+### 4.3 当时可保留资产
 
 `CURRENT-CODE`：
 
@@ -99,13 +100,13 @@
 
 代码锚点：
 
-- [秒杀 Lua](../../backend/core/src/main/resources/lua/seckill.lua)
-- [订单与 Redis Stream 消费](../../backend/core/src/main/java/com/citycopilot/core/service/impl/VoucherOrderServiceImpl.java)
-- [库存对账](../../backend/core/src/main/java/com/citycopilot/core/service/SeckillInventoryReconciliationService.java)
+- [Commerce 秒杀 Lua](../../backend/commerce-service/src/main/resources/lua/commerce_seckill.lua)
+- [Commerce 订单与 Redis Stream 消费](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOrderService.java)
+- [Commerce 库存对账](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceReconciliationJob.java)
 - [远程 ToolGateway](../../backend/agent/src/main/java/com/citycopilot/agent/gateway/RemoteToolGateway.java)
 - [Ops Agent 当前实现](../../backend/agent/src/main/java/com/citycopilot/agent/ops/OpsAgentService.java)
 
-### 4.4 当前验证边界
+### 4.4 当时验证边界
 
 `CURRENT-VERIFIED`：
 
@@ -119,7 +120,7 @@
 
 未来每个阶段必须重新生成自己的验证证据，不能引用此表替代阶段验收。
 
-### 4.5 当前阻断性缺口
+### 4.5 当时阻断性缺口
 
 | 编号 | 缺口 | 风险 | 主要位置 |
 |---|---|---|---|
@@ -310,7 +311,7 @@ flowchart LR
 | Identity | `user_account`、`user_profile`、`user_checkin` | session、验证码、签到 bitmap | `UserRoleChanged` 等后续事件 |
 | Community | `note`、`note_comment`、`user_follow` | feed、like、热点缓存 | 非首批拆分范围 |
 | Place | `shop`、`shop_type`、`geo_batch_job*` | GEO、店铺/分类缓存 | `ShopChanged`、`GeoBatchItemFailed` |
-| Commerce | `coupon`、`seckill_coupon`、`seckill_reservation`、`coupon_order`、`outbox_event`、`processed_event` | 秒杀库存、Reservation 热镜像、用户订单集合、Stream | `OrderCreated`、`OrderPaid`、`StockDiscrepancyDetected` |
+| Commerce | 历史基线：`coupon`、`seckill_coupon`、`seckill_reservation`、`coupon_order`、`outbox_event`、`processed_event`；当前实现见 `commerce_*` 表 | 历史基线：秒杀库存、Reservation 热镜像、用户订单集合、Stream | `OrderCreated`、`OrderPaid`、`StockDiscrepancyDetected` |
 | Agent | `agent_case`、`agent_evidence`、`agent_plan*`、`agent_approval`、`agent_execution` | lease、checkpoint cache、SSE cursor、短期去重 | `OpsCaseStateChanged` |
 
 Agent 持久状态使用独立 `citycopilot_agent` 数据库和独立账号；可与业务库共享同一 MySQL 服务器以控制本地成本，但禁止共享 schema 凭据。未来迁移服务器不应影响代码契约。
@@ -489,7 +490,7 @@ PRIMARY KEY (consumer_name, event_id)
 
 ```text
 Redis Lua
-  → 原子库存预扣、一人一单、XADD stream.coupon-orders
+  → 原子库存预扣、一人一单、XADD commerce:stream:orders
   → Commerce Stream Worker
   → MySQL 订单 + Outbox 同事务
   → RocketMQ 跨服务领域事件
@@ -500,6 +501,11 @@ Redis Lua
 只有在 Redis Stream 的故障域、积压、广播需求或治理成本经过指标证明成为瓶颈后，才单独设计库存预约状态与 Stream-to-MQ 迁移。
 
 ### 8.7 秒杀 Reservation 与补偿语义
+
+> 历史方案说明（截至 2026-07-30）：本节描述的是已退出当前流程的 Core
+> `seckill_reservation`、`confirm_reservation.lua` 和补偿 Lua。当前权威实现位于
+> `commerce-service`，使用 `commerce_reservation`、Commerce Lua、Commerce Outbox
+> 与 RocketMQ；下文保留用于解释演进背景，不表示旧 Core 链路仍会运行。
 
 Redis 库存已经在订单落库前预扣，因此活动期间不能简单使用 `MySQL stock == Redis stock` 判断一致性。计划引入显式 Reservation：
 

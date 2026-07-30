@@ -1,45 +1,51 @@
-# Commerce 迁移、切换与回滚
+# Commerce 所有权与运行门禁
 
-## 选择
+## 当前所有权
 
-当前实现采用“维护窗口全量回填 + 单一写入者切换”，不宣称已经具备通用在线 CDC。原因是旧应用的所有交易 mutation 尚未形成覆盖完整、单调版本化的 change feed；在此条件下应用层双写会制造不可证明的一致性。
+Commerce 是优惠券、秒杀准入、订单、Reservation、恢复记录和业务 Outbox 的唯一数据 owner。Core 保留外部兼容 API、权限、审计与 Tool 权威入口，并通过版本化 `CommercePortClient` 调用 Commerce；Commerce 不可用时交易失败关闭。
 
-切换前由旧 Core 保持唯一写入者。完成队列排空、全量回填和核对后，先 fence 旧 Stream Worker、旧 reconciliation/relay，再启用 Commerce writer。Core 仅通过版本化 Commerce Port 转发。切换后 Commerce 是交易表、交易 Outbox、Reservation、DLQ 和 `commerce:*` Redis key 的唯一 owner。
+旧 Core 交易 writer、Redisson 锁、旧 Redis Stream/Lua、旧 Outbox Relay、旧交易表初始化和迁移回退工具已经从仓库物理删除。不存在可通过 Spring profile 或环境变量重新启用的本地 writer。
 
-## 核对门禁
+## 完整性门禁
 
-`tools/migrations/verify-commerce-cutover.ps1` 比较：
+运行：
 
-- 迁移行数；
-- 优惠券与订单主键最小/最大值；
-- 优惠券面值和实付金额汇总；
-- 关键字段 CRC32 抽样汇总；
-- 库存汇总、Reservation 数和未发布 Outbox。
+```powershell
+.\tools\migrations\verify-commerce-integrity.ps1
+```
 
-`tools/migrations/commerce-cutover-gate.ps1 -Action Preflight` 进一步要求：
+脚本只读取当前 `citycopilot_commerce` 数据库，验证：
 
-- 未发布/认领/失败 Outbox 为 0；
-- `RESERVED`/`RELEASE_REQUIRED` Reservation 为 0；
-- 未重放 DLQ 为 0；
-- 旧 Redis Stream pending 为 0。
+- 九张必需的 Commerce 表均存在；
+- `commerce_seckill_voucher` 不存在负库存。
 
-## 所有权与顺序
+该门禁不读取 Core 数据库，也不承担历史数据迁移对账。
 
-- 同一时刻只能存在一个 writer 和一个 relay owner。
-- 业务事务先提交订单/Reservation/Outbox，Relay 再用 claim token、lease 和 fencing token 发布。
-- 同一 aggregate 的 `aggregateVersion` 单调递增；Inbox 用 `(consumer_group,event_id)` 去重，同 eventId 不同 payload 进入 quarantine。
-- 切换点之前的 Outbox 必须由旧 owner 发布或显式迁移；切换点之后只允许 Commerce Relay 发布。
-- Redis pending 由创建该 Stream 消息的旧 worker 排空；不把 pending 记录伪装成新服务事件。
+## 排空门禁
 
-## 回滚
+运行：
 
-切换后已有新订单时禁止直接把写流量切回旧 Core。安全回滚流程是：
+```powershell
+.\tools\migrations\commerce-runtime-drain-gate.ps1
+```
 
-1. 关闭新交易准入，保留 Place/Community 和历史快照查询；
-2. 等待 Commerce Outbox、Reservation、Stream pending 排空；
-3. 导出切换点后的 Commerce mutation，反向同步到旧 schema；
-4. 执行同一套行数、范围、金额、库存与 hash 核对；
-5. 运行 `commerce-cutover-gate.ps1 -Action Rollback -Force`；
-6. 在维护窗口切换单一 writer；Commerce 数据保留只读，禁止删除审计记录。
+脚本先执行完整性门禁，再要求：
 
-本地回滚演练使用服务隔离与恢复，不删除卷，也不把已有 Commerce 新订单写回过期旧表。
+- `commerce_outbox_event` 没有待发布、已认领或失败事件；
+- 没有仍处于处理中或待释放的 Reservation；
+- 没有未重放 DLQ；
+- `commerce_order_recovery` 没有未解决恢复阶段；
+- `commerce:stream:orders` 的 pending、consumer lag 和单券 in-flight 总数均为零。
+
+门禁只做读取与验证，不删除数据、不改变路由。
+
+## 故障与恢复边界
+
+- RocketMQ 故障时保留 Commerce Outbox，恢复 Proxy 后由 `CommerceOutboxRelay` 继续发布。
+- Redis Stream 或订单事务异常时，由 `commerce_order_recovery`、补偿/恢复 Lua 和 DLQ 保持可恢复状态。
+- Core 的 `processed_event` 与 `event_projection_version` 是当前 RocketMQ Inbox/版本审计表，不属于旧交易链路。
+- 不提供切回旧 Core writer 的运行时回滚。若必须恢复历史版本，应在隔离环境部署历史制品，并执行单独的数据恢复方案。
+
+## 已有数据卷
+
+删除仓库代码和 SQL 不会删除已有 Docker volume 中的历史表或 Redis key。清理历史数据必须作为独立运维变更执行：先停止历史进程、备份、核对 Commerce 数据和未完成消息，再对明确目标执行定向删除。不得用 `reset -Force` 或 `FLUSHDB` 代替定向清理，也不得删除当前 Core Inbox 表或任何 `commerce_*` 表。

@@ -136,6 +136,19 @@ class ShopDiscoveryServiceTest {
         assertEquals("SHOP_GEO_INVALID", result.getCode());
     }
 
+    @Test
+    void extremePageNumberReturnsEmptyPageWithoutOffsetOverflow() {
+        ShopDiscoveryService service = discoveryService(
+                List.of(local("1", null, "Local", "Road", 100D)),
+                List.of()
+        );
+
+        Result result = service.discover(query(Integer.MAX_VALUE, 20));
+
+        assertTrue(result.getSuccess());
+        assertTrue(items(result).isEmpty());
+    }
+
     private ShopDiscoveryService discoveryService(List<ShopDiscoveryItemDTO> localItems, List<ShopDiscoveryItemDTO> amapItems) {
         GeoProperties geoProperties = new GeoProperties();
         geoProperties.setShopPageSize(10);

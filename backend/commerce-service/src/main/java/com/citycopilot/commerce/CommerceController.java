@@ -18,15 +18,18 @@ public class CommerceController {
     private final CommerceOrderService orders;
     private final CommerceVoucherService vouchers;
     private final CommerceConsistencyService consistency;
+    private final CommerceOperationsService operations;
 
     public CommerceController(
             CommerceOrderService orders,
             CommerceVoucherService vouchers,
-            CommerceConsistencyService consistency
+            CommerceConsistencyService consistency,
+            CommerceOperationsService operations
     ) {
         this.orders = orders;
         this.vouchers = vouchers;
         this.consistency = consistency;
+        this.operations = operations;
     }
 
     @PostMapping("/seckill/{voucherId}")
@@ -115,5 +118,53 @@ public class CommerceController {
     @GetMapping("/consistency/{voucherId}/verify")
     Map<String, Object> verify(@PathVariable long voucherId) {
         return consistency.verify(voucherId);
+    }
+
+    @GetMapping("/ops/summary")
+    Map<String, Object> operationsSummary(
+            @RequestParam String from,
+            @RequestParam String to
+    ) {
+        try {
+            return operations.summary(
+                    java.time.Instant.parse(from),
+                    java.time.Instant.parse(to)
+            );
+        } catch (java.time.format.DateTimeParseException error) {
+            throw new CommerceApiException(
+                    "COMMERCE_INVALID_ARGUMENT",
+                    "from and to must be ISO-8601 instants",
+                    400
+            );
+        }
+    }
+
+    @GetMapping("/ops/dead-letters")
+    List<Map<String, Object>> deadLetters(
+            @RequestHeader(value = "X-CityCopilot-Ops-Authorized", defaultValue = "false") boolean opsAuthorized,
+            @RequestParam(defaultValue = "20") Integer limit
+    ) {
+        requireOpsAuthorization(opsAuthorized);
+        return operations.deadLetters(limit);
+    }
+
+    @PostMapping("/ops/dead-letters/{sourceId}/replay")
+    Map<String, Object> replayDeadLetter(
+            @PathVariable String sourceId,
+            @RequestHeader(value = "X-CityCopilot-Ops-Authorized", defaultValue = "false") boolean opsAuthorized,
+            @RequestHeader(value = "X-CityCopilot-Actor", defaultValue = "unknown") String actor
+    ) {
+        requireOpsAuthorization(opsAuthorized);
+        return operations.replayDeadLetter(sourceId, actor);
+    }
+
+    private void requireOpsAuthorization(boolean authorized) {
+        if (!authorized) {
+            throw new CommerceApiException(
+                    "COMMERCE_OPS_FORBIDDEN",
+                    "Commerce operations authorization is required",
+                    403
+            );
+        }
     }
 }

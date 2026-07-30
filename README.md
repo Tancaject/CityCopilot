@@ -30,7 +30,7 @@ CityCopilot 是一个面向本地生活场景的 AI Agent 项目，将店铺发�
 ## 技术栈
 
 - Java 17、Spring Boot 3、Spring AI、MyBatis-Plus
-- MySQL、Redis ACL、Redisson、Lua、RocketMQ 5.x、Transactional Outbox、Resilience4j
+- MySQL、Redis ACL、Lua、Redis Stream、RocketMQ 5.x、Transactional Outbox、Resilience4j
 - Vue 3、TypeScript、Vite
 - Prometheus、Grafana、Maven、JUnit
 
@@ -38,13 +38,13 @@ CityCopilot 是一个面向本地生活场景的 AI Agent 项目，将店铺发�
 
 ### Docker 启动基础设施（推荐）
 
-Docker 默认只启动 MySQL、Redis 和 RocketMQ，不再构建或启动前端及 Java 服务。已有 `.env` 时直接执行：
+推荐始终通过辅助脚本启动基础设施；它只启动 MySQL、Redis 和 RocketMQ，移除遗留应用容器，并在 Redis 就绪后重新创建/校验 Commerce ACL：
 
 ```powershell
-docker compose up -d
+.\tools\citycopilot.ps1 start
 ```
 
-Compose 会提供 Core、Agent、Commerce 各自的 MySQL，项目专用 Redis，以及 RocketMQ NameServer、Broker 和 Proxy。前端、Core、Commerce、Agent、MCP 均由 IDE 或本地命令启动。
+Compose 文件仍定义了可选的完整应用容器，因此不要用无服务名的 `docker compose up -d` 代替上述入口。脚本会提供 Core、Agent、Commerce 各自的 MySQL，项目专用 Redis，以及 RocketMQ NameServer、Broker 和 Proxy；前端、Core、Commerce、Agent、MCP 均由 IDE 或本地命令启动。
 
 新环境可先让辅助脚本生成未提交到 Git 的随机密码和内部服务令牌：
 
@@ -55,10 +55,10 @@ Compose 会提供 Core、Agent、Commerce 各自的 MySQL，项目专用 Redis�
 常用 Docker 命令：
 
 ```powershell
-docker compose ps
-docker compose logs --tail 200 redis
-docker compose restart
-docker compose down --remove-orphans
+.\tools\citycopilot.ps1 status
+.\tools\citycopilot.ps1 logs -Service redis
+.\tools\citycopilot.ps1 restart
+.\tools\citycopilot.ps1 stop
 ```
 
 普通 `down` 会保留 MySQL、Docker Redis 和上传文件。只有下面的显式命令会永久删除 Docker 数据卷；WSL Redis 不受影响：
@@ -85,7 +85,7 @@ docker compose down --remove-orphans
 - Redis：`127.0.0.1:6380`
 - RocketMQ Proxy：`127.0.0.1:18081`
 
-AI 和高德服务 Key 均为可选配置；未配置时，对应能力会使用本地 fallback 或降级结果。本地 Commerce 默认不启动 RocketMQ Producer，避免 Proxy 会话异常阻断应用启动；秒杀消费继续使用 Redis Stream。完整容器 `app` profile 会显式启用 RocketMQ。
+AI 和高德服务 Key 均为可选配置；未配置时，对应能力会使用本地 fallback 或降级结果。RocketMQ 默认启用，Commerce Outbox Relay 和跨服务 Consumer 会连接本地 Proxy；秒杀准入后的本地消费仍使用 Redis Stream。仅在明确的 MQ 故障隔离场景中才设置 `CITYCOPILOT_ROCKETMQ_ENABLED=false`，关闭期间不得删除未发布 Outbox。
 
 #### 2. 启动后端
 
@@ -130,16 +130,23 @@ npm run build
 迁移、分布式链路和演示：
 
 ```powershell
-.\tools\migrations\verify-commerce-cutover.ps1
-.\tools\migrations\commerce-cutover-gate.ps1 -Action Preflight
+# 校验当前 Commerce 表结构与库存完整性
+.\tools\migrations\verify-commerce-integrity.ps1
+
+# 校验当前 Outbox、Reservation、DLQ、恢复记录和 Redis Stream 已排空
+.\tools\migrations\commerce-runtime-drain-gate.ps1
+
+# 当前 Commerce-only 演示
 .\tools\golden-demo.ps1
 ```
+
+默认 `citycopilot-v2.sql` 只初始化 Core 当前拥有的 Identity、Place、Community 和事件 Inbox/版本表。旧 Core 交易实现、旧表初始化、旧 Redis Stream/Lua 和迁移回退工具已经从仓库物理删除，交易请求只能进入 Commerce。已有 MySQL/Redis 数据卷可能仍保留历史表或 key；代码更新不会自动删除这些数据，清理前必须单独备份并核对。
 
 ## 更多文档
 
 - [后端模块说明](backend/README.md)
 - [MCP 客户端接入](docs/mcp-client.md)
-- [Commerce 迁移与回滚](docs/architecture/commerce-migration-and-cutover.md)
+- [Commerce 所有权与运行门禁](docs/architecture/commerce-migration-and-cutover.md)
 - [Commerce mutation coverage](docs/architecture/commerce-mutation-coverage.md)
 - [分布式 Agent 演进计划](docs/architecture/citycopilot-distributed-agent-evolution-plan.md)
 - [实现与设计文档](docs/superpowers/)

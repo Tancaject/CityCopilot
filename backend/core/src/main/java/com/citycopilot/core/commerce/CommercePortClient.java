@@ -14,6 +14,7 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -202,9 +203,60 @@ public class CommercePortClient {
                 .body(new ParameterizedTypeReference<>() {});
     }
 
+    public Result operationsSummary(Instant fromInclusive, Instant toExclusive) {
+        try {
+            Map<String, Object> response = client.get()
+                    .uri(builder -> builder.path("/commerce/v1/ops/summary")
+                            .queryParam("from", fromInclusive)
+                            .queryParam("to", toExclusive)
+                            .build())
+                    .headers(headers -> headers(headers, userId()))
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            return Result.ok(response == null ? Map.of() : response);
+        } catch (RestClientResponseException error) {
+            return failure(error);
+        } catch (RestClientException error) {
+            return unavailable();
+        }
+    }
+
+    public List<Map<String, Object>> deadLetters(Integer limit) {
+        try {
+            List<Map<String, Object>> response = client.get()
+                    .uri(builder -> builder.path("/commerce/v1/ops/dead-letters")
+                            .queryParam("limit", limit == null ? 20 : limit)
+                            .build())
+                    .headers(this::opsHeaders)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            return response == null ? List.of() : response;
+        } catch (RestClientException error) {
+            throw new IllegalStateException("Commerce dead-letter query unavailable", error);
+        }
+    }
+
+    public Map<String, Object> replayDeadLetter(String sourceId) {
+        try {
+            return client.post()
+                    .uri("/commerce/v1/ops/dead-letters/{sourceId}/replay", sourceId)
+                    .headers(this::opsHeaders)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+        } catch (RestClientException error) {
+            throw new IllegalStateException("Commerce dead-letter replay unavailable", error);
+        }
+    }
+
     private void headers(HttpHeaders headers, long userId) {
         headers.set(SERVICE_TOKEN, token);
         headers.set(USER_ID, String.valueOf(userId));
+    }
+
+    private void opsHeaders(HttpHeaders headers) {
+        headers(headers, userId());
+        headers.set("X-CityCopilot-Ops-Authorized", String.valueOf(opsAuthorized()));
+        headers.set("X-CityCopilot-Actor", actor());
     }
 
     private Map<String, Object> stringifyOrderId(Map<String, Object> response) {
@@ -231,6 +283,34 @@ public class CommercePortClient {
     private boolean admin() {
         UserDTO user = UserHolder.getUser();
         return user != null && "admin".equalsIgnoreCase(user.getRole());
+    }
+
+    private boolean opsAuthorized() {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) {
+            return false;
+        }
+        if ("admin".equalsIgnoreCase(user.getRole())) {
+            return true;
+        }
+        java.util.Set<String> permissions = user.getPermissions();
+        return permissions != null
+                && (permissions.contains("*")
+                || (permissions.contains("admin:access") && permissions.contains("order:write")));
+    }
+
+    private String actor() {
+        UserDTO user = UserHolder.getUser();
+        if (user == null) {
+            return "unknown";
+        }
+        if (user.getId() != null) {
+            return "user:" + user.getId();
+        }
+        if (user.getNickName() != null && !user.getNickName().isBlank()) {
+            return "service:" + user.getNickName();
+        }
+        return "role:" + String.valueOf(user.getRole());
     }
 
     private Result failure(RestClientResponseException error) {

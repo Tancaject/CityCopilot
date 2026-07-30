@@ -17,6 +17,11 @@ public class GeoProperties {
     private Boolean cityLimit = true;
     private Integer shopPageSize = SystemConstants.DEFAULT_PAGE_SIZE;
     private Integer maxShopPageSize = SystemConstants.MAX_PAGE_SIZE;
+    private LocalDiscoveryMode localDiscoveryMode = LocalDiscoveryMode.REDIS;
+    private Integer redisCandidateMultiplier = 3;
+    private Integer redisMaxCandidates = 500;
+    private Boolean reconcileEnabled = true;
+    private Long reconcileIntervalMs = 60000L;
 
     public String resolveCity(String city) {
         return StrUtil.blankToDefault(city, StrUtil.blankToDefault(defaultCity, "杭州"));
@@ -33,7 +38,25 @@ public class GeoProperties {
         return cityLimit == null || cityLimit;
     }
 
+    public LocalDiscoveryMode resolveLocalDiscoveryMode() {
+        return localDiscoveryMode == null ? LocalDiscoveryMode.REDIS : localDiscoveryMode;
+    }
+
+    public int resolveRedisCandidateMultiplier() {
+        return positiveOrDefault(redisCandidateMultiplier, 3);
+    }
+
+    public int resolveRedisMaxCandidates() {
+        return positiveOrDefault(redisMaxCandidates, 500);
+    }
+
     private int positiveOrDefault(Integer value, int fallback) {
         return value == null || value <= 0 ? fallback : value;
+    }
+
+    public enum LocalDiscoveryMode {
+        MYSQL,
+        SHADOW,
+        REDIS
     }
 }

@@ -129,6 +129,7 @@ DELETE FROM commerce_outbox_event
 WHERE (aggregate_type='commerce_order'
        AND aggregate_id IN (SELECT CAST(id AS CHAR) FROM commerce_order WHERE voucher_id={VOUCHER_ID}))
    OR (aggregate_type='commerce_seckill_voucher' AND aggregate_id=CAST({VOUCHER_ID} AS CHAR));
+DELETE FROM commerce_order_recovery WHERE voucher_id={VOUCHER_ID};
 DELETE FROM commerce_reservation WHERE voucher_id={VOUCHER_ID};
 DELETE FROM commerce_order WHERE voucher_id={VOUCHER_ID};
 INSERT INTO shop_summary_projection(shop_id,shop_name,owner_user_id,source_version)
@@ -151,6 +152,7 @@ ON DUPLICATE KEY UPDATE stock={stock},begin_time=VALUES(begin_time),end_time=VAL
         *(("DEL", f"login:token:{token}") for token in previous_tokens),
         ("DEL", f"commerce:seckill:stock:{VOUCHER_ID}"),
         ("DEL", f"commerce:seckill:buyers:{VOUCHER_ID}"),
+        ("DEL", f"commerce:seckill:inflight:{VOUCHER_ID}"),
         ("SET", f"commerce:seckill:stock:{VOUCHER_ID}", stock),
     ]
     for index, token in enumerate(tokens):
@@ -188,12 +190,16 @@ WHERE JSON_VALID(payload_json)
 AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.voucherId'))=CAST({VOUCHER_ID} AS CHAR);
 SELECT COUNT(*),COALESCE(SUM(status='ORDER_CREATED'),0)
 FROM commerce_reservation WHERE voucher_id={VOUCHER_ID};
+SELECT COUNT(*) FROM commerce_order_recovery
+WHERE voucher_id={VOUCHER_ID}
+AND phase IN ('RECEIVED','COMPENSATION_REQUIRED','RESTORE_PENDING');
 """)
     order_count, distinct_users, minimum_user, maximum_user = map(int, rows[0].split("\t"))
     database_stock = int(rows[1])
     unpublished = int(rows[2])
     dead_letters = int(rows[3])
     reservation_count, order_created_reservations = map(int, rows[4].split("\t"))
+    unresolved_recovery = int(rows[5])
     env = env_file()
     # Read only the Commerce keys with the administrative test harness account.
     with socket.create_connection(("127.0.0.1", int(env.get("CITYCOPILOT_REDIS_PORT", "6380"))), timeout=10) as connection:
@@ -201,6 +207,7 @@ FROM commerce_reservation WHERE voucher_id={VOUCHER_ID};
             encode("AUTH", env["CITYCOPILOT_REDIS_PASSWORD"])
             + encode("GET", f"commerce:seckill:stock:{VOUCHER_ID}")
             + encode("SCARD", f"commerce:seckill:buyers:{VOUCHER_ID}")
+            + encode("SCARD", f"commerce:seckill:inflight:{VOUCHER_ID}")
         )
         reader = connection.makefile("rb")
         if not reader.readline().startswith(b"+OK"):
@@ -212,6 +219,10 @@ FROM commerce_reservation WHERE voucher_id={VOUCHER_ID};
         if not buyers_reply.startswith(b":"):
             raise RuntimeError("Unexpected Redis SCARD response")
         redis_buyers = int(buyers_reply[1:])
+        inflight_reply = reader.readline()
+        if not inflight_reply.startswith(b":"):
+            raise RuntimeError("Unexpected Redis in-flight SCARD response")
+        redis_inflight = int(inflight_reply[1:])
     stream = stream_status()
     report = {
         "voucherId": VOUCHER_ID,
@@ -223,6 +234,8 @@ FROM commerce_reservation WHERE voucher_id={VOUCHER_ID};
         "databaseStock": database_stock,
         "redisStock": redis_stock,
         "redisBuyerCount": redis_buyers,
+        "redisInFlight": redis_inflight,
+        "unresolvedRecovery": unresolved_recovery,
         "streamPending": stream["pending"],
         "streamLag": stream["lag"],
         "streamDrained": stream["drained"],
@@ -244,6 +257,8 @@ FROM commerce_reservation WHERE voucher_id={VOUCHER_ID};
         and redis_buyers == order_count
         and reservation_count == order_count
         and order_created_reservations == order_count
+        and redis_inflight == 0
+        and unresolved_recovery == 0
         and report["streamDrained"]
         and dead_letters == 0
         and outbox_valid

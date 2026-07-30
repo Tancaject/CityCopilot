@@ -10,9 +10,9 @@
 
 ## 决策
 
-- Redis Lua 原子写入 `stream.coupon-orders`，Redis Stream 只承载 Commerce 内部订单命令。
-- Stream Worker 使用 consumer group、显式 ACK、pending reclaim、结构化失败结果和 Reservation 补偿。
-- 已提交的 MySQL 业务事务同时写 `outbox_event`；Relay 将标准事件信封发布到 RocketMQ。
+- Redis Lua 原子写入 `commerce:stream:orders`，Redis Stream 只承载 Commerce 内部订单命令。
+- Commerce Stream Worker 使用 consumer group 和显式 ACK；终态失败先补偿 Redis 资格/库存并写入 `commerce_dead_letter`，再 ACK。
+- 已提交的 MySQL 业务事务同时写 `commerce_outbox_event`；Commerce Relay 将标准事件信封发布到 RocketMQ。
 - RocketMQ 只承载跨服务领域事件，投递语义为 at-least-once。
 - 每个消费者使用 `processed_event` Inbox、唯一约束和聚合版本实现 effectively-once business effect。
 - 首版使用 Normal Topic；没有固定 message group 和串行 claim/发送/消费时不得宣称 FIFO。
@@ -20,4 +20,3 @@
 ## 结果与回滚
 
 系统同时维护两套消息基础设施，但职责不重叠。`CITYCOPILOT_ROCKETMQ_ENABLED=false` 可关闭 MQ Relay/Consumer，业务同步链路与 Redis Stream 仍可运行；不得在关闭期间删除未发布 Outbox。
-

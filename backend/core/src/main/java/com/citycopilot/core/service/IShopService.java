@@ -22,11 +22,7 @@ public interface IShopService extends IService<Shop> {
 
     Result update(Shop shop);
 
-    @AgentTool(name = "search_shops_by_type", description = "Search shops by category, page, and optional location")
-    Result queryShopByType(Integer typeId, Integer current, Integer size, Double x, Double y);
-
-    @AgentTool(name = "search_nearby_shops", description = "Search nearby shops around the user's current location")
-    Result queryNearbyShops(Integer current, Integer size, Double x, Double y);
+    Result queryShopByType(Integer typeId, Integer current, Integer size);
 
     Result updateShopGeo(ShopGeoUpdateDTO request);
 }

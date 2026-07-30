@@ -33,17 +33,17 @@ public class ShopDiscoveryService {
             return Result.fail("SHOP_GEO_INVALID", "坐标参数不合法");
         }
 
-        int current = actualQuery.resolveCurrent();
         int pageSize = actualQuery.resolvePageSize(geoProperties);
-        int from = (current - 1) * pageSize;
+        long from = actualQuery.resolveOffset(geoProperties);
 
         List<ShopDiscoveryItemDTO> merged = mergeCandidates(collectCandidates(actualQuery));
 
         if (from >= merged.size()) {
             return Result.ok(List.of(), (long) merged.size());
         }
-        int to = Math.min(from + pageSize, merged.size());
-        return Result.ok(merged.subList(from, to), (long) merged.size());
+        int fromIndex = (int) from;
+        int to = (int) Math.min(from + pageSize, merged.size());
+        return Result.ok(merged.subList(fromIndex, to), (long) merged.size());
     }
 
     private List<ShopDiscoveryItemDTO> collectCandidates(ShopDiscoveryQuery query) {

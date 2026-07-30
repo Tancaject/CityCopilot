@@ -11,31 +11,21 @@ import com.citycopilot.core.mapper.ShopMapper;
 import com.citycopilot.core.service.IShopService;
 import com.citycopilot.core.service.IShopTypeService;
 import com.citycopilot.core.service.OperationLogService;
+import com.citycopilot.core.service.ShopGeoIndexService;
 import com.citycopilot.core.utils.CacheClient;
 import com.citycopilot.core.utils.SystemConstants;
 import com.citycopilot.core.utils.UserHolder;
-import com.citycopilot.core.dto.UserDTO;
-import com.citycopilot.core.security.ShopAccessDeniedException;
 import com.citycopilot.core.security.ShopOwnershipPolicy;
 import jakarta.annotation.Resource;
-import org.springframework.data.geo.Distance;
-import org.springframework.data.geo.GeoResult;
-import org.springframework.data.geo.GeoResults;
-import org.springframework.data.geo.Point;
-import org.springframework.data.redis.connection.RedisGeoCommands;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.domain.geo.GeoReference;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 import static com.citycopilot.core.utils.RedisConstants.*;
 
@@ -45,6 +35,7 @@ import static com.citycopilot.core.utils.RedisConstants.*;
  * </p>
  *
  */
+@Slf4j
 @Service
 public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IShopService {
 
@@ -65,6 +56,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     @Resource
     private ShopOwnershipPolicy shopOwnershipPolicy;
+
+    @Resource
+    private ShopGeoIndexService shopGeoIndexService;
 
     @Override
     public Result queryShopById(Long id) {
@@ -90,7 +84,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         applyShopDefaults(shop);
         save(shop);
         Shop after = getById(shop.getId());
-        refreshShopGeoIndex(null, after);
+        refreshShopGeoIndexAfterCommit(null, after);
         operationLogService.record("shop", "shop_create", "shop", shop.getId(), String.valueOf(shop.getId()), null, after, true, null);
         return Result.ok(shop.getId());
     }
@@ -114,12 +108,19 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.fail("SHOP_NOT_FOUND", "店铺不存在");
         }
         shopOwnershipPolicy.assertWritable(before, UserHolder.getUser());
+        if ("verified".equals(shop.getGeoStatus())) {
+            Double effectiveX = shop.getX() == null ? before.getX() : shop.getX();
+            Double effectiveY = shop.getY() == null ? before.getY() : shop.getY();
+            if (!isValidCoordinate(effectiveX, effectiveY)) {
+                return Result.fail("SHOP_GEO_INVALID", "已核验店铺必须提供合法坐标");
+            }
+        }
         // 更新数据库
         updateById(shop);
         // 删除缓存
         stringRedisTemplate.delete(CACHE_SHOP_KEY + id);
         Shop after = getById(id);
-        refreshShopGeoIndex(before, after);
+        refreshShopGeoIndexAfterCommit(before, after);
         operationLogService.record("shop", "shop_update", "shop", id, String.valueOf(id), before, after, true, null);
         return Result.ok();
     }
@@ -151,6 +152,11 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         if (StrUtil.isNotBlank(shop.getGeoStatus()) && !isValidGeoStatus(shop.getGeoStatus())) {
             return Result.fail("BAD_REQUEST", "坐标状态不合法");
+        }
+        if (creating
+                && "verified".equals(shop.getGeoStatus())
+                && !isValidCoordinate(shop.getX(), shop.getY())) {
+            return Result.fail("SHOP_GEO_INVALID", "已核验店铺必须提供合法坐标");
         }
         return Result.ok();
     }
@@ -187,6 +193,12 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             operationLogService.record("geo", "shop_geo_update", "shop", request.getId(), String.valueOf(request.getId()), null, request, false, "坐标参数不合法");
             return Result.fail("SHOP_GEO_INVALID", "坐标参数不合法");
         }
+        String geoStatus = StrUtil.blankToDefault(request.getGeoStatus(), "verified");
+        if (!isValidGeoStatus(geoStatus)) {
+            operationLogService.record("geo", "shop_geo_update", "shop", request.getId(),
+                    String.valueOf(request.getId()), null, request, false, "坐标状态不合法");
+            return Result.fail("BAD_REQUEST", "坐标状态不合法");
+        }
 
         Shop before = getById(request.getId());
         if (before == null) {
@@ -202,95 +214,66 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
                 .setPoiId(request.getPoiId())
                 .setAdcode(request.getAdcode())
                 .setGeoSource(StrUtil.blankToDefault(request.getGeoSource(), "amap"))
-                .setGeoStatus(StrUtil.blankToDefault(request.getGeoStatus(), "verified"))
+                .setGeoStatus(geoStatus)
                 .setGeoUpdatedAt(LocalDateTime.now());
 
         updateById(update);
         stringRedisTemplate.delete(CACHE_SHOP_KEY + request.getId());
 
         Shop after = getById(request.getId());
-        refreshShopGeoIndex(before, after);
+        refreshShopGeoIndexAfterCommit(before, after);
         operationLogService.record("geo", "shop_geo_update", "shop", request.getId(), String.valueOf(request.getId()), before, after, true, null);
         return Result.ok(after);
     }
 
     @Override
-    public Result queryShopByType(Integer typeId, Integer current, Integer size, Double x, Double y) {
+    public Result queryShopByType(Integer typeId, Integer current, Integer size) {
         int pageSize = shopPageSize(size);
-        if (x==null||y==null){
-            Page<Shop> page = query().eq("type_id", typeId).page(new Page<>(current, pageSize));
-            return Result.ok(page);
-        }
-        return queryShopByGeo(SHOP_GEO_KEY + typeId, current, pageSize, x, y);
+        Page<Shop> page = query().eq("type_id", typeId).page(new Page<>(current, pageSize));
+        return Result.ok(page);
     }
 
-    @Override
-    public Result queryNearbyShops(Integer current, Integer size, Double x, Double y) {
-        return queryShopByGeo(SHOP_GEO_ALL_KEY, current, shopPageSize(size), x, y);
-    }
-
-    private Result queryShopByGeo(String key, Integer current, int pageSize, Double x, Double y) {
-        if (!isValidCoordinate(x, y)) {
-            return Result.fail("SHOP_GEO_INVALID", "坐标参数不合法");
-        }
-        int page = current == null || current < 1 ? 1 : current;
-        int from = (page - 1) * pageSize;
-        int end = page * pageSize;
-        GeoResults<RedisGeoCommands.GeoLocation<String>> results = stringRedisTemplate.opsForGeo().
-                search(
-                        key,
-                        GeoReference.fromCoordinate(x, y), new Distance(nearbyRadiusMeters()),
-                        RedisGeoCommands.GeoSearchCommandArgs.newGeoSearchArgs().includeDistance().limit(end));
-        if (results==null){
-            return Result.ok(Collections.emptyList());
-        }
-
-        List<GeoResult<RedisGeoCommands.GeoLocation<String>>> list = results.getContent();
-        if (list.size() <= from) {
-            return Result.ok(Collections.emptyList());
-        }
-        List<Long> ids = new ArrayList<>(pageSize);
-        Map<String, Distance> distanceMap = new HashMap<>(list.size());
-        list.stream().skip(from).limit(pageSize).forEach(result -> {
-            String shopId = result.getContent().getName();
-            ids.add(Long.valueOf(shopId));
-            distanceMap.put(shopId, result.getDistance());
-        });
-        if (ids.isEmpty()) {
-            return Result.ok(Collections.emptyList());
-        }
-        String idStr = ids.stream().map(String::valueOf).collect(Collectors.joining(","));
-        List<Shop> shops = query().in("id", ids)
-                .last("ORDER BY FIELD(id," + idStr + ")").list();
-        shops.forEach(shop -> shop.setDistance(distanceMap.get(shop.getId().toString()).getValue()));
-        return Result.ok(shops);
-    }
-
-    private void refreshShopGeoIndex(Shop before, Shop after) {
-        if (after == null || after.getId() == null) {
+    void refreshShopGeoIndexAfterCommit(Shop before, Shop after) {
+        Shop beforeSnapshot = geoIndexSnapshot(before);
+        Shop afterSnapshot = geoIndexSnapshot(after);
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        refreshShopGeoIndexSafely(beforeSnapshot, afterSnapshot);
+                    }
+                });
+            } else {
+                Long shopId = afterSnapshot != null
+                        ? afterSnapshot.getId()
+                        : beforeSnapshot == null ? null : beforeSnapshot.getId();
+                log.warn("Shop {} Redis GEO refresh skipped because transaction synchronization is unavailable", shopId);
+            }
             return;
         }
-        String shopId = after.getId().toString();
-        stringRedisTemplate.opsForGeo().remove(SHOP_GEO_ALL_KEY, shopId);
-        if (before != null && before.getTypeId() != null) {
-            stringRedisTemplate.opsForGeo().remove(SHOP_GEO_KEY + before.getTypeId(), shopId);
-        }
-        if (after.getTypeId() != null) {
-            stringRedisTemplate.opsForGeo().remove(SHOP_GEO_KEY + after.getTypeId(), shopId);
-        }
-        if (!isGeoIndexable(after)) {
-            return;
-        }
-        Point point = new Point(after.getX(), after.getY());
-        stringRedisTemplate.opsForGeo().add(SHOP_GEO_ALL_KEY, point, shopId);
-        stringRedisTemplate.opsForGeo().add(SHOP_GEO_KEY + after.getTypeId(), point, shopId);
+        refreshShopGeoIndexSafely(beforeSnapshot, afterSnapshot);
     }
 
-    private boolean isGeoIndexable(Shop shop) {
-        return shop != null
-                && shop.getTypeId() != null
-                && isValidCoordinate(shop.getX(), shop.getY())
-                && "verified".equals(shop.getGeoStatus());
+    private void refreshShopGeoIndexSafely(Shop before, Shop after) {
+        try {
+            shopGeoIndexService.refreshShopGeoIndex(before, after);
+        } catch (RuntimeException error) {
+            Long shopId = after != null ? after.getId() : before == null ? null : before.getId();
+            log.warn("Shop {} committed but Redis GEO index refresh failed: {}", shopId, error.getMessage());
+        }
+    }
+
+    private Shop geoIndexSnapshot(Shop shop) {
+        if (shop == null) {
+            return null;
+        }
+        return new Shop()
+                .setId(shop.getId())
+                .setTypeId(shop.getTypeId())
+                .setX(shop.getX())
+                .setY(shop.getY())
+                .setGeoStatus(shop.getGeoStatus());
     }
 
     private boolean isValidGeoStatus(String status) {
@@ -298,12 +281,14 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     }
 
     private boolean isValidCoordinate(Double x, Double y) {
-        return x != null && y != null && x >= -180 && x <= 180 && y >= -90 && y <= 90;
-    }
-
-    private double nearbyRadiusMeters() {
-        Double radius = geoProperties == null ? null : geoProperties.getNearbyRadiusMeters();
-        return radius == null || radius <= 0 ? 5000D : radius;
+        return x != null
+                && y != null
+                && Double.isFinite(x)
+                && Double.isFinite(y)
+                && x >= -180D
+                && x <= 180D
+                && y >= -85.05112878D
+                && y <= 85.05112878D;
     }
 
     private int shopPageSize(Integer requestedSize) {

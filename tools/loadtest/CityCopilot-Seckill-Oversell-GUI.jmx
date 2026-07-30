@@ -252,7 +252,7 @@ try {
 boolean accepted = httpCode == &apos;200&apos; &amp;&amp; parsed.success == true &amp;&amp; parsed.data != null
 boolean exhausted = (httpCode == &apos;200&apos; || httpCode == &apos;409&apos;)
     &amp;&amp; parsed.success == false
-    &amp;&amp; parsed.code == &apos;COMMERCE_STOCK_EXHAUSTED&apos;
+    &amp;&amp; parsed.code == &apos;SECKILL_STOCK_NOT_ENOUGH&apos;
 
 if (accepted) {
     props.get(&apos;citycopilot.oversell.accepted&apos;).incrementAndGet()

@@ -71,7 +71,8 @@ function Ensure-EnvironmentFile {
         foreach ($setting in @(
             "CITYCOPILOT_AGENT_MYSQL_PORT=3308",
             "CITYCOPILOT_COMMERCE_MYSQL_PORT=3309",
-            "CITYCOPILOT_COMMERCE_ENABLED=true"
+            "CITYCOPILOT_COMMERCE_REDIS_USERNAME=commerce",
+            "CITYCOPILOT_ROCKETMQ_ENABLED=true"
         )) {
             $parts = $setting.Split("=", 2)
             if (-not $existingKeys.ContainsKey($parts[0])) {
@@ -127,6 +128,7 @@ function Ensure-EnvironmentFile {
         "CITYCOPILOT_COMMERCE_DB_PASSWORD=$(New-CityCopilotSecret 24)",
         "CITYCOPILOT_COMMERCE_MYSQL_ROOT_PASSWORD=$(New-CityCopilotSecret 24)",
         "CITYCOPILOT_REDIS_PASSWORD=$(New-CityCopilotSecret 24)",
+        "CITYCOPILOT_COMMERCE_REDIS_USERNAME=commerce",
         "CITYCOPILOT_COMMERCE_REDIS_PASSWORD=$(New-CityCopilotSecret 24)",
         "CITYCOPILOT_INTERNAL_SERVICE_TOKEN=$(New-CityCopilotSecret 48)",
         "CITYCOPILOT_INTERNAL_AGENT_TOKEN=$(New-CityCopilotSecret 48)",
@@ -135,8 +137,8 @@ function Ensure-EnvironmentFile {
         "CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN=$(New-CityCopilotSecret 48)",
         "CITYCOPILOT_INTERNAL_MCP_TOKEN=$(New-CityCopilotSecret 48)",
         "CITYCOPILOT_INTERNAL_COMMERCE_TOKEN=$(New-CityCopilotSecret 48)",
-        "CITYCOPILOT_COMMERCE_ENABLED=true",
         "CITYCOPILOT_AI_ENABLED=false",
+        "CITYCOPILOT_ROCKETMQ_ENABLED=true",
         "CITYCOPILOT_AI_API_KEY=",
         "CITYCOPILOT_AI_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         "CITYCOPILOT_AI_MODEL=qwen-plus",
@@ -275,23 +277,18 @@ function Wait-ServicesHealthy {
 }
 
 function Start-Infrastructure {
-    $arguments = @(
-        "compose",
-        "--project-directory", $ProjectRoot,
-        "--env-file", $EnvFile,
-        "-f", $ComposeFile,
-        "up", "-d", "--remove-orphans"
-    )
-    $composeProcess = Start-Process -FilePath "docker" -ArgumentList $arguments -PassThru -WindowStyle Hidden
-    try {
-        Wait-ServicesHealthy -Names $InfrastructureServices
-    } finally {
-        $composeProcess.Refresh()
-        if (-not $composeProcess.HasExited) {
-            Stop-Process -Id $composeProcess.Id -Force
-            $composeProcess.WaitForExit()
-        }
-    }
+    $arguments = @("up", "-d", "--remove-orphans") + $InfrastructureServices
+    Invoke-Compose @arguments
+    Wait-ServicesHealthy -Names $InfrastructureServices
+    Invoke-RedisInitialization
+}
+
+function Invoke-RedisInitialization {
+    Invoke-Compose run --rm --no-deps redis-init
+}
+
+function Invoke-CoreSchemaMigrations {
+    Invoke-Compose exec -T mysql sh /opt/citycopilot/migrations/apply-core-migrations.sh
 }
 
 Ensure-EnvironmentFile
@@ -302,6 +299,7 @@ switch ($Action) {
         Invoke-Compose config --quiet
         Remove-ApplicationContainers
         Start-Infrastructure
+        Invoke-CoreSchemaMigrations
         Invoke-Compose ps
         $environment = Read-CityCopilotEnvironment
         Write-Host ("Infrastructure is ready: MySQL {0}/{1}/{2}, Redis {3}, RocketMQ Proxy 18081." -f
@@ -323,6 +321,8 @@ switch ($Action) {
         $arguments = @("restart") + $InfrastructureServices
         Invoke-Compose @arguments
         Wait-ServicesHealthy -Names $InfrastructureServices
+        Invoke-RedisInitialization
+        Invoke-CoreSchemaMigrations
         Write-Host "CityCopilot infrastructure restarted and is healthy." -ForegroundColor Green
     }
     "status" {

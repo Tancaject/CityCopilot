@@ -10,6 +10,7 @@ import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IShopService;
+import com.citycopilot.core.service.discovery.LegacyShopGeoQueryAdapter;
 import com.citycopilot.core.service.discovery.ShopDiscoveryQuery;
 import com.citycopilot.core.service.discovery.ShopDiscoveryService;
 import org.springframework.web.bind.annotation.*;
@@ -34,6 +35,9 @@ public class ShopController {
 
     @Resource
     private ShopDiscoveryService shopDiscoveryService;
+
+    @Resource
+    private LegacyShopGeoQueryAdapter legacyShopGeoQueryAdapter;
 
     /**
      * 根据id查询商铺信息
@@ -89,7 +93,10 @@ public class ShopController {
             @RequestParam(value = "x",required = false)Double x,
             @RequestParam(value = "y",required = false)Double y
     ) {
-        return shopService.queryShopByType(typeId,current,size,x,y);
+        if (x == null && y == null) {
+            return shopService.queryShopByType(typeId, current, size);
+        }
+        return legacyShopGeoQueryAdapter.queryByType(typeId, current, size, x, y);
     }
 
     @GetMapping("/nearby")
@@ -99,7 +106,7 @@ public class ShopController {
             @RequestParam("x") Double x,
             @RequestParam("y") Double y
     ) {
-        return shopService.queryNearbyShops(current, size, x, y);
+        return legacyShopGeoQueryAdapter.queryNearby(current, size, x, y);
     }
 
     @GetMapping("/discovery")

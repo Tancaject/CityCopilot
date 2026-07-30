@@ -24,12 +24,20 @@ final class CommerceOrderIdGenerator {
     }
 
     long nextId() {
+        return nextId("order");
+    }
+
+    long nextVoucherId() {
+        return nextId("voucher");
+    }
+
+    private long nextId(String namespace) {
         Instant now = Instant.now();
         long timestamp = now.getEpochSecond() - BEGIN_TIMESTAMP;
-        String key = "commerce:id:order:" + DAY.format(now);
+        String key = "commerce:id:" + namespace + ":" + DAY.format(now);
         Long sequence = redis.opsForValue().increment(key);
         if (sequence == null || sequence <= 0 || sequence > MAX_SEQUENCE) {
-            throw new IllegalStateException("Unable to allocate a unique commerce order id");
+            throw new IllegalStateException("Unable to allocate a unique commerce " + namespace + " id");
         }
         if (sequence == 1L) {
             redis.expire(key, Duration.ofDays(2));

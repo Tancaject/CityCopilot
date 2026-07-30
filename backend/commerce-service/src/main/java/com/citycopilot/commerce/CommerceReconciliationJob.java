@@ -1,5 +1,6 @@
 package com.citycopilot.commerce;
 
+import com.citycopilot.contract.event.StockDiscrepancyDetectedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -37,7 +38,7 @@ public class CommerceReconciliationJob {
                 "SELECT voucher_id FROM commerce_seckill_voucher",
                 Long.class
         )) {
-            Map<String, Object> snapshot = consistency.snapshot(voucherId);
+            Map<String, Object> snapshot = consistency.snapshotForReconciliation(voucherId);
             String streakKey = "commerce:metrics:seckill:discrepancy-streak:" + voucherId;
             if (Boolean.TRUE.equals(snapshot.get("consistent"))) {
                 redis.delete(streakKey);
@@ -70,8 +71,8 @@ public class CommerceReconciliationJob {
         payload.put("detectedAt", now.toString());
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put("eventId", eventId);
-        envelope.put("eventType", "commerce.stock.discrepancy-detected");
-        envelope.put("schemaVersion", 1);
+        envelope.put("eventType", StockDiscrepancyDetectedEvent.EVENT_TYPE);
+        envelope.put("schemaVersion", StockDiscrepancyDetectedEvent.SCHEMA_VERSION);
         envelope.put("aggregateType", "commerce_seckill_voucher");
         envelope.put("aggregateId", String.valueOf(voucherId));
         envelope.put("aggregateVersion", System.currentTimeMillis());

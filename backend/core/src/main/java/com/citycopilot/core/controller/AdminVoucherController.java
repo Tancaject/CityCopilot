@@ -1,7 +1,7 @@
 package com.citycopilot.core.controller;
 
 import com.citycopilot.core.dto.Result;
-import com.citycopilot.core.entity.Voucher;
+import com.citycopilot.core.dto.VoucherRequest;
 import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IVoucherService;
@@ -34,12 +34,12 @@ public class AdminVoucherController {
     }
 
     @PostMapping
-    public Result createVoucher(@RequestBody Voucher voucher) {
+    public Result createVoucher(@RequestBody VoucherRequest voucher) {
         return voucherService.createVoucher(voucher);
     }
 
     @PutMapping("/{id}")
-    public Result updateVoucher(@PathVariable("id") Long id, @RequestBody Voucher voucher) {
+    public Result updateVoucher(@PathVariable("id") Long id, @RequestBody VoucherRequest voucher) {
         voucher.setId(id);
         return voucherService.updateVoucher(voucher);
     }

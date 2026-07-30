@@ -4,15 +4,11 @@ import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.service.IShopService;
 import com.citycopilot.core.service.impl.ShopServiceImpl;
 import com.citycopilot.core.utils.CacheClient;
-import com.citycopilot.core.utils.RedisIdWorker;
 import jakarta.annotation.Resource;
-import org.apache.ibatis.executor.Executor;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import org.springframework.data.geo.Point;
@@ -36,28 +32,8 @@ public class CityCopilotCoreApplicationTests {
     private CacheClient cacheClient;
 
     @Resource
-    private RedisIdWorker redisIdWorker;
-
-    @Resource
     private StringRedisTemplate stringRedisTemplate;
 
-    private ExecutorService es= Executors.newFixedThreadPool(500);
-
-    @Test
-    void testIdWorker() throws InterruptedException {
-        Runnable task=()->{
-            for (int i=0;i<100;i++){
-                long id=redisIdWorker.nextId("order");
-                System.out.println("id="+id);
-            }
-        };
-        for (int i=0;i<300;i++){
-            es.submit(task);
-        }
-        //等待线程池执行完毕
-        es.shutdown();
-        es.awaitTermination(1, TimeUnit.MINUTES);
-    }
     @Test
     void loadShopData() {
         // 1. 查询所有店铺

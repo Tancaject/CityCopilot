@@ -12,9 +12,9 @@ try {
     & (Join-Path $PSScriptRoot "citycopilot.ps1") status
     if ($LASTEXITCODE -ne 0) { throw "Compose topology is not healthy" }
 
-    Write-Host "2. Checking migration and ownership gates..." -ForegroundColor Cyan
-    & (Join-Path $PSScriptRoot "migrations\commerce-cutover-gate.ps1") -Action Preflight
-    if ($LASTEXITCODE -ne 0) { throw "Commerce cutover gate failed" }
+    Write-Host "2. Checking the current Commerce ownership gates..." -ForegroundColor Cyan
+    & (Join-Path $PSScriptRoot "migrations\commerce-runtime-drain-gate.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "Commerce ownership gate failed" }
 
     Write-Host "3. Evidence already produced by the scripted load runner:" -ForegroundColor Cyan
     Write-Host "   docs/evidence/2026-07-26-e6-commerce-load.json"

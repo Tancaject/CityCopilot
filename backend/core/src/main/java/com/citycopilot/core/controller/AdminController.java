@@ -2,14 +2,13 @@ package com.citycopilot.core.controller;
 
 import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.contract.tool.ToolAudience;
+import com.citycopilot.core.commerce.CommercePortClient;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IBlogService;
 import com.citycopilot.core.service.IShopService;
 import com.citycopilot.core.service.IUserService;
-import com.citycopilot.core.service.IVoucherService;
-import com.citycopilot.core.service.IVoucherOrderService;
 import com.citycopilot.core.service.OperationLogService;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -37,9 +37,7 @@ public class AdminController {
     @Resource
     private IBlogService blogService;
     @Resource
-    private IVoucherService voucherService;
-    @Resource
-    private IVoucherOrderService voucherOrderService;
+    private CommercePortClient commercePortClient;
 
     @GetMapping("/ops/summary")
     @RequirePermission(PermissionCodes.ADMIN_ACCESS)
@@ -51,18 +49,26 @@ public class AdminController {
             scope = "ops:summary"
     )
     public Result opsSummary() {
-        LocalDateTime today = LocalDate.now().atStartOfDay();
+        ZoneId businessZone = ZoneId.systemDefault();
+        LocalDate businessDate = LocalDate.now(businessZone);
+        LocalDateTime today = businessDate.atStartOfDay();
+        Result commerceResult = commercePortClient.operationsSummary(
+                businessDate.atStartOfDay(businessZone).toInstant(),
+                businessDate.plusDays(1).atStartOfDay(businessZone).toInstant()
+        );
+        if (!Boolean.TRUE.equals(commerceResult.getSuccess())) {
+            return commerceResult;
+        }
+        if (!(commerceResult.getData() instanceof Map<?, ?> commerce)) {
+            return Result.fail(
+                    "COMMERCE_INVALID_RESPONSE",
+                    "Commerce operations summary is invalid"
+            );
+        }
         Long totalShops = shopService.query().count();
         Long missingGeo = shopService.query().and(wrapper -> wrapper.isNull("x").or().isNull("y")).count();
         Long pendingGeo = shopService.query().eq("geo_status", "pending").count();
         Long verifiedGeo = shopService.query().eq("geo_status", "verified").count();
-        Long totalOrders = voucherOrderService.query().count();
-        Long todayOrders = voucherOrderService.query().ge("create_time", today).count();
-        Long unpaidOrders = voucherOrderService.query().eq("status", 1).count();
-        Long cancelledOrders = voucherOrderService.query().eq("status", 4).count();
-        Long totalVouchers = voucherService.query().count();
-        Long seckillVouchers = voucherService.query().eq("type", 1).count();
-        Long activeVouchers = voucherService.query().eq("status", 1).count();
         Long todayBlogs = blogService.query().ge("create_time", today).count();
         Long failedAuditsToday = operationLogService.query().eq("success", false).ge("create_time", today).count();
         Map<String, Object> summary = new LinkedHashMap<>();
@@ -70,18 +76,26 @@ public class AdminController {
         summary.put("shops", totalShops);
         summary.put("blogs", blogService.query().count());
         summary.put("todayBlogs", todayBlogs);
-        summary.put("orders", totalOrders);
-        summary.put("todayOrders", todayOrders);
-        summary.put("unpaidOrders", unpaidOrders);
-        summary.put("cancelledOrders", cancelledOrders);
-        summary.put("vouchers", totalVouchers);
-        summary.put("seckillVouchers", seckillVouchers);
-        summary.put("activeVouchers", activeVouchers);
+        summary.put("orders", metric(commerce, "orders"));
+        summary.put("todayOrders", metric(commerce, "todayOrders"));
+        summary.put("unpaidOrders", metric(commerce, "unpaidOrders"));
+        summary.put("cancelledOrders", metric(commerce, "cancelledOrders"));
+        summary.put("vouchers", metric(commerce, "vouchers"));
+        summary.put("seckillVouchers", metric(commerce, "seckillVouchers"));
+        summary.put("activeVouchers", metric(commerce, "activeVouchers"));
         summary.put("missingGeo", missingGeo);
         summary.put("pendingGeo", pendingGeo);
         summary.put("verifiedGeo", verifiedGeo);
         summary.put("failedAuditsToday", failedAuditsToday);
         return Result.ok(summary);
+    }
+
+    private long metric(Map<?, ?> summary, String name) {
+        Object value = summary.get(name);
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        throw new IllegalStateException("Commerce operations summary is missing metric: " + name);
     }
 
     @GetMapping("/audit-logs")

@@ -48,7 +48,7 @@ citycopilot:
     reader-threads: ${CITYCOPILOT_OPS_READER_THREADS:2}
     executor-threads: ${CITYCOPILOT_OPS_EXECUTOR_THREADS:1}
   rocketmq:
-    enabled: ${CITYCOPILOT_ROCKETMQ_ENABLED:false}
+    enabled: ${CITYCOPILOT_ROCKETMQ_ENABLED:true}
     endpoints: ${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}
     ops-topic: citycopilot-ops-events-v1
     consumer-group: citycopilot-ops-agent-v2

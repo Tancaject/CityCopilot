@@ -451,7 +451,14 @@ public class AmapGeoService {
     }
 
     private boolean isValidCoordinate(Double x, Double y) {
-        return x != null && y != null && x >= -180D && x <= 180D && y >= -90D && y <= 90D;
+        return x != null
+                && y != null
+                && Double.isFinite(x)
+                && Double.isFinite(y)
+                && x >= -180D
+                && x <= 180D
+                && y >= -85.05112878D
+                && y <= 85.05112878D;
     }
 
     private double nearbyRadiusMeters() {

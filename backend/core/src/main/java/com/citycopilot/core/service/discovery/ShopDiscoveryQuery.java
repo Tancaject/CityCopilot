@@ -40,7 +40,17 @@ public class ShopDiscoveryQuery {
     }
 
     public int resolveFetchLimit(GeoProperties geoProperties) {
-        return resolveCurrent() * resolvePageSize(geoProperties);
+        long limit = (long) resolveCurrent() * resolvePageSize(geoProperties);
+        return (int) Math.min(limit, Integer.MAX_VALUE);
+    }
+
+    public int resolveCandidateLimit(GeoProperties geoProperties) {
+        int maximum = geoProperties == null ? 500 : geoProperties.resolveRedisMaxCandidates();
+        return Math.min(resolveFetchLimit(geoProperties), maximum);
+    }
+
+    public long resolveOffset(GeoProperties geoProperties) {
+        return (long) (resolveCurrent() - 1) * resolvePageSize(geoProperties);
     }
 
     public String normalizedKeyword() {

@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CommerceOrderIdGeneratorTest {
@@ -32,5 +33,22 @@ class CommerceOrderIdGeneratorTest {
         }
 
         assertThat(ids).hasSize(20_000);
+    }
+
+    @Test
+    void keepsVoucherAndOrderSequencesInSeparateNamespaces() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> values = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.increment(anyString())).thenReturn(1L);
+
+        CommerceOrderIdGenerator generator = new CommerceOrderIdGenerator(redis);
+
+        generator.nextId();
+        generator.nextVoucherId();
+
+        verify(values).increment(org.mockito.ArgumentMatchers.startsWith("commerce:id:order:"));
+        verify(values).increment(org.mockito.ArgumentMatchers.startsWith("commerce:id:voucher:"));
     }
 }

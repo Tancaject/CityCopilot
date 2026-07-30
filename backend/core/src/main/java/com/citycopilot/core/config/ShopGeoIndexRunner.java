@@ -19,9 +19,11 @@ public class ShopGeoIndexRunner implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         try {
-            shopGeoIndexService.syncShopGeoIndex();
+            int indexed = shopGeoIndexService.syncShopGeoIndex();
+            log.info("Shop GEO index startup sync completed: indexed={}, ready={}",
+                    indexed, shopGeoIndexService.isReady());
         } catch (Exception error) {
-            log.warn("Shop GEO index sync skipped: {}", error.getMessage());
+            log.warn("Shop GEO index startup sync failed; discovery will use its fallback: {}", error.getMessage());
         }
     }
 }

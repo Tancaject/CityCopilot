@@ -10,12 +10,16 @@ spring:
     url: ${CITYCOPILOT_COMMERCE_DB_URL:jdbc:mysql://127.0.0.1:3309/citycopilot_commerce?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
     username: ${CITYCOPILOT_COMMERCE_DB_USERNAME:citycopilot_commerce}
     password: ${CITYCOPILOT_COMMERCE_DB_PASSWORD:}
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
   data:
     redis:
       host: ${CITYCOPILOT_REDIS_HOST:127.0.0.1}
       port: ${CITYCOPILOT_REDIS_PORT:6380}
-      username: ${CITYCOPILOT_REDIS_USERNAME:}
-      password: ${CITYCOPILOT_REDIS_PASSWORD:}
+      username: ${CITYCOPILOT_COMMERCE_REDIS_USERNAME:commerce}
+      password: ${CITYCOPILOT_COMMERCE_REDIS_PASSWORD:${CITYCOPILOT_REDIS_PASSWORD:}}
 
 citycopilot:
   commerce:
@@ -25,7 +29,7 @@ citycopilot:
     stream-batch-size: ${CITYCOPILOT_COMMERCE_STREAM_BATCH_SIZE:100}
     stream-poll-ms: ${CITYCOPILOT_COMMERCE_STREAM_POLL_MS:50}
     place-base-url: ${CITYCOPILOT_PLACE_BASE_URL:http://127.0.0.1:8081}
-    rocketmq-enabled: ${CITYCOPILOT_ROCKETMQ_ENABLED:false}
+    rocketmq-enabled: ${CITYCOPILOT_ROCKETMQ_ENABLED:true}
     rocketmq-endpoints: ${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}
 
 management:

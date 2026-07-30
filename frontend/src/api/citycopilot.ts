@@ -114,20 +114,6 @@ export function logoutCurrentUser() {
   return postData<void>('/user/logout');
 }
 
-export async function fetchShopsByType(typeId: number, current: number, point?: GeoPoint, size?: number) {
-  const payload = await getData<Shop[] | PageResult<Shop>>('/shop/of/type', {
-    params: { typeId, current, size, x: point?.x, y: point?.y },
-  });
-  return normalizeList(payload);
-}
-
-export async function fetchNearbyShops(current: number, point: GeoPoint, size?: number) {
-  const payload = await getData<Shop[] | PageResult<Shop>>('/shop/nearby', {
-    params: { current, size, x: point.x, y: point.y },
-  });
-  return normalizeList(payload);
-}
-
 export async function fetchShopsByName(name: string | undefined, current: number, size?: number) {
   const payload = await getData<Shop[]>('/shop/of/name', {
     params: { name, current, size },

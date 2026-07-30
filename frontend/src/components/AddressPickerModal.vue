@@ -312,6 +312,7 @@ function confirmSelection() {
     label: selected.value.label,
     address: selected.value.address,
     source: selected.value.source,
+    coordinateSystem: 'gcj02',
     city: selected.value.city,
     adcode: selected.value.adcode,
   });

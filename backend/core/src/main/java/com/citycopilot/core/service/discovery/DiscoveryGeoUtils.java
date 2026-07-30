@@ -5,12 +5,20 @@ import cn.hutool.core.util.StrUtil;
 final class DiscoveryGeoUtils {
 
     private static final double EARTH_RADIUS_METERS = 6371008.8D;
+    private static final double REDIS_MAX_LATITUDE = 85.05112878D;
 
     private DiscoveryGeoUtils() {
     }
 
     static boolean isValidCoordinate(Double x, Double y) {
-        return x != null && y != null && x >= -180D && x <= 180D && y >= -90D && y <= 90D;
+        return x != null
+                && y != null
+                && Double.isFinite(x)
+                && Double.isFinite(y)
+                && x >= -180D
+                && x <= 180D
+                && y >= -REDIS_MAX_LATITUDE
+                && y <= REDIS_MAX_LATITUDE;
     }
 
     static double distanceMeters(double fromX, double fromY, double toX, double toY) {

@@ -84,24 +84,6 @@ CREATE TABLE `user_follow`  (
 -- ----------------------------
 
 -- ----------------------------
--- Table structure for seckill_coupon
--- ----------------------------
-DROP TABLE IF EXISTS `seckill_coupon`;
-CREATE TABLE `seckill_coupon`  (
-  `voucher_id` bigint(20) UNSIGNED NOT NULL COMMENT '关联的优惠券的id',
-  `stock` int(8) NOT NULL COMMENT '库存',
-  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `begin_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '生效时间',
-  `end_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '失效时间',
-  `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  PRIMARY KEY (`voucher_id`) USING BTREE
-) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '秒杀优惠券表，与优惠券是一对一关系' ROW_FORMAT = Compact;
-
--- ----------------------------
--- Records of seckill_coupon
--- ----------------------------
-
--- ----------------------------
 -- Table structure for shop
 -- ----------------------------
 DROP TABLE IF EXISTS `shop`;
@@ -112,8 +94,8 @@ CREATE TABLE `shop`  (
   `images` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '商铺图片，多个图片以\',\'隔开',
   `area` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '商圈，例如陆家嘴',
   `address` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '地址',
-  `x` double UNSIGNED NOT NULL COMMENT '经度',
-  `y` double UNSIGNED NOT NULL COMMENT '纬度',
+  `x` double NULL DEFAULT NULL COMMENT '经度（GCJ-02）',
+  `y` double NULL DEFAULT NULL COMMENT '纬度（GCJ-02）',
   `avg_price` bigint(10) UNSIGNED NULL DEFAULT NULL COMMENT '均价，取整数',
   `sold` int(10) UNSIGNED NOT NULL COMMENT '销量',
   `comments` int(10) UNSIGNED NOT NULL COMMENT '评论数量',
@@ -159,6 +141,16 @@ WHERE `x` IS NOT NULL AND `y` IS NOT NULL;
 ALTER TABLE `shop`
   ADD COLUMN `owner_user_id` bigint(20) UNSIGNED NULL COMMENT '所属商户用户id' AFTER `type_id`,
   ADD INDEX `idx_shop_owner_user_id` (`owner_user_id`);
+
+ALTER TABLE `shop`
+  ADD CONSTRAINT `chk_shop_geo_pair`
+    CHECK ((`x` IS NULL AND `y` IS NULL) OR (`x` IS NOT NULL AND `y` IS NOT NULL)),
+  ADD CONSTRAINT `chk_shop_geo_longitude`
+    CHECK (`x` IS NULL OR (`x` >= -180 AND `x` <= 180)),
+  ADD CONSTRAINT `chk_shop_geo_latitude`
+    CHECK (`y` IS NULL OR (`y` >= -85.05112878 AND `y` <= 85.05112878)),
+  ADD CONSTRAINT `chk_shop_geo_verified_coordinate`
+    CHECK (`geo_status` IS NULL OR `geo_status` <> 'verified' OR (`x` IS NOT NULL AND `y` IS NOT NULL));
 
 -- ----------------------------
 -- Table structure for shop_type
@@ -258,55 +250,6 @@ CREATE TABLE `user_profile`  (
 -- ----------------------------
 
 -- ----------------------------
--- Table structure for coupon
--- ----------------------------
-DROP TABLE IF EXISTS `coupon`;
-CREATE TABLE `coupon`  (
-  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `shop_id` bigint(20) UNSIGNED NULL DEFAULT NULL COMMENT '商铺id',
-  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '代金券标题',
-  `sub_title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '副标题',
-  `rules` varchar(1024) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL DEFAULT NULL COMMENT '使用规则',
-  `pay_value` bigint(10) UNSIGNED NOT NULL COMMENT '支付金额，单位是分。例如200代表2元',
-  `actual_value` bigint(10) NOT NULL COMMENT '抵扣金额，单位是分。例如200代表2元',
-  `type` tinyint(1) UNSIGNED NOT NULL DEFAULT 0 COMMENT '0,普通券；1,秒杀券',
-  `status` tinyint(1) UNSIGNED NOT NULL DEFAULT 1 COMMENT '1,上架；2,下架；3,过期',
-  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  PRIMARY KEY (`id`) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 10 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
-
--- ----------------------------
--- Records of coupon
--- ----------------------------
-INSERT INTO `coupon` VALUES (1, 1, '50元代金券', '周一至周日均可使用', '全场通用\\n无需预约\\n可无限叠加\\不兑现、不找零\\n仅限堂食', 4750, 5000, 0, 1, '2022-01-04 09:42:39', '2022-01-04 09:43:31');
-
--- ----------------------------
--- Table structure for coupon_order
--- ----------------------------
-DROP TABLE IF EXISTS `coupon_order`;
-CREATE TABLE `coupon_order`  (
-  `id` bigint(20) NOT NULL COMMENT '主键',
-  `user_id` bigint(20) UNSIGNED NOT NULL COMMENT '下单的用户id',
-  `voucher_id` bigint(20) UNSIGNED NOT NULL COMMENT '购买的代金券id',
-  `pay_type` tinyint(1) UNSIGNED NOT NULL DEFAULT 1 COMMENT '支付方式 1：余额支付；2：支付宝；3：微信',
-  `status` tinyint(1) UNSIGNED NOT NULL DEFAULT 1 COMMENT '订单状态，1：未支付；2：已支付；3：已核销；4：已取消；5：退款中；6：已退款',
-  `version` int NOT NULL DEFAULT 0 COMMENT '乐观锁版本',
-  `active_order_marker` tinyint GENERATED ALWAYS AS (CASE WHEN `status` IN (4, 6) THEN NULL ELSE 1 END) STORED,
-  `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '下单时间',
-  `pay_time` timestamp NULL DEFAULT NULL COMMENT '支付时间',
-  `use_time` timestamp NULL DEFAULT NULL COMMENT '核销时间',
-  `refund_time` timestamp NULL DEFAULT NULL COMMENT '退款时间',
-  `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  PRIMARY KEY (`id`) USING BTREE,
-  UNIQUE KEY `uk_coupon_order_active_user_voucher` (`user_id`, `voucher_id`, `active_order_marker`)
-) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Compact;
-
--- ----------------------------
--- Records of coupon_order
--- ----------------------------
-
--- ----------------------------
 -- Table structure for operation_log
 -- ----------------------------
 DROP TABLE IF EXISTS `operation_log`;
@@ -380,50 +323,6 @@ CREATE TABLE `geo_batch_job_item` (
   INDEX `idx_geo_batch_job_item_status`(`status`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = 'GEO批处理明细' ROW_FORMAT = Compact;
 
--- Reliable seckill reservation and event backbone
-CREATE TABLE `seckill_reservation` (
-  `order_id` bigint NOT NULL,
-  `voucher_id` bigint UNSIGNED NOT NULL,
-  `user_id` bigint UNSIGNED NOT NULL,
-  `status` varchar(32) NOT NULL,
-  `version` int NOT NULL DEFAULT 0,
-  `stream_record_id` varchar(64) NULL,
-  `failure_code` varchar(64) NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`order_id`),
-  KEY `idx_seckill_reservation_status_updated` (`status`, `updated_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE `outbox_event` (
-  `event_id` char(36) NOT NULL,
-  `event_type` varchar(128) NOT NULL,
-  `schema_version` int NOT NULL,
-  `aggregate_type` varchar(64) NOT NULL,
-  `aggregate_id` varchar(64) NOT NULL,
-  `aggregate_version` bigint NOT NULL,
-  `source_service` varchar(64) NOT NULL,
-  `trace_id` varchar(128) NULL,
-  `correlation_id` varchar(128) NULL,
-  `causation_id` varchar(128) NULL,
-  `topic` varchar(128) NOT NULL,
-  `tag` varchar(64) NULL,
-  `payload_json` longtext NOT NULL CHECK (json_valid(`payload_json`)),
-  `payload_hash` char(64) NOT NULL,
-  `status` varchar(24) NOT NULL DEFAULT 'READY',
-  `claim_token` char(36) NULL,
-  `fencing_token` bigint NULL,
-  `claimed_until` timestamp(3) NULL,
-  `attempts` int NOT NULL DEFAULT 0,
-  `next_attempt_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  `published_at` timestamp(3) NULL,
-  `last_error` varchar(1024) NULL,
-  `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-  PRIMARY KEY (`event_id`),
-  KEY `idx_outbox_ready` (`status`, `next_attempt_at`, `created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 CREATE TABLE `processed_event` (
   `consumer_group` varchar(128) NOT NULL,
   `event_id` char(36) NOT NULL,
@@ -445,13 +344,5 @@ CREATE TABLE `event_projection_version` (
   `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`consumer_group`, `aggregate_type`, `aggregate_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE `outbox_fence` (
-  `fence_name` varchar(64) NOT NULL,
-  `current_token` bigint NOT NULL,
-  PRIMARY KEY (`fence_name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-INSERT INTO `outbox_fence` (`fence_name`, `current_token`) VALUES ('commerce-outbox', 0);
 
 SET FOREIGN_KEY_CHECKS = 1;

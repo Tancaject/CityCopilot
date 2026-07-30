@@ -1,5 +1,6 @@
 import { computed, reactive } from 'vue';
 import type { GeoPoint } from '../types';
+import { convertGpsToAmapPoint } from '../utils/amap';
 
 const SELECTED_LOCATION_KEY = 'citycopilot:selected-location';
 const LEGACY_LOCATION_KEY = 'citycopilot:user-location';
@@ -14,12 +15,14 @@ export interface SelectedLocation {
   label: string;
   address?: string;
   source: LocationSource;
+  coordinateSystem: 'gcj02';
   city?: string;
   adcode?: string;
   updatedAt: number;
 }
 
-export type SelectedLocationInput = Omit<SelectedLocation, 'updatedAt'> & {
+export type SelectedLocationInput = Omit<SelectedLocation, 'updatedAt' | 'coordinateSystem'> & {
+  coordinateSystem?: 'gcj02';
   updatedAt?: number;
 };
 
@@ -37,7 +40,13 @@ interface LocationState {
 }
 
 function isValidPoint(point?: GeoPoint | null) {
-  return Boolean(point) && Number.isFinite(point?.x) && Number.isFinite(point?.y);
+  return Boolean(point)
+    && Number.isFinite(point?.x)
+    && Number.isFinite(point?.y)
+    && Number(point?.x) >= -180
+    && Number(point?.x) <= 180
+    && Number(point?.y) >= -85.05112878
+    && Number(point?.y) <= 85.05112878;
 }
 
 function normalizeStoredLocation(value: unknown): SelectedLocation | null {
@@ -45,6 +54,13 @@ function normalizeStoredLocation(value: unknown): SelectedLocation | null {
     return null;
   }
   const location = value as Partial<SelectedLocation> & Partial<GeoPoint>;
+  const normalizedSource: LocationSource =
+    location.source === 'map' || location.source === 'search' || location.source === 'browser'
+      ? location.source
+      : 'browser';
+  if (normalizedSource === 'browser' && location.coordinateSystem !== 'gcj02') {
+    return null;
+  }
   const point = location.point || {
     x: location.x,
     y: location.y,
@@ -59,7 +75,8 @@ function normalizeStoredLocation(value: unknown): SelectedLocation | null {
     },
     label: typeof location.label === 'string' && location.label.trim() ? location.label.trim() : '当前位置',
     address: typeof location.address === 'string' ? location.address : undefined,
-    source: location.source === 'map' || location.source === 'search' || location.source === 'browser' ? location.source : 'browser',
+    source: normalizedSource,
+    coordinateSystem: 'gcj02',
     city: typeof location.city === 'string' ? location.city : undefined,
     adcode: typeof location.adcode === 'string' ? location.adcode : undefined,
     updatedAt: typeof location.updatedAt === 'number' ? location.updatedAt : Date.now(),
@@ -172,13 +189,27 @@ export async function requestBrowserLocationPoint() {
 
   return new Promise<GeoPoint | null>((resolve) => {
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        locationState.status = locationState.point ? 'ready' : 'idle';
-        locationState.errorMessage = '';
-        resolve({
+      async (position) => {
+        const gpsPoint = {
           x: position.coords.longitude,
           y: position.coords.latitude,
-        });
+        };
+        try {
+          const amapPoint = await convertGpsToAmapPoint(gpsPoint);
+          if (!amapPoint) {
+            locationState.status = 'error';
+            locationState.errorMessage = '浏览器定位无法转换为高德坐标，请检查地图 Key 后重试';
+            resolve(null);
+            return;
+          }
+          locationState.status = locationState.point ? 'ready' : 'idle';
+          locationState.errorMessage = '';
+          resolve(amapPoint);
+        } catch {
+          locationState.status = 'error';
+          locationState.errorMessage = '浏览器定位无法转换为高德坐标，请稍后重试';
+          resolve(null);
+        }
       },
       (error) => {
         locationState.status = error.code === error.PERMISSION_DENIED ? 'denied' : 'error';
@@ -204,6 +235,7 @@ export async function requestCurrentLocation() {
     point,
     label: '当前位置',
     source: 'browser',
+    coordinateSystem: 'gcj02',
   });
   return point;
 }

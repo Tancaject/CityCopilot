@@ -2,7 +2,7 @@ package com.citycopilot.core.controller;
 
 
 import com.citycopilot.core.dto.Result;
-import com.citycopilot.core.entity.Voucher;
+import com.citycopilot.core.dto.VoucherRequest;
 import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IVoucherService;
@@ -30,7 +30,7 @@ public class VoucherController {
      */
     @PostMapping
     @RequirePermission(PermissionCodes.VOUCHER_WRITE)
-    public Result addVoucher(@RequestBody Voucher voucher) {
+    public Result addVoucher(@RequestBody VoucherRequest voucher) {
         voucher.setType(0);
         return voucherService.createVoucher(voucher);
     }
@@ -42,7 +42,7 @@ public class VoucherController {
      */
     @PostMapping("seckill")
     @RequirePermission(PermissionCodes.VOUCHER_WRITE)
-    public Result addSeckillVoucher(@RequestBody Voucher voucher) {
+    public Result addSeckillVoucher(@RequestBody VoucherRequest voucher) {
         voucher.setType(1);
         return voucherService.createVoucher(voucher);
     }

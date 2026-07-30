@@ -118,6 +118,31 @@ CREATE TABLE IF NOT EXISTS commerce_dead_letter (
     PRIMARY KEY (source_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS commerce_order_recovery (
+    source_id VARCHAR(191) NOT NULL,
+    source_type VARCHAR(32) NOT NULL,
+    order_id BIGINT NULL,
+    voucher_id BIGINT NULL,
+    user_id BIGINT NULL,
+    idempotency_key VARCHAR(128) NULL,
+    payload_json LONGTEXT NULL,
+    phase VARCHAR(32) NOT NULL,
+    claim_token CHAR(36) NULL,
+    claim_owner VARCHAR(191) NULL,
+    claim_version BIGINT NOT NULL DEFAULT 0,
+    claimed_until TIMESTAMP(3) NULL,
+    inventory_fence_token CHAR(36) NULL,
+    compensation_delta INT NOT NULL DEFAULT 0,
+    last_error VARCHAR(1024) NULL,
+    terminal_at TIMESTAMP(3) NULL,
+    finalized_at TIMESTAMP(3) NULL,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (source_id),
+    KEY idx_commerce_recovery_phase (phase, claimed_until),
+    KEY idx_commerce_recovery_voucher (voucher_id, phase)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 INSERT IGNORE INTO shop_summary_projection(shop_id,shop_name,owner_user_id,source_version)
 VALUES (1,'Commerce Migration Demo Shop',1,1);
 

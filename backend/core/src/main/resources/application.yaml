@@ -47,7 +47,6 @@ logging:
 
 citycopilot:
   commerce:
-    enabled: "${CITYCOPILOT_COMMERCE_ENABLED:false}"
     base-url: "${CITYCOPILOT_COMMERCE_BASE_URL:http://127.0.0.1:8083}"
     service-token: "${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:}"
   internal-api:
@@ -100,6 +99,11 @@ citycopilot:
   geo:
     auto-sync-shop-index: true
     nearby-radius-meters: 5000
+    local-discovery-mode: "${CITYCOPILOT_GEO_LOCAL_DISCOVERY_MODE:redis}"
+    redis-candidate-multiplier: "${CITYCOPILOT_GEO_REDIS_CANDIDATE_MULTIPLIER:3}"
+    redis-max-candidates: "${CITYCOPILOT_GEO_REDIS_MAX_CANDIDATES:500}"
+    reconcile-enabled: "${CITYCOPILOT_GEO_RECONCILE_ENABLED:true}"
+    reconcile-interval-ms: "${CITYCOPILOT_GEO_RECONCILE_INTERVAL_MS:60000}"
     max-batch-size: 100
     default-city: "${CITYCOPILOT_GEO_DEFAULT_CITY:杭州}"
     city-limit: true
@@ -122,32 +126,14 @@ citycopilot:
     model: "${CITYCOPILOT_AI_MODEL:qwen-plus}"
     timeout-seconds: 8
     max-message-length: 300
-  redisson:
-    enabled: "${CITYCOPILOT_REDISSON_ENABLED:true}"
-  seckill:
-    stream-worker:
-      enabled: "${CITYCOPILOT_SECKILL_STREAM_WORKER_ENABLED:true}"
-      max-retries: "${CITYCOPILOT_SECKILL_STREAM_MAX_RETRIES:3}"
-    reconciliation:
-      interval-ms: "${CITYCOPILOT_SECKILL_RECONCILIATION_INTERVAL_MS:60000}"
-      auto-heal: "${CITYCOPILOT_SECKILL_RECONCILIATION_AUTO_HEAL:false}"
-    recovery:
-      interval-ms: "${CITYCOPILOT_SECKILL_RECOVERY_INTERVAL_MS:30000}"
-      reserved-timeout-seconds: "${CITYCOPILOT_SECKILL_RESERVED_TIMEOUT_SECONDS:300}"
   rocketmq:
-    enabled: "${CITYCOPILOT_ROCKETMQ_ENABLED:false}"
-    producer-enabled: "${CITYCOPILOT_ROCKETMQ_PRODUCER_ENABLED:true}"
+    enabled: "${CITYCOPILOT_ROCKETMQ_ENABLED:true}"
     consumer-enabled: "${CITYCOPILOT_ROCKETMQ_CONSUMER_ENABLED:true}"
     endpoints: "${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}"
     commerce-topic: citycopilot-commerce-events-v1
     ops-topic: citycopilot-ops-events-v1
     audit-consumer-group: citycopilot-event-audit-v1
     request-timeout: "${CITYCOPILOT_ROCKETMQ_REQUEST_TIMEOUT:3s}"
-    max-attempts: "${CITYCOPILOT_ROCKETMQ_MAX_ATTEMPTS:3}"
-    relay-batch-size: "${CITYCOPILOT_ROCKETMQ_RELAY_BATCH_SIZE:50}"
-    claim-lease: "${CITYCOPILOT_ROCKETMQ_CLAIM_LEASE:30s}"
-    retry-backoff: "${CITYCOPILOT_ROCKETMQ_RETRY_BACKOFF:5s}"
-    relay-interval-ms: "${CITYCOPILOT_ROCKETMQ_RELAY_INTERVAL_MS:1000}"
 
 management:
   endpoints:

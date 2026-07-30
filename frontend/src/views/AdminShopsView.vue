@@ -250,11 +250,11 @@ onMounted(async () => {
             </select>
           </label>
           <label>
-            <span>经度</span>
+            <span>经度（GCJ-02）</span>
             <input v-model.number="form.x" type="number" step="0.000001" />
           </label>
           <label>
-            <span>纬度</span>
+            <span>纬度（GCJ-02）</span>
             <input v-model.number="form.y" type="number" step="0.000001" />
           </label>
           <label>

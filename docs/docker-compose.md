@@ -22,7 +22,8 @@ Compose 使用独立的 `redis:7-alpine` 容器：
 
 - 容器网络地址：`redis:6379`
 - Windows 调试地址：`127.0.0.1:6380`
-- Core 使用 DB 0
+- Core 使用 DB 0 中的非交易 key
+- Commerce 使用 DB 0 的 `commerce:*` key，并通过独立 `commerce` ACL 用户访问
 - Agent 使用 DB 1
 - 数据保存在 `redis-data` 命名卷
 
@@ -35,13 +36,13 @@ WSL Redis 仍可运行在 `127.0.0.1:6379`，但 Compose 不连接它。两个 R
 | `mysql` | Core 业务数据库 | `mysql-data` |
 | `agent-mysql` | Agent Trace、Ops 与长期偏好数据库 | `agent-mysql-data` |
 | `commerce-mysql` | Commerce 订单与交易数据库 | `commerce-mysql-data` |
-| `redis` | Core DB 0、Agent DB 1、Redis Stream | `redis-data` |
-| `redis-init` | 幂等创建秒杀消费组，完成后退出 | 无 |
+| `redis` | Core DB 0、Commerce ACL/keyspace、Agent DB 1、Redis Stream | `redis-data` |
+| `redis-init` | 幂等创建并验证 Commerce Redis ACL 用户，完成后退出 | 无 |
 | `rocketmq-namesrv` | RocketMQ 名称服务 | `rocketmq-namesrv-logs` |
 | `rocketmq-broker` | RocketMQ Broker | `rocketmq-broker-store`、`rocketmq-broker-logs` |
 | `rocketmq-proxy` | 本地 Java 服务访问 RocketMQ 的 gRPC Proxy | 无 |
 
-MySQL 仅在空数据卷首次创建时导入对应初始化 SQL。修改初始化文件不会自动更新已有数据卷。
+MySQL 仅在空数据卷首次创建时导入对应初始化 SQL。`.\tools\citycopilot.ps1 start` 和 `restart` 会在健康检查后执行可审计的增量迁移；当前会预检并补齐店铺 GCJ-02 坐标列与约束，异常数据存在时会停止而不是强行修改。
 
 ## 端口
 
@@ -57,26 +58,28 @@ MySQL 仅在空数据卷首次创建时导入对应初始化 SQL。修改初始�
 
 Java 服务的 Working directory 设为仓库根目录后会自动加载 `.env`，并连接上述宿主机端口。源码默认值已对齐 3307/3308/3309、6380 和 18081。Vue 开发服务器运行在 `5173`，并把 API 代理到本地 Core `8081` 与 Agent `8082`。
 
-本地 Commerce 默认关闭 RocketMQ Producer，使用 Redis Stream 消费链路，避免当前 RocketMQ Java 5.2 客户端与 Docker Proxy 会话异常阻断启动。需要单独调试 MQ 时再显式设置 `CITYCOPILOT_ROCKETMQ_ENABLED=true`；完整容器 `app` profile 仍会显式启用。
+本地 RocketMQ 默认启用：Commerce Outbox Relay 与跨服务 Consumer 连接 Proxy，Redis Stream 继续负责秒杀准入后的本地订单消费。只有在明确诊断 MQ 故障时才临时设置 `CITYCOPILOT_ROCKETMQ_ENABLED=false`，并保留所有未发布 Outbox。
 
 ## 常用命令
 
 ```powershell
 # 查看状态
-docker compose ps -a
+.\tools\citycopilot.ps1 status
 
 # 查看日志
-docker compose logs --tail 200 redis
+.\tools\citycopilot.ps1 logs -Service redis
 
-# 重启
-docker compose restart
+# 重启基础设施并重新创建/校验 Commerce Redis ACL
+.\tools\citycopilot.ps1 restart
 
 # 停止并保留数据卷
-docker compose down --remove-orphans
+.\tools\citycopilot.ps1 stop
 
 # 删除 MySQL、Docker Redis 和上传文件卷
 .\tools\citycopilot.ps1 reset -Force
 ```
+
+不要用裸 `docker compose restart` 代替脚本的 restart；`redis-init` 是一次性任务，脚本会在 Redis 重启后再次执行它。
 
 不要提交 `.env`。正式部署应使用 Docker secrets 或外部密钥管理。
 
@@ -86,13 +89,13 @@ docker compose down --remove-orphans
 - 本地 Java 服务无法连接 Redis：确认 `redis` 为 `healthy`，IDE Working directory 是仓库根目录，并使用 `127.0.0.1:6380`。
 - 本地 Java 服务无法连接 MySQL：确认使用对应的 3307/3308/3309 端口，并加载根 `.env` 中对应账号密码。
 - Java 服务提示 8081/8082/8083/8090 被占用但系统查不到进程：这是已移除应用容器遗留的 Docker Desktop loopback 代理，执行 `docker desktop restart` 后再启动。
-- 数据库表不存在：确认使用 `citycopilot-v2.sql`；旧卷需要迁移，或确认无需数据后重置。
+- Core 当前表不存在：确认使用 `citycopilot-v2.sql`。默认脚本只创建 Core 当前拥有的表；旧交易表和旧迁移入口已从仓库删除。
 - 前端地图配置：本地 Vite 读取 `frontend/.env`，不再依赖 Docker 前端镜像。
 - 附近店铺无法点击：高德外部地点只用于发现展示，不能下单。页面会标明“外部地点 · 暂不支持下单”；附近没有入驻店铺时，点击“查看可下单店铺”回到本地交易店铺。
 
 ## 本地秒杀压测
 
-先启动 Docker 基础设施，并在 IDE 中启动 Commerce（8083）和 Core（8081）。默认本地模式使用 Redis Stream 完成秒杀消费，允许 RocketMQ Relay 关闭：
+先启动 Docker 基础设施，并在 IDE 中启动 Commerce（8083）和 Core（8081）。默认本地模式同时启用 Redis Stream 订单消费和 RocketMQ Outbox Relay：
 
 ### JMeter GUI 正式性能测试
 
@@ -112,7 +115,7 @@ docker compose down --remove-orphans
 
 脚本会重置专用测试券 `200`，创建一次性测试登录态，运行非 GUI JMeter，并校验请求错误率、每用户一单、无超卖及 MySQL/Redis 库存一致性。结果写入 `tools/loadtest/results/<runId>/`。可用 `-JMeterHome` 指定本机 JMeter 目录。
 
-本地默认关闭 RocketMQ Relay，因此报告会保留并展示本轮未发布 Outbox，但不会把它误判为同步秒杀失败。需要验收 RocketMQ 发布时，先在 Commerce 的 IDEA Run Configuration 中设置 `CITYCOPILOT_ROCKETMQ_ENABLED=true` 并重启，再执行：
+RocketMQ Relay 默认开启；报告会等待并核对本轮 Outbox 发布结果。若此前在 IDEA Run Configuration 中显式设置过 `CITYCOPILOT_ROCKETMQ_ENABLED=false`，应删除该覆盖或改为 `true`，重启 Commerce 后再执行：
 
 ```powershell
 .\tools\loadtest\run_jmeter_commerce.ps1 -Users 5000 -Threads 200 -RequireOutboxDrain

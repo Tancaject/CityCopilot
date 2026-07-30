@@ -19,6 +19,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ./citycopilot-v2.sql:/docker-entrypoint-initdb.d/001-citycopilot.sql:ro
+      - ./tools/migrations:/opt/citycopilot/migrations:ro
     healthcheck:
       test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot -e 'SELECT 1 FROM user_account LIMIT 1' >/dev/null 2>&1"]
       interval: 5s
@@ -118,11 +119,8 @@ services:
       - -ec
       - |
         export REDISCLI_AUTH="$${REDIS_PASSWORD}"
-        result="$$(redis-cli -h redis XGROUP CREATE stream.coupon-orders g1 0 MKSTREAM 2>&1 || true)"
-        echo "$${result}"
-        echo "$${result}" | grep -Eq '^(OK|BUSYGROUP)'
-        redis-cli -h redis SETNX commerce:seckill:stock:100 100 >/dev/null
         redis-cli -h redis ACL SETUSER commerce reset on ">$${COMMERCE_REDIS_PASSWORD}" "~commerce:*" "+@all" "-@dangerous" "+info" >/dev/null
+        redis-cli -h redis --user commerce -a "$${COMMERCE_REDIS_PASSWORD}" ping 2>/dev/null | grep -q PONG
     depends_on:
       redis:
         condition: service_healthy
@@ -254,6 +252,7 @@ services:
       - citycopilot
 
   core:
+    profiles: ["app"]
     image: citycopilot/core:local
     build:
       context: .
@@ -279,14 +278,17 @@ services:
       CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN:-}
       CITYCOPILOT_INTERNAL_MCP_TOKEN: ${CITYCOPILOT_INTERNAL_MCP_TOKEN:-}
       CITYCOPILOT_INTERNAL_COMMERCE_TOKEN: ${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:?Run tools/citycopilot.ps1 start first}
-      CITYCOPILOT_COMMERCE_ENABLED: ${CITYCOPILOT_COMMERCE_ENABLED:-true}
       CITYCOPILOT_COMMERCE_BASE_URL: http://commerce:8083
       CITYCOPILOT_UPLOAD_ROOT: /app/uploads
       CITYCOPILOT_AI_ENABLED: "false"
       CITYCOPILOT_AMAP_WEB_SERVICE_KEY: ${CITYCOPILOT_AMAP_WEB_SERVICE_KEY:-}
+      CITYCOPILOT_GEO_LOCAL_DISCOVERY_MODE: ${CITYCOPILOT_GEO_LOCAL_DISCOVERY_MODE:-redis}
+      CITYCOPILOT_GEO_REDIS_CANDIDATE_MULTIPLIER: ${CITYCOPILOT_GEO_REDIS_CANDIDATE_MULTIPLIER:-3}
+      CITYCOPILOT_GEO_REDIS_MAX_CANDIDATES: ${CITYCOPILOT_GEO_REDIS_MAX_CANDIDATES:-500}
+      CITYCOPILOT_GEO_RECONCILE_ENABLED: ${CITYCOPILOT_GEO_RECONCILE_ENABLED:-true}
+      CITYCOPILOT_GEO_RECONCILE_INTERVAL_MS: ${CITYCOPILOT_GEO_RECONCILE_INTERVAL_MS:-60000}
       CITYCOPILOT_ROCKETMQ_ENABLED: ${CITYCOPILOT_ROCKETMQ_ENABLED:-true}
       CITYCOPILOT_ROCKETMQ_ENDPOINTS: rocketmq-proxy:8081
-      CITYCOPILOT_SECKILL_RECONCILIATION_INTERVAL_MS: ${CITYCOPILOT_SECKILL_RECONCILIATION_INTERVAL_MS:-5000}
     ports:
       - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_CORE_PORT:-8081}:8081"
     volumes:
@@ -312,6 +314,7 @@ services:
       - citycopilot
 
   commerce:
+    profiles: ["app"]
     image: citycopilot/commerce:local
     build:
       context: .
@@ -356,6 +359,7 @@ services:
       - citycopilot
 
   agent:
+    profiles: ["app"]
     image: citycopilot/agent:local
     build:
       context: .
@@ -409,6 +413,7 @@ services:
       - citycopilot
 
   mcp:
+    profiles: ["app"]
     image: citycopilot/mcp-server:local
     build:
       context: .
@@ -438,6 +443,7 @@ services:
       - citycopilot
 
   frontend:
+    profiles: ["app"]
     image: citycopilot/frontend:local
     build:
       context: .

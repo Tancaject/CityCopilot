@@ -389,7 +389,14 @@ onMounted(loadVouchers);
           <template v-if="form.type === 1">
             <label>
               <span>秒杀库存</span>
-              <input v-model.number="form.stock" type="number" min="0" required />
+              <input
+                v-model.number="form.stock"
+                type="number"
+                min="0"
+                required
+                :disabled="Boolean(form.id)"
+                :title="form.id ? '已有秒杀券的库存只能通过带围栏的一致性维护流程调整' : ''"
+              />
             </label>
             <label>
               <span>开始时间</span>

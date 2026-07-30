@@ -58,7 +58,7 @@ public class AmapPoiDiscoveryProvider implements ShopDiscoveryProvider {
                 keywords,
                 CONSUMER_POI_TYPES,
                 1,
-                query.resolveFetchLimit(geoProperties)
+                query.resolveCandidateLimit(geoProperties)
         );
         if (!Boolean.TRUE.equals(result.getSuccess())) {
             log.debug("Amap discovery skipped: {} {}", result.getCode(), result.getErrorMsg());

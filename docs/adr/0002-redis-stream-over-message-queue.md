@@ -1,7 +1,9 @@
 # ADR-0002：秒杀异步链路继续使用 Redis Stream
 
-状态：接受  
+状态：已由 ADR-0005 与 ADR-0006 取代
 日期：2026-07-11
+
+> 本文保留旧 Core 秒杀链路的历史决策。当前订单命令使用 Commerce 拥有的 `commerce:stream:orders`，失败记录进入 `commerce_dead_letter`；Core 不再启动旧 Stream worker。
 
 ## 背景
 

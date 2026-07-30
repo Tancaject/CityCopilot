@@ -1,13 +1,10 @@
 package com.citycopilot.core.service;
 
-import com.baomidou.mybatisplus.extension.service.IService;
 import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.contract.tool.ToolApprovalPolicy;
 import com.citycopilot.contract.tool.ToolRiskLevel;
 import com.citycopilot.contract.tool.ToolSideEffect;
 import com.citycopilot.core.dto.Result;
-import com.citycopilot.core.entity.VoucherOrder;
-import com.citycopilot.core.domain.order.OrderProcessingResult;
 
 /**
  * <p>
@@ -15,7 +12,7 @@ import com.citycopilot.core.domain.order.OrderProcessingResult;
  * </p>
  *
  */
-public interface IVoucherOrderService extends IService<VoucherOrder> {
+public interface IVoucherOrderService {
 
     @AgentTool(
             name = "place_seckill_order",
@@ -76,6 +73,4 @@ public interface IVoucherOrderService extends IService<VoucherOrder> {
             scope = "commerce:refund"
     )
     Result refundOrder(Long orderId);
-
-    OrderProcessingResult createVoucherOrder(VoucherOrder voucherOrder);
 }
