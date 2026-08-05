@@ -11,6 +11,10 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "citycopilot.rocketmq")
 public class AgentRocketMqProperties {
     private boolean enabled;
+    private boolean consumerEnabled = true;
+    private boolean sslEnabled;
+    private String accessKey = "";
+    private String secretKey = "";
     private String endpoints = "127.0.0.1:18081";
     private String opsTopic = "citycopilot-ops-events-v1";
     private String consumerGroup = "citycopilot-ops-agent-v2";

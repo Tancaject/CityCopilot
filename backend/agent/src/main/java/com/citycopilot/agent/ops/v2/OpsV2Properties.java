@@ -11,6 +11,7 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "citycopilot.ops-v2")
 public class OpsV2Properties {
     private boolean enabled = true;
+    private boolean workerEnabled = true;
     private String workerId = "local-agent";
     private Duration evidenceTtl = Duration.ofMinutes(2);
     private Duration leaseDuration = Duration.ofSeconds(30);

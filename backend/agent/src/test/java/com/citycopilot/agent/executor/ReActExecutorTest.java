@@ -35,13 +35,18 @@ class ReActExecutorTest {
         );
 
         AgentExecutionResult result = executor.execute(
-                "附近有什么火锅",
-                new ToolCallContext("user-1", Set.of())
+                "附近有什么店",
+                new ToolCallContext("user-1", Set.of()),
+                Map.of("userPreferences", Map.of(
+                        "scope", "recommendation_defaults",
+                        "values", Map.of("preferredCategories", List.of("火锅"))
+                ))
         );
 
         assertEquals("附近有 2 家火锅店", result.finalAnswer());
         assertEquals(3, result.steps().size());
         assertEquals("search_nearby_shops", result.steps().get(0).toolName());
+        assertEquals("火锅", result.steps().get(0).args().get("preferredCategory"));
         assertTrue(traceStore.find(result.traceId()).isPresent());
     }
 

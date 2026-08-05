@@ -60,11 +60,21 @@ public class LongTermPreferenceMemory {
                 record("write", "cleared");
                 return Mutation.cleared(deleted, extraction.memoryOnly());
             }
+            int deleted = 0;
+            for (ExplicitPreferenceExtractor.PreferenceRemoval removal : extraction.removals()) {
+                deleted += store.deleteByKey(userId, removal.type(), removal.key());
+            }
             for (ExplicitPreference preference : extraction.preferences()) {
                 store.upsert(userId, preference);
             }
-            record("write", "saved");
-            return Mutation.saved(extraction.preferences().size(), extraction.memoryOnly());
+            int saved = extraction.preferences().size();
+            record("write", saved > 0 ? "saved" : "removed");
+            return Mutation.updated(
+                    saved,
+                    deleted,
+                    !extraction.removals().isEmpty(),
+                    extraction.memoryOnly()
+            );
         } catch (RuntimeException error) {
             record("write", "error");
             throw new PreferenceMemoryWriteException("LONG_TERM_PREFERENCE_WRITE_FAILED", error);
@@ -156,23 +166,36 @@ public class LongTermPreferenceMemory {
             int savedCount,
             int deletedCount,
             boolean memoryOnly,
-            boolean changed
+            boolean changed,
+            boolean removalRequested
     ) {
         public static Mutation none() {
-            return new Mutation(0, 0, false, false);
+            return new Mutation(0, 0, false, false, false);
         }
 
-        public static Mutation saved(int count, boolean memoryOnly) {
-            return new Mutation(count, 0, memoryOnly, count > 0);
+        public static Mutation updated(int saved, int deleted, boolean removalRequested, boolean memoryOnly) {
+            return new Mutation(
+                    saved,
+                    deleted,
+                    memoryOnly,
+                    saved > 0 || deleted > 0 || removalRequested,
+                    removalRequested
+            );
         }
 
         public static Mutation cleared(int count, boolean memoryOnly) {
-            return new Mutation(0, count, memoryOnly, true);
+            return new Mutation(0, count, memoryOnly, true, false);
         }
 
         public String responseMessage() {
+            if (savedCount > 0 && deletedCount > 0) {
+                return "已更新长期偏好：记住 " + savedCount + " 项，移除 " + deletedCount + " 项。";
+            }
             if (savedCount > 0) {
                 return "已记住 " + savedCount + " 项长期偏好。后续推荐会默认参考，本轮明确条件始终优先。";
+            }
+            if (removalRequested && deletedCount == 0) {
+                return "未找到需要移除的长期偏好，已忽略该项正向偏好。";
             }
             return deletedCount > 0
                     ? "已清除 " + deletedCount + " 项长期偏好。"

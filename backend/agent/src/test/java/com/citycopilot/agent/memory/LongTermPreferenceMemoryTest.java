@@ -53,6 +53,39 @@ class LongTermPreferenceMemoryTest {
     }
 
     @Test
+    void explicitCategoryExclusionRemovesAnExistingPositivePreference() {
+        FakeStore store = new FakeStore();
+        LongTermPreferenceMemory memory = memory(store);
+        memory.applyExplicitMessage(7L, "请记住我喜欢海鲜");
+        assertEquals(List.of("海鲜"), values(memory.promptContext(7L)).get("preferredCategories"));
+
+        LongTermPreferenceMemory.Mutation mutation = memory.applyExplicitMessage(
+                7L,
+                "请记住我海鲜过敏"
+        );
+
+        assertEquals(0, mutation.savedCount());
+        assertEquals(1, mutation.deletedCount());
+        assertTrue(memory.promptContext(7L).isEmpty());
+    }
+
+    @Test
+    void absentCategoryRemovalIsStillHandledAsAMemoryOnlyRequest() {
+        LongTermPreferenceMemory memory = memory(new FakeStore());
+
+        LongTermPreferenceMemory.Mutation mutation = memory.applyExplicitMessage(
+                7L,
+                "请记住我不喜欢火锅"
+        );
+
+        assertTrue(mutation.changed());
+        assertTrue(mutation.memoryOnly());
+        assertTrue(mutation.removalRequested());
+        assertEquals(0, mutation.deletedCount());
+        assertTrue(mutation.responseMessage().contains("未找到需要移除"));
+    }
+
+    @Test
     void degradesReadsButSurfacesExplicitWriteFailures() {
         UserPreferenceStore failing = new UserPreferenceStore() {
             @Override
@@ -67,6 +100,11 @@ class LongTermPreferenceMemoryTest {
 
             @Override
             public boolean delete(long userId, long preferenceId) {
+                throw new IllegalStateException("db down");
+            }
+
+            @Override
+            public int deleteByKey(long userId, PreferenceType type, String key) {
                 throw new IllegalStateException("db down");
             }
 
@@ -146,6 +184,11 @@ class LongTermPreferenceMemoryTest {
             return values.entrySet().removeIf(entry ->
                     entry.getValue().userId() == userId && entry.getValue().id() == preferenceId
             );
+        }
+
+        @Override
+        public int deleteByKey(long userId, PreferenceType type, String key) {
+            return values.remove(userId + ":" + type + ":" + key) == null ? 0 : 1;
         }
 
         @Override

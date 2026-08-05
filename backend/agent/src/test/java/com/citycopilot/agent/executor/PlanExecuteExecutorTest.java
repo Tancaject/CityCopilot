@@ -18,6 +18,7 @@ import java.util.Set;
 import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlanExecuteExecutorTest {
@@ -41,6 +42,51 @@ class PlanExecuteExecutorTest {
         assertTrue(result.finalAnswer().contains("需要 AI 服务可用"));
         assertTrue(result.steps().stream().noneMatch(step -> "tool_call".equals(step.type())));
         assertEquals(0, tools.orderAttempts);
+    }
+
+    @Test
+    void heuristicPlanAppliesRememberedCategoryToNearbySearch() {
+        DemoTools tools = new DemoTools();
+        PlanExecuteExecutor executor = new PlanExecuteExecutor(
+                new ScriptedAgentLlmClient(List.of(), List.of()),
+                new ToolGateway(AgentToolRegistry.fromBeans(List.of(tools)), ToolAuditSink.noop()),
+                new InMemoryTraceStore(),
+                0
+        );
+
+        executor.execute(
+                "推荐附近的店",
+                new ToolCallContext("user-1", Set.of()),
+                Map.of("userPreferences", Map.of(
+                        "scope", "recommendation_defaults",
+                        "values", Map.of("preferredCategories", List.of("火锅"))
+                ))
+        );
+
+        assertEquals("火锅", tools.lastNearbyPreferredCategory);
+    }
+
+    @Test
+    void heuristicPlanIgnoresVoucherIntentFromConversationHistory() {
+        DemoTools tools = new DemoTools();
+        PlanExecuteExecutor executor = new PlanExecuteExecutor(
+                new ScriptedAgentLlmClient(List.of(), List.of()),
+                new ToolGateway(AgentToolRegistry.fromBeans(List.of(tools)), ToolAuditSink.noop()),
+                new InMemoryTraceStore(),
+                0
+        );
+
+        executor.execute(
+                "Conversation history:\nuser: 查优惠券\nCurrent user: 推荐附近的店",
+                new ToolCallContext("user-1", Set.of()),
+                Map.of("userPreferences", Map.of(
+                        "scope", "recommendation_defaults",
+                        "values", Map.of("preferredCategories", List.of("火锅"))
+                ))
+        );
+
+        assertEquals("火锅", tools.lastNearbyPreferredCategory);
+        assertNull(tools.lastVoucherShopId);
     }
 
     @Test
@@ -253,6 +299,7 @@ class PlanExecuteExecutorTest {
 
     static final class DemoTools {
         Long lastVoucherShopId;
+        String lastNearbyPreferredCategory;
         int orderAttempts;
 
         @AgentTool(name = "select_shop", description = "Select shop")
@@ -260,8 +307,13 @@ class PlanExecuteExecutorTest {
             return Map.of("shopId", 42L);
         }
 
-        @AgentTool(name = "search_nearby_shops", description = "Search nearby shops")
-        public List<String> nearby(Integer current, Integer size, Double x, Double y) {
+        @AgentTool(
+                name = "search_nearby_shops",
+                description = "Search nearby shops",
+                optionalParameters = {"preferredCategory"}
+        )
+        public List<String> nearby(Integer current, Integer size, Double x, Double y, String preferredCategory) {
+            lastNearbyPreferredCategory = preferredCategory;
             return List.of("shop");
         }
 

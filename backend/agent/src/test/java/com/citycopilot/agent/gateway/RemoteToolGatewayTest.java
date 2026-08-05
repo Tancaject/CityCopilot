@@ -7,7 +7,11 @@ import com.citycopilot.contract.tool.ToolDefinition;
 import com.citycopilot.contract.tool.ToolInvocationResponse;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -22,6 +26,75 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class RemoteToolGatewayTest {
+
+    @Test
+    void keepsCachedCatalogOnRefreshFailureButEventuallyMarksItStale() {
+        CoreServiceClient client = mock(CoreServiceClient.class);
+        when(client.tools(any()))
+                .thenReturn(List.of(writeTool()))
+                .thenThrow(new CoreServiceCallException(
+                        "core_unavailable",
+                        "Core unavailable",
+                        true,
+                        null
+                ));
+        CoreServiceProperties properties = properties();
+        properties.setCatalogTtl(Duration.ofSeconds(10));
+        properties.setCatalogMaxStaleness(Duration.ofSeconds(30));
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-04T00:00:00Z"));
+        RemoteToolGateway gateway = new RemoteToolGateway(
+                client,
+                ToolExecutionGuard.direct(),
+                properties,
+                clock
+        );
+
+        assertEquals(1, gateway.tools().size());
+        assertTrue(gateway.catalogStatus().fresh());
+        assertEquals(RemoteToolGateway.RefreshOutcome.SUCCESS, gateway.catalogStatus().lastRefreshOutcome());
+
+        clock.advance(Duration.ofSeconds(11));
+        assertEquals(1, gateway.tools().size());
+        assertTrue(gateway.catalogStatus().fresh());
+        assertEquals(RemoteToolGateway.RefreshOutcome.FAILURE, gateway.catalogStatus().lastRefreshOutcome());
+        assertEquals("core_unavailable", gateway.catalogStatus().lastFailureCode());
+
+        clock.advance(Duration.ofSeconds(20));
+        assertFalse(gateway.catalogStatus().fresh());
+        assertEquals(1, gateway.catalogStatus().toolCount());
+    }
+
+    @Test
+    void recordsRecoveryWithoutDiscardingTheMostRecentFailure() {
+        CoreServiceClient client = mock(CoreServiceClient.class);
+        when(client.tools(any()))
+                .thenThrow(new CoreServiceCallException(
+                        "core_unavailable",
+                        "Core unavailable",
+                        true,
+                        null
+                ))
+                .thenReturn(List.of(writeTool()));
+        CoreServiceProperties properties = properties();
+        properties.setCatalogTtl(Duration.ZERO);
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-04T00:00:00Z"));
+        RemoteToolGateway gateway = new RemoteToolGateway(
+                client,
+                ToolExecutionGuard.direct(),
+                properties,
+                clock
+        );
+
+        gateway.tools();
+        clock.advance(Duration.ofSeconds(2));
+        gateway.tools();
+
+        RemoteToolGateway.CatalogStatus status = gateway.catalogStatus();
+        assertEquals(RemoteToolGateway.RefreshOutcome.SUCCESS, status.lastRefreshOutcome());
+        assertTrue(status.fresh());
+        assertEquals(Instant.parse("2026-08-04T00:00:00Z"), status.lastFailedRefreshAt());
+        assertEquals("core_unavailable", status.lastFailureCode());
+    }
 
     @Test
     void returnsControlledErrorWhenCoreIsUnavailable() {
@@ -74,5 +147,32 @@ class RemoteToolGatewayTest {
         CoreServiceProperties properties = new CoreServiceProperties();
         properties.setCatalogTtl(Duration.ofMinutes(1));
         return properties;
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant current;
+
+        private MutableClock(Instant current) {
+            this.current = current;
+        }
+
+        private void advance(Duration duration) {
+            current = current.plus(duration);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return current;
+        }
     }
 }

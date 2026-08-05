@@ -20,6 +20,7 @@ import com.citycopilot.agent.trace.RedisTraceStore;
 import com.citycopilot.agent.trace.TraceStore;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.web.client.RestTemplateBuilder;
@@ -54,24 +55,50 @@ public class AgentModuleConfiguration {
     }
 
     @Bean
-    public TraceStore traceStore(ObjectProvider<StringRedisTemplate> redisTemplate) {
+    public TraceStore traceStore(
+            ObjectProvider<StringRedisTemplate> redisTemplate,
+            @Value("${citycopilot.runtime.require-shared-state:false}") boolean requireSharedState
+    ) {
         StringRedisTemplate template = redisTemplate.getIfAvailable();
         if (template == null) {
+            requireSharedState("TraceStore", requireSharedState);
             return new InMemoryTraceStore();
         }
         return new RedisTraceStore(template);
     }
 
     @Bean
-    public PendingActionStore pendingActionStore(ObjectProvider<StringRedisTemplate> redisTemplate) {
+    public PendingActionStore pendingActionStore(
+            ObjectProvider<StringRedisTemplate> redisTemplate,
+            @Value("${citycopilot.runtime.require-shared-state:false}") boolean requireSharedState
+    ) {
         StringRedisTemplate template = redisTemplate.getIfAvailable();
-        return template == null ? new InMemoryPendingActionStore() : new RedisPendingActionStore(template);
+        if (template == null) {
+            requireSharedState("PendingActionStore", requireSharedState);
+            return new InMemoryPendingActionStore();
+        }
+        return new RedisPendingActionStore(template);
     }
 
     @Bean
-    public ConversationMemory conversationMemory(ObjectProvider<StringRedisTemplate> redisTemplate) {
+    public ConversationMemory conversationMemory(
+            ObjectProvider<StringRedisTemplate> redisTemplate,
+            @Value("${citycopilot.runtime.require-shared-state:false}") boolean requireSharedState
+    ) {
         StringRedisTemplate template = redisTemplate.getIfAvailable();
-        return template == null ? new InMemoryConversationMemory() : new RedisConversationMemory(template);
+        if (template == null) {
+            requireSharedState("ConversationMemory", requireSharedState);
+            return new InMemoryConversationMemory();
+        }
+        return new RedisConversationMemory(template);
+    }
+
+    private void requireSharedState(String component, boolean required) {
+        if (required) {
+            throw new IllegalStateException(
+                    component + " requires Redis-backed shared state in the production runtime"
+            );
+        }
     }
 
     @Bean

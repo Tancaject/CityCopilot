@@ -125,6 +125,12 @@ public final class PlanExecuteExecutor {
             for (int i = 0; i < plan.steps().size(); i++) {
                 PlanStep step = plan.steps().get(i);
                 Map<String, Object> resolvedArgs = resolveArgs(step.args(), stepOutputs);
+                resolvedArgs = RecommendationPreferenceResolver.applyToolDefaults(
+                        step.toolName(),
+                        message,
+                        safeHints,
+                        resolvedArgs
+                );
                 if (!isConsumerTool(step.toolName())) {
                     finalAnswer = "当前 Agent 无权调用工具：" + step.toolName();
                     steps.add(AgentTraceStep.error(i + 1, "tool_not_allowed", finalAnswer));
@@ -222,6 +228,12 @@ public final class PlanExecuteExecutor {
             Map<String, Object> resolvedArgs = position == action.currentStep()
                     ? step.args()
                     : resolveArgs(step.args(), outputs);
+            resolvedArgs = RecommendationPreferenceResolver.applyToolDefaults(
+                    step.toolName(),
+                    action.originalMessage(),
+                    action.hints(),
+                    resolvedArgs
+            );
             if (!isConsumerTool(step.toolName())) {
                 finalAnswer = "当前 Agent 无权调用工具：" + step.toolName();
                 steps.add(AgentTraceStep.error(position + 1, "tool_not_allowed", finalAnswer));
@@ -481,7 +493,7 @@ public final class PlanExecuteExecutor {
     }
 
     private Plan heuristicPlan(String message, Map<String, Object> hints) {
-        String text = message == null ? "" : message;
+        String text = RecommendationPreferenceResolver.currentRequest(message);
         String normalized = text.toLowerCase();
         List<PlanStep> steps = new ArrayList<>();
         if (containsAny(normalized, "下单", "支付", "退款", "取消订单", "place order", "pay", "refund", "cancel order")) {
@@ -496,7 +508,10 @@ public final class PlanExecuteExecutor {
                     "计划已执行完成。"
             );
         }
-        return new Plan(List.of(new PlanStep(1, "search_nearby_shops", nearbyArgs(hints), false)), "计划已执行完成。");
+        return new Plan(
+                List.of(new PlanStep(1, "search_nearby_shops", nearbyArgs(message, hints), false)),
+                "计划已执行完成。"
+        );
     }
 
     private PlanStep firstBlockedHighRiskStep(List<PlanStep> plan, ToolCallContext context) {
@@ -670,12 +685,13 @@ public final class PlanExecuteExecutor {
         return out.toString();
     }
 
-    private Map<String, Object> nearbyArgs(Map<String, Object> hints) {
+    private Map<String, Object> nearbyArgs(String message, Map<String, Object> hints) {
         Map<String, Object> args = new LinkedHashMap<>();
         args.put("current", 1);
         args.put("size", 5);
         args.put("x", doubleHint(hints, "x", 120.149));
         args.put("y", doubleHint(hints, "y", 30.282));
+        RecommendationPreferenceResolver.applyNearbyCategory(message, hints, args);
         return args;
     }
 

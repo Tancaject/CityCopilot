@@ -12,9 +12,10 @@ public final class ConversationScope {
         if (sessionId == null || sessionId.isBlank()) {
             return null;
         }
-        String owner = user != null && user.authenticated() && user.id() != null
-                ? "user:" + user.id()
-                : "anonymous";
+        if (user == null || !user.authenticated() || user.id() == null) {
+            return null;
+        }
+        String owner = "user:" + user.id();
         return DigestUtil.sha256Hex(owner + ":" + sessionId);
     }
 }

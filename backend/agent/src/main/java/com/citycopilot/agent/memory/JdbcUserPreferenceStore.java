@@ -69,6 +69,16 @@ public class JdbcUserPreferenceStore implements UserPreferenceStore {
     }
 
     @Override
+    public int deleteByKey(long userId, PreferenceType type, String key) {
+        return jdbcTemplate.update(
+                "DELETE FROM agent_user_preference WHERE user_id=? AND preference_type=? AND preference_key=?",
+                userId,
+                type.name(),
+                DigestUtil.sha256Hex(type.name() + ":" + key)
+        );
+    }
+
+    @Override
     public int deleteAll(long userId) {
         return jdbcTemplate.update("DELETE FROM agent_user_preference WHERE user_id=?", userId);
     }

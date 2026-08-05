@@ -8,12 +8,15 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.apache.rocketmq.client.apis.ClientConfiguration;
+import org.apache.rocketmq.client.apis.ClientConfigurationBuilder;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
+import org.apache.rocketmq.client.apis.StaticSessionCredentialsProvider;
 import org.apache.rocketmq.client.apis.consumer.ConsumeResult;
 import org.apache.rocketmq.client.apis.consumer.FilterExpression;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
 import org.apache.rocketmq.client.apis.message.MessageView;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.nio.ByteBuffer;
@@ -23,6 +26,12 @@ import java.util.HexFormat;
 import java.util.Map;
 
 @Component
+@ConditionalOnProperty(
+        prefix = "citycopilot.rocketmq",
+        name = "consumer-enabled",
+        havingValue = "true",
+        matchIfMissing = true
+)
 public class OpsEventConsumer {
     private final AgentRocketMqProperties rocketMq;
     private final OpsV2Properties opsProperties;
@@ -54,10 +63,7 @@ public class OpsEventConsumer {
         if (!opsProperties.isEnabled() || !rocketMq.isEnabled()) {
             return;
         }
-        ClientConfiguration configuration = ClientConfiguration.newBuilder()
-                .setEndpoints(rocketMq.getEndpoints())
-                .setRequestTimeout(rocketMq.getRequestTimeout())
-                .build();
+        ClientConfiguration configuration = clientConfiguration(rocketMq);
         consumer = provider.newPushConsumerBuilder()
                 .setClientConfiguration(configuration)
                 .setConsumerGroup(rocketMq.getConsumerGroup())
@@ -65,6 +71,22 @@ public class OpsEventConsumer {
                 .setMessageListener(this::consume)
                 .setConsumptionThreadCount(Math.max(1, opsProperties.getReaderThreads()))
                 .build();
+    }
+
+    static ClientConfiguration clientConfiguration(AgentRocketMqProperties properties) {
+        ClientConfigurationBuilder builder = ClientConfiguration.newBuilder()
+                .setEndpoints(properties.getEndpoints())
+                .setRequestTimeout(properties.getRequestTimeout())
+                .enableSsl(properties.isSslEnabled());
+        String accessKey = properties.getAccessKey() == null ? "" : properties.getAccessKey().trim();
+        String secretKey = properties.getSecretKey() == null ? "" : properties.getSecretKey().trim();
+        if (!accessKey.isEmpty() || !secretKey.isEmpty()) {
+            if (accessKey.isEmpty() || secretKey.isEmpty()) {
+                throw new IllegalStateException("RocketMQ access key and secret key must be configured together");
+            }
+            builder.setCredentialProvider(new StaticSessionCredentialsProvider(accessKey, secretKey));
+        }
+        return builder.build();
     }
 
     private ConsumeResult consume(MessageView message) {

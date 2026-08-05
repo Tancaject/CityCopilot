@@ -32,6 +32,7 @@ citycopilot:
     connect-timeout: ${CITYCOPILOT_CORE_CONNECT_TIMEOUT:2s}
     read-timeout: ${CITYCOPILOT_CORE_READ_TIMEOUT:4s}
     catalog-ttl: ${CITYCOPILOT_TOOL_CATALOG_TTL:30s}
+    catalog-max-staleness: ${CITYCOPILOT_TOOL_CATALOG_MAX_STALENESS:2m}
   ai:
     enabled: ${CITYCOPILOT_AI_ENABLED:false}
     api-key: ${CITYCOPILOT_AI_API_KEY:}
@@ -49,6 +50,10 @@ citycopilot:
     executor-threads: ${CITYCOPILOT_OPS_EXECUTOR_THREADS:1}
   rocketmq:
     enabled: ${CITYCOPILOT_ROCKETMQ_ENABLED:true}
+    consumer-enabled: ${CITYCOPILOT_ROCKETMQ_CONSUMER_ENABLED:true}
+    ssl-enabled: ${CITYCOPILOT_ROCKETMQ_SSL_ENABLED:false}
+    access-key: ${CITYCOPILOT_ROCKETMQ_ACCESS_KEY:}
+    secret-key: ${CITYCOPILOT_ROCKETMQ_SECRET_KEY:}
     endpoints: ${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}
     ops-topic: citycopilot-ops-events-v1
     consumer-group: citycopilot-ops-agent-v2

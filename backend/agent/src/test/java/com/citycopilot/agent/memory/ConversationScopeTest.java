@@ -19,11 +19,19 @@ class ConversationScopeTest {
         String first = ConversationScope.sessionKey(user1, "browser-session");
         String sameOwner = ConversationScope.sessionKey(user1, "browser-session");
         String second = ConversationScope.sessionKey(user2, "browser-session");
-        String anonymous = ConversationScope.sessionKey(ServiceUser.anonymous(), "browser-session");
 
         assertEquals(first, sameOwner);
         assertNotEquals(first, second);
-        assertNotEquals(first, anonymous);
         assertNull(ConversationScope.sessionKey(user1, " "));
+    }
+
+    @Test
+    void anonymousClientsCannotCreatePersistentConversationScopes() {
+        ServiceUser firstClient = ServiceUser.anonymous();
+        ServiceUser secondClient = ServiceUser.anonymous();
+
+        assertNull(ConversationScope.sessionKey(firstClient, "shared-client-conversation"));
+        assertNull(ConversationScope.sessionKey(secondClient, "shared-client-conversation"));
+        assertNull(ConversationScope.sessionKey(null, "shared-client-conversation"));
     }
 }

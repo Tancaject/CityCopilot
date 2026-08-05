@@ -1,6 +1,7 @@
 package com.citycopilot.agent.executor;
 
 import com.citycopilot.agent.gateway.ToolResult;
+import com.citycopilot.agent.memory.PreferenceVocabulary;
 import com.citycopilot.agent.trace.AgentTraceStep;
 import com.citycopilot.agent.tool.ToolMetadata;
 import com.citycopilot.agent.config.AgentAiProperties;
@@ -39,7 +40,8 @@ public final class HeuristicAgentLlmClient implements AgentLlmClient {
                 return AgentDecision.finalAnswer("已根据工具结果完成查询。");
             }
         }
-        String normalized = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        String currentRequest = RecommendationPreferenceResolver.currentRequest(message);
+        String normalized = currentRequest.toLowerCase(Locale.ROOT);
         if (containsAny(normalized, "下单", "支付", "退款", "取消订单", "place order", "pay", "refund", "cancel order")) {
             return AgentDecision.finalAnswer(
                     "需要 AI 服务可用并明确识别目标后，才能执行下单、支付、退款或取消订单等写操作。"
@@ -51,12 +53,18 @@ public final class HeuristicAgentLlmClient implements AgentLlmClient {
         if (containsAny(normalized, "优惠券", "券", "voucher")) {
             return AgentDecision.callTool("list_vouchers_by_shop", Map.of("shopId", longHint(hints, "currentShopId", 1L)));
         }
-        if (containsAny(normalized, "附近", "火锅", "nearby", "hotpot")) {
+        boolean hasCurrentCategory = !PreferenceVocabulary.categoriesIn(currentRequest).included().isEmpty();
+        if (hasCurrentCategory || containsAny(
+                normalized,
+                "附近", "推荐", "想吃", "吃什么", "找店", "店铺", "餐厅",
+                "nearby", "recommend", "restaurant"
+        )) {
             Map<String, Object> args = new LinkedHashMap<>();
             args.put("current", 1);
             args.put("size", 5);
             args.put("x", doubleHint(hints, "x", 120.149));
             args.put("y", doubleHint(hints, "y", 30.282));
+            RecommendationPreferenceResolver.applyNearbyCategory(message, hints, args);
             return AgentDecision.callTool("search_nearby_shops", args);
         }
         return AgentDecision.finalAnswer(fallbackMessage());

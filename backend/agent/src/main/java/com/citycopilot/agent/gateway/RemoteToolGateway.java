@@ -5,8 +5,10 @@ import com.citycopilot.agent.remote.CoreServiceCallException;
 import com.citycopilot.agent.remote.CoreServiceClient;
 import com.citycopilot.agent.tool.ToolMetadata;
 import com.citycopilot.contract.tool.ToolInvocationResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -17,27 +19,64 @@ public final class RemoteToolGateway implements ToolGatewayClient {
     private final CoreServiceClient coreServiceClient;
     private final ToolExecutionGuard executionGuard;
     private final Duration catalogTtl;
-    private volatile List<ToolMetadata> catalog = List.of();
-    private volatile Instant catalogExpiresAt = Instant.EPOCH;
+    private final Duration catalogMaxStaleness;
+    private final Clock clock;
+    private volatile CatalogState state = CatalogState.empty();
 
+    @Autowired
     public RemoteToolGateway(
             CoreServiceClient coreServiceClient,
             ToolExecutionGuard executionGuard,
             CoreServiceProperties properties
     ) {
+        this(coreServiceClient, executionGuard, properties, Clock.systemUTC());
+    }
+
+    RemoteToolGateway(
+            CoreServiceClient coreServiceClient,
+            ToolExecutionGuard executionGuard,
+            CoreServiceProperties properties,
+            Clock clock
+    ) {
         this.coreServiceClient = coreServiceClient;
         this.executionGuard = executionGuard;
-        this.catalogTtl = properties.getCatalogTtl() == null
-                ? Duration.ofSeconds(30)
-                : properties.getCatalogTtl();
+        this.catalogTtl = nonNegative(properties.getCatalogTtl(), Duration.ofSeconds(30));
+        Duration configuredMaxStaleness = nonNegative(
+                properties.getCatalogMaxStaleness(),
+                Duration.ofMinutes(2)
+        );
+        this.catalogMaxStaleness = configuredMaxStaleness.compareTo(catalogTtl) < 0
+                ? catalogTtl
+                : configuredMaxStaleness;
+        this.clock = clock;
     }
 
     @Override
     public List<ToolMetadata> tools() {
-        if (Instant.now().isBefore(catalogExpiresAt)) {
-            return catalog;
+        CatalogState current = state;
+        if (clock.instant().isBefore(current.nextRefreshAt())) {
+            return current.catalog();
         }
         return refreshCatalog(false);
+    }
+
+    public CatalogStatus catalogStatus() {
+        CatalogState current = state;
+        Instant now = clock.instant();
+        boolean fresh = !current.catalog().isEmpty()
+                && current.lastSuccessfulRefreshAt() != null
+                && now.isBefore(current.freshUntil());
+        return new CatalogStatus(
+                current.catalog().size(),
+                fresh,
+                current.lastRefreshOutcome(),
+                current.lastRefreshAttemptAt(),
+                current.lastSuccessfulRefreshAt(),
+                current.lastFailedRefreshAt(),
+                current.lastFailureCode(),
+                current.freshUntil(),
+                current.nextRefreshAt()
+        );
     }
 
     @Override
@@ -83,7 +122,10 @@ public final class RemoteToolGateway implements ToolGatewayClient {
     }
 
     private ToolMetadata findTool(String name) {
-        ToolMetadata existing = catalog.stream().filter(tool -> tool.name().equals(name)).findFirst().orElse(null);
+        ToolMetadata existing = state.catalog().stream()
+                .filter(tool -> tool.name().equals(name))
+                .findFirst()
+                .orElse(null);
         if (existing != null) {
             return existing;
         }
@@ -91,18 +133,86 @@ public final class RemoteToolGateway implements ToolGatewayClient {
     }
 
     private synchronized List<ToolMetadata> refreshCatalog(boolean force) {
-        if (!force && Instant.now().isBefore(catalogExpiresAt)) {
-            return catalog;
+        CatalogState current = state;
+        Instant now = clock.instant();
+        if (!force && now.isBefore(current.nextRefreshAt())) {
+            return current.catalog();
         }
         try {
             List<ToolMetadata> refreshed = coreServiceClient.tools(null).stream()
                     .map(ToolMetadata::fromDefinition)
                     .toList();
-            catalog = List.copyOf(refreshed);
-            catalogExpiresAt = Instant.now().plus(catalogTtl.isNegative() ? Duration.ZERO : catalogTtl);
-        } catch (CoreServiceCallException ignored) {
-            catalogExpiresAt = Instant.now().plusSeconds(2);
+            List<ToolMetadata> immutableCatalog = List.copyOf(refreshed);
+            state = new CatalogState(
+                    immutableCatalog,
+                    now.plus(catalogTtl),
+                    now.plus(catalogMaxStaleness),
+                    RefreshOutcome.SUCCESS,
+                    now,
+                    now,
+                    current.lastFailedRefreshAt(),
+                    current.lastFailureCode()
+            );
+        } catch (CoreServiceCallException error) {
+            state = new CatalogState(
+                    current.catalog(),
+                    now.plusSeconds(2),
+                    current.freshUntil(),
+                    RefreshOutcome.FAILURE,
+                    now,
+                    current.lastSuccessfulRefreshAt(),
+                    now,
+                    error.code()
+            );
         }
-        return catalog;
+        return state.catalog();
+    }
+
+    private static Duration nonNegative(Duration configured, Duration fallback) {
+        Duration value = configured == null ? fallback : configured;
+        return value.isNegative() ? Duration.ZERO : value;
+    }
+
+    public enum RefreshOutcome {
+        NEVER,
+        SUCCESS,
+        FAILURE
+    }
+
+    public record CatalogStatus(
+            int toolCount,
+            boolean fresh,
+            RefreshOutcome lastRefreshOutcome,
+            Instant lastRefreshAttemptAt,
+            Instant lastSuccessfulRefreshAt,
+            Instant lastFailedRefreshAt,
+            String lastFailureCode,
+            Instant freshUntil,
+            Instant nextRefreshAt
+    ) {
+    }
+
+    private record CatalogState(
+            List<ToolMetadata> catalog,
+            Instant nextRefreshAt,
+            Instant freshUntil,
+            RefreshOutcome lastRefreshOutcome,
+            Instant lastRefreshAttemptAt,
+            Instant lastSuccessfulRefreshAt,
+            Instant lastFailedRefreshAt,
+            String lastFailureCode
+    ) {
+        private static CatalogState empty() {
+            return new CatalogState(
+                    List.of(),
+                    Instant.EPOCH,
+                    Instant.EPOCH,
+                    RefreshOutcome.NEVER,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+        }
     }
 }

@@ -38,34 +38,16 @@ public final class ExplicitPreferenceExtractor {
     private static final Pattern VOUCHER_FALSE = Pattern.compile(
             "不用考虑优惠券|不需要优惠券|不优先.{0,4}(?:有券|优惠券)"
     );
+    private static final Pattern PREFERENCE_PREFIX = Pattern.compile(
+            ".*(?:记住[，,]?|喜欢|偏好|爱吃|默认|优先)[^，。！？,!?；;]{0,8}$"
+    );
+    private static final Pattern CORRECTION_PREFIX = Pattern.compile(
+            ".*(?:后来|现在|改为|改成|以后)[^，。！？,!?；;]{0,4}$"
+    );
     private static final Set<String> QUERY_CUES = Set.of(
             "帮我找", "推荐", "查一下", "查找", "看看", "附近", "有没有", "下单", "支付", "退款", "取消订单", "订单"
     );
 
-    private static final Map<String, String> CATEGORY_ALIASES = aliases(
-            "日本料理", "日料",
-            "自助餐", "自助餐",
-            "咖啡店", "咖啡",
-            "hotpot", "火锅",
-            "coffee", "咖啡",
-            "火锅", "火锅",
-            "咖啡", "咖啡",
-            "川菜", "川菜",
-            "粤菜", "粤菜",
-            "湘菜", "湘菜",
-            "日料", "日料",
-            "烧烤", "烧烤",
-            "甜品", "甜品",
-            "西餐", "西餐",
-            "中餐", "中餐",
-            "面馆", "面馆",
-            "小吃", "小吃",
-            "茶饮", "茶饮",
-            "奶茶", "奶茶",
-            "烘焙", "烘焙",
-            "素食", "素食",
-            "海鲜", "海鲜"
-    );
     private static final Map<String, String> AMBIENCE_ALIASES = aliases(
             "适合一个人", "适合一个人",
             "适合约会", "适合约会",
@@ -81,7 +63,7 @@ public final class ExplicitPreferenceExtractor {
             return Extraction.none();
         }
         if (CLEAR_ALL.matcher(text).find()) {
-            return new Extraction(List.of(), true, isMemoryOnly(text));
+            return new Extraction(List.of(), List.of(), true, isMemoryOnly(text));
         }
 
         boolean durableCue = DURABLE_CUE.matcher(text).find();
@@ -92,7 +74,8 @@ public final class ExplicitPreferenceExtractor {
         }
 
         Map<String, ExplicitPreference> preferences = new LinkedHashMap<>();
-        extractAliases(text, CATEGORY_ALIASES, PreferenceType.PREFERRED_CATEGORY, preferences);
+        Map<String, PreferenceRemoval> removals = new LinkedHashMap<>();
+        extractPreferredCategories(text, preferences, removals);
         extractAliases(text, AMBIENCE_ALIASES, PreferenceType.PREFERRED_AMBIENCE, preferences);
         if (durableCue) {
             addNumeric(text, PRICE, 1, 10_000, PreferenceType.MAX_AVG_PRICE, "singleton", preferences);
@@ -104,7 +87,81 @@ public final class ExplicitPreferenceExtractor {
                 add(preferences, new ExplicitPreference(PreferenceType.PREFER_VOUCHERS, "singleton", "true"));
             }
         }
-        return new Extraction(List.copyOf(preferences.values()), false, isMemoryOnly(text));
+        return new Extraction(
+                List.copyOf(preferences.values()),
+                List.copyOf(removals.values()),
+                false,
+                isMemoryOnly(text)
+        );
+    }
+
+    private void extractPreferredCategories(
+            String text,
+            Map<String, ExplicitPreference> target,
+            Map<String, PreferenceRemoval> removals
+    ) {
+        PreferenceVocabulary.CategorySelection selection = PreferenceVocabulary.categoriesIn(text);
+        for (String category : selection.included()) {
+            if (hasCategoryPreferencePrefix(text, category)) {
+                add(target, new ExplicitPreference(
+                        PreferenceType.PREFERRED_CATEGORY,
+                        category,
+                        category
+                ));
+            }
+        }
+        for (String category : selection.excluded()) {
+            if (hasCategoryRemovalCue(text, category)) {
+                PreferenceRemoval removal = new PreferenceRemoval(PreferenceType.PREFERRED_CATEGORY, category);
+                removals.put(removal.type().name() + ":" + removal.key(), removal);
+            }
+        }
+    }
+
+    private boolean hasCategoryPreferencePrefix(String text, String category) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        for (Map.Entry<String, String> entry : PreferenceVocabulary.categoryAliases().entrySet()) {
+            if (!entry.getValue().equals(category)) {
+                continue;
+            }
+            String alias = entry.getKey().toLowerCase(Locale.ROOT);
+            int fromIndex = 0;
+            while (fromIndex < lower.length()) {
+                int position = lower.indexOf(alias, fromIndex);
+                if (position < 0) {
+                    break;
+                }
+                if (!PreferenceVocabulary.isCategoryNegated(lower, position, alias.length())
+                        && hasPreferencePrefix(lower, position)) {
+                    return true;
+                }
+                fromIndex = position + Math.max(1, alias.length());
+            }
+        }
+        return false;
+    }
+
+    private boolean hasCategoryRemovalCue(String text, String category) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        for (Map.Entry<String, String> entry : PreferenceVocabulary.categoryAliases().entrySet()) {
+            if (!entry.getValue().equals(category)) {
+                continue;
+            }
+            String alias = entry.getKey().toLowerCase(Locale.ROOT);
+            int fromIndex = 0;
+            while (fromIndex < lower.length()) {
+                int position = lower.indexOf(alias, fromIndex);
+                if (position < 0) {
+                    break;
+                }
+                if (PreferenceVocabulary.isCategoryNegated(lower, position, alias.length())
+                        && (hasPreferencePrefix(lower, position) || hasCorrectionPrefix(lower, position))) {
+                    return true;
+                }
+                fromIndex = position + Math.max(1, alias.length());
+            }
+        }
+        return false;
     }
 
     private void extractAliases(
@@ -133,7 +190,12 @@ public final class ExplicitPreferenceExtractor {
 
     private boolean hasPreferencePrefix(String text, int position) {
         String prefix = text.substring(Math.max(0, position - 16), position);
-        return prefix.matches(".*(?:记住|喜欢|偏好|爱吃|默认|优先)\\s*.*");
+        return PREFERENCE_PREFIX.matcher(prefix).matches();
+    }
+
+    private boolean hasCorrectionPrefix(String text, int position) {
+        String prefix = text.substring(Math.max(0, position - 16), position);
+        return CORRECTION_PREFIX.matcher(prefix).matches();
     }
 
     private void addNumeric(
@@ -211,19 +273,24 @@ public final class ExplicitPreferenceExtractor {
 
     public record Extraction(
             List<ExplicitPreference> preferences,
+            List<PreferenceRemoval> removals,
             boolean clearAll,
             boolean memoryOnly
     ) {
         public Extraction {
             preferences = preferences == null ? List.of() : List.copyOf(preferences);
+            removals = removals == null ? List.of() : List.copyOf(removals);
         }
 
         public static Extraction none() {
-            return new Extraction(List.of(), false, false);
+            return new Extraction(List.of(), List.of(), false, false);
         }
 
         public boolean hasMutation() {
-            return clearAll || !preferences.isEmpty();
+            return clearAll || !preferences.isEmpty() || !removals.isEmpty();
         }
+    }
+
+    public record PreferenceRemoval(PreferenceType type, String key) {
     }
 }

@@ -52,9 +52,15 @@ public final class ReActExecutor {
                 break;
             }
 
-            String callKey = decision.toolName() + ":" + decision.args();
+            Map<String, Object> resolvedArgs = RecommendationPreferenceResolver.applyToolDefaults(
+                    decision.toolName(),
+                    message,
+                    hints,
+                    decision.args()
+            );
+            String callKey = decision.toolName() + ":" + resolvedArgs;
             int repeated = duplicateGuard.merge(callKey, 1, Integer::sum);
-            AgentTraceStep callStep = AgentTraceStep.toolCall(index + 1, decision.toolName(), decision.args());
+            AgentTraceStep callStep = AgentTraceStep.toolCall(index + 1, decision.toolName(), resolvedArgs);
             steps.add(callStep);
             if (repeated > 2) {
                 finalAnswer = "Agent stopped because the same tool call repeated.";
@@ -71,7 +77,7 @@ public final class ReActExecutor {
             ToolCallContext invocationContext = context == null
                     ? null
                     : context.withIdempotencyKey(traceId + ":react:" + (index + 1));
-            ToolResult result = gateway.invoke(decision.toolName(), decision.args(), invocationContext);
+            ToolResult result = gateway.invoke(decision.toolName(), resolvedArgs, invocationContext);
             steps.add(AgentTraceStep.toolResult(index + 1, decision.toolName(), result));
             if (!result.ok() && !result.error().retryable()) {
                 finalAnswer = "工具调用失败：" + result.error().message();

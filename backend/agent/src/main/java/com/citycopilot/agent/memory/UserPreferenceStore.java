@@ -10,5 +10,7 @@ public interface UserPreferenceStore {
 
     boolean delete(long userId, long preferenceId);
 
+    int deleteByKey(long userId, PreferenceType type, String key);
+
     int deleteAll(long userId);
 }

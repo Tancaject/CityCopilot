@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -26,8 +27,15 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 @Component
+@ConditionalOnProperty(
+        prefix = "citycopilot.ops-v2",
+        name = "worker-enabled",
+        havingValue = "true",
+        matchIfMissing = true
+)
 public class OpsCaseWorker {
     private static final Set<String> READER_PERMISSIONS = Set.of(
             PermissionCodes.ADMIN_ACCESS,
@@ -416,11 +424,23 @@ public class OpsCaseWorker {
 
     @PreDestroy
     void close() {
-        if (readerPool != null) {
-            readerPool.shutdownNow();
+        shutdown(readerPool);
+        shutdown(executorPool);
+    }
+
+    private void shutdown(ExecutorService pool) {
+        if (pool == null) {
+            return;
         }
-        if (executorPool != null) {
-            executorPool.shutdownNow();
+        pool.shutdown();
+        try {
+            if (!pool.awaitTermination(30, TimeUnit.SECONDS)) {
+                pool.shutdownNow();
+                pool.awaitTermination(5, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException interrupted) {
+            pool.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 }

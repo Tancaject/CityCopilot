@@ -18,4 +18,5 @@ public class CoreServiceProperties {
     private Duration connectTimeout = Duration.ofSeconds(2);
     private Duration readTimeout = Duration.ofSeconds(4);
     private Duration catalogTtl = Duration.ofSeconds(30);
+    private Duration catalogMaxStaleness = Duration.ofMinutes(2);
 }
