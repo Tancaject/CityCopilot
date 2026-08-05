@@ -19,6 +19,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ./citycopilot-v2.sql:/docker-entrypoint-initdb.d/001-citycopilot.sql:ro
+      - ./tools/migrations/2026-08-04-shop-projection-outbox.sql:/docker-entrypoint-initdb.d/003-shop-projection-outbox.sql:ro
       - ./tools/migrations:/opt/citycopilot/migrations:ro
     healthcheck:
       test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot -e 'SELECT 1 FROM user_account LIMIT 1' >/dev/null 2>&1"]
@@ -75,6 +76,9 @@ services:
     volumes:
       - commerce-mysql-data:/var/lib/mysql
       - ./deploy/mysql/commerce/001-commerce-schema.sql:/docker-entrypoint-initdb.d/001-commerce-schema.sql:ro
+      - ./tools/migrations/2026-08-04-commerce-outbox-claim-index.sql:/docker-entrypoint-initdb.d/002-commerce-outbox-claim-index.sql:ro
+      - ./tools/migrations:/opt/citycopilot/migrations:ro
+      - ./deploy/mysql/commerce:/opt/citycopilot/commerce-schema:ro
     healthcheck:
       test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot_commerce -e 'SELECT 1 FROM commerce_order LIMIT 1' >/dev/null 2>&1"]
       interval: 5s
@@ -124,6 +128,29 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      - citycopilot
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${CITYCOPILOT_ELASTICSEARCH_VERSION:-8.10.4}
+    profiles: ["search"]
+    restart: unless-stopped
+    mem_limit: ${CITYCOPILOT_ELASTICSEARCH_MEMORY_LIMIT:-1g}
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.security.enrollment.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent 'http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null"]
+      interval: 10s
+      timeout: 6s
+      retries: 20
+      start_period: 30s
     networks:
       - citycopilot
 
@@ -287,6 +314,12 @@ services:
       CITYCOPILOT_GEO_REDIS_MAX_CANDIDATES: ${CITYCOPILOT_GEO_REDIS_MAX_CANDIDATES:-500}
       CITYCOPILOT_GEO_RECONCILE_ENABLED: ${CITYCOPILOT_GEO_RECONCILE_ENABLED:-true}
       CITYCOPILOT_GEO_RECONCILE_INTERVAL_MS: ${CITYCOPILOT_GEO_RECONCILE_INTERVAL_MS:-60000}
+      CITYCOPILOT_ELASTICSEARCH_URIS: http://elasticsearch:9200
+      CITYCOPILOT_SEARCH_ENABLED: ${CITYCOPILOT_SEARCH_ENABLED:-false}
+      CITYCOPILOT_SEARCH_MODE: ${CITYCOPILOT_SEARCH_MODE:-mysql}
+      CITYCOPILOT_SEARCH_INDEX_ALIAS: ${CITYCOPILOT_SEARCH_INDEX_ALIAS:-citycopilot-shop-search}
+      CITYCOPILOT_SEARCH_MAX_PAGE_SIZE: ${CITYCOPILOT_SEARCH_MAX_PAGE_SIZE:-500}
+      CITYCOPILOT_SEARCH_RECONCILE_INTERVAL_MS: ${CITYCOPILOT_SEARCH_RECONCILE_INTERVAL_MS:-60000}
       CITYCOPILOT_ROCKETMQ_ENABLED: ${CITYCOPILOT_ROCKETMQ_ENABLED:-true}
       CITYCOPILOT_ROCKETMQ_ENDPOINTS: rocketmq-proxy:8081
     ports:
@@ -486,3 +519,4 @@ volumes:
   rocketmq-namesrv-logs:
   rocketmq-broker-store:
   rocketmq-broker-logs:
+  elasticsearch-data:

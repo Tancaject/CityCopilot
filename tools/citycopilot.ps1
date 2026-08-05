@@ -291,6 +291,10 @@ function Invoke-CoreSchemaMigrations {
     Invoke-Compose exec -T mysql sh /opt/citycopilot/migrations/apply-core-migrations.sh
 }
 
+function Invoke-CommerceSchemaMigrations {
+    Invoke-Compose exec -T commerce-mysql sh /opt/citycopilot/migrations/apply-commerce-migrations.sh
+}
+
 Ensure-EnvironmentFile
 
 switch ($Action) {
@@ -300,6 +304,7 @@ switch ($Action) {
         Remove-ApplicationContainers
         Start-Infrastructure
         Invoke-CoreSchemaMigrations
+        Invoke-CommerceSchemaMigrations
         Invoke-Compose ps
         $environment = Read-CityCopilotEnvironment
         Write-Host ("Infrastructure is ready: MySQL {0}/{1}/{2}, Redis {3}, RocketMQ Proxy 18081." -f
@@ -311,7 +316,7 @@ switch ($Action) {
     }
     "stop" {
         Ensure-DockerDaemon
-        $arguments = @("--profile", "app", "down", "--remove-orphans")
+        $arguments = @("--profile", "app", "--profile", "search", "down", "--remove-orphans")
         Invoke-Compose @arguments
         Write-Host "CityCopilot infrastructure stopped. Named volumes were preserved." -ForegroundColor Green
     }
@@ -323,26 +328,27 @@ switch ($Action) {
         Wait-ServicesHealthy -Names $InfrastructureServices
         Invoke-RedisInitialization
         Invoke-CoreSchemaMigrations
+        Invoke-CommerceSchemaMigrations
         Write-Host "CityCopilot infrastructure restarted and is healthy." -ForegroundColor Green
     }
     "status" {
         Ensure-DockerDaemon
-        $arguments = @("--profile", "app", "ps", "-a")
+        $arguments = @("--profile", "app", "--profile", "search", "ps", "-a")
         Invoke-Compose @arguments
     }
     "logs" {
         Ensure-DockerDaemon
         $arguments = @("logs", "--tail", "200", "--follow")
         if (-not [string]::IsNullOrWhiteSpace($Service)) { $arguments += $Service }
-        $arguments = @("--profile", "app") + $arguments
+        $arguments = @("--profile", "app", "--profile", "search") + $arguments
         Invoke-Compose @arguments
     }
     "reset" {
         Ensure-DockerDaemon
         if (-not $Force) {
-            throw "Reset permanently deletes MySQL, Docker Redis, and uploaded-file volumes. WSL Redis is not affected. Rerun with -Force to confirm."
+            throw "Reset permanently deletes MySQL, Docker Redis, Elasticsearch, and uploaded-file volumes. WSL Redis is not affected. Rerun with -Force to confirm."
         }
-        $arguments = @("--profile", "app", "down", "--volumes", "--remove-orphans")
+        $arguments = @("--profile", "app", "--profile", "search", "down", "--volumes", "--remove-orphans")
         Invoke-Compose @arguments
         Write-Host "CityCopilot data volumes were deleted. Run start to initialize a clean stack." -ForegroundColor Yellow
     }
