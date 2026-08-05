@@ -5,6 +5,7 @@ CityCopilot 是一个面向本地生活场景的 AI Agent 项目，将店铺发�
 ## 核心能力
 
 - 本地店铺与高德周边 POI 混合发现，支持位置选择、距离排序和服务降级
+- 可选 Elasticsearch 店铺全文检索投影，支持 shadow 对比、MySQL 回表校验和故障回退
 - ReAct 与 Plan-Execute-Replan Agent，支持 SSE 流式响应、工具调用和高风险操作拦截
 - 持久化 Ops Agent：Case、证据、计划、人工审批、幂等执行、独立复核和重启恢复
 - 独立 Commerce 微服务：订单快照、Redis + Lua 秒杀、Reservation、Outbox/Inbox、DLQ 与库存对账
@@ -17,6 +18,7 @@ CityCopilot 是一个面向本地生活场景的 AI Agent 项目，将店铺发�
 | 目录 | 说明 |
 |---|---|
 | `backend/contracts` | 无业务实现依赖的 Tool、身份和调用协议 |
+| `backend/search` | 可选店铺搜索端口与 Elasticsearch 可重建读模型，不持有业务事实 |
 | `backend/core` | Core/Place 门面：身份、社区、店铺、权限、审计和内部 Tool API |
 | `backend/commerce-service` | 交易域：独立 MySQL/Redis ACL、券、订单、秒杀、对账和事件 |
 | `backend/agent` | Consumer/Ops Agent：编排、Case 状态机、审批、复核、SSE 与 Trace |
@@ -25,12 +27,12 @@ CityCopilot 是一个面向本地生活场景的 AI Agent 项目，将店铺发�
 | `frontend` | Vue 3 + TypeScript 用户端与管理端 |
 | `deploy` | Nginx、Prometheus 和 Grafana 示例配置 |
 
-后端依赖方向：`core/commerce-service/agent/mcp-server -> contracts`，`eval -> agent -> contracts`。Core、Commerce、Agent 和 MCP 是独立进程；Compose 结果证明单机集成与故障隔离，不等于多机高可用。
+后端依赖方向：`core -> search`，`core/commerce-service/agent/mcp-server -> contracts`，`eval -> agent -> contracts`；Search 不依赖业务实现模块。Search 是随 Core 部署的库模块；Core、Commerce、Agent 和 MCP 是独立进程。Compose 结果证明单机集成与故障隔离，不等于多机高可用。
 
 ## 技术栈
 
 - Java 17、Spring Boot 3、Spring AI、MyBatis-Plus
-- MySQL、Redis ACL、Lua、Redis Stream、RocketMQ 5.x、Transactional Outbox、Resilience4j
+- MySQL、Redis ACL、Lua、Redis Stream、RocketMQ 5.x、Elasticsearch（可选）、Transactional Outbox、Resilience4j
 - Vue 3、TypeScript、Vite
 - Prometheus、Grafana、Maven、JUnit
 
@@ -61,7 +63,7 @@ Compose 文件仍定义了可选的完整应用容器，因此不要用无服务
 .\tools\citycopilot.ps1 stop
 ```
 
-普通 `down` 会保留 MySQL、Docker Redis 和上传文件。只有下面的显式命令会永久删除 Docker 数据卷；WSL Redis 不受影响：
+普通 `down` 会保留 MySQL、Docker Redis、Elasticsearch 搜索投影和上传文件。只有下面的显式命令会永久删除 Docker 数据卷；WSL Redis 不受影响：
 
 ```powershell
 .\tools\citycopilot.ps1 reset -Force
@@ -84,8 +86,11 @@ Compose 文件仍定义了可选的完整应用容器，因此不要用无服务
 - Commerce MySQL：`127.0.0.1:3309`
 - Redis：`127.0.0.1:6380`
 - RocketMQ Proxy：`127.0.0.1:18081`
+- Elasticsearch（可选 search profile）：`127.0.0.1:9200`
 
 AI 和高德服务 Key 均为可选配置；未配置时，对应能力会使用本地 fallback 或降级结果。RocketMQ 默认启用，Commerce Outbox Relay 和跨服务 Consumer 会连接本地 Proxy；秒杀准入后的本地消费仍使用 Redis Stream。仅在明确的 MQ 故障隔离场景中才设置 `CITYCOPILOT_ROCKETMQ_ENABLED=false`，关闭期间不得删除未发布 Outbox。
+
+店铺全文检索默认关闭并保持 `mysql` 模式。需要验证 Elasticsearch 时，先按 [Elasticsearch 店铺搜索投影](docs/design/elasticsearch-shop-search.md) 启动可选 profile，并使用 `shadow` 模式比较结果。
 
 #### 2. 启动后端
 

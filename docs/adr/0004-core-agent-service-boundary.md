@@ -22,7 +22,7 @@
 - Core 与 Agent 可独立构建、发布、重启和扩缩容，Agent 故障不会直接终止 Core 进程。
 - 跨服务调用增加网络超时、部分失败和配置管理成本，因此 Agent 使用超时、熔断、隔舱与受幂等约束的重试。
 - 当前允许在一台电脑上运行多个进程，获得的是进程级隔离，不是主机级高可用；主机故障仍会同时影响全部服务。
-- 本阶段不引入 Nacos/Eureka、Spring Cloud Gateway、专用 MQ、Seata 或 Kubernetes。启动编排与多机部署在后续按实际需要补充。
+- 本阶段不引入 Nacos/Eureka、Spring Cloud Gateway、专用 MQ、Seata 或集群编排平台。启动编排与多机部署在后续按实际需要补充。
 
 ## 面试回答
 

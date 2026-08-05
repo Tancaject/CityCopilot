@@ -14,6 +14,14 @@ Compose 默认只启动基础设施：
 - 项目专用 Redis，以及一次性的 `redis-init`
 - RocketMQ NameServer、Broker、Proxy 和初始化任务
 
+Elasticsearch 位于可选的 `search` profile，不会被默认基础设施脚本启动：
+
+```powershell
+docker compose --profile search up -d elasticsearch
+```
+
+它仅保存可从 MySQL 重建的店铺搜索投影，数据卷为 `elasticsearch-data`。启用方式和降级边界见 [Elasticsearch 店铺搜索投影](design/elasticsearch-shop-search.md)。
+
 `core`、`commerce`、`agent`、`mcp` 和 `frontend` 位于可选的 `app` profile，日常开发不启用，由 IDE 启动。CI 如需验证完整容器拓扑，显式执行 `docker compose --profile app up -d --build --wait`。
 
 ## Redis 边界
@@ -41,6 +49,7 @@ WSL Redis 仍可运行在 `127.0.0.1:6379`，但 Compose 不连接它。两个 R
 | `rocketmq-namesrv` | RocketMQ 名称服务 | `rocketmq-namesrv-logs` |
 | `rocketmq-broker` | RocketMQ Broker | `rocketmq-broker-store`、`rocketmq-broker-logs` |
 | `rocketmq-proxy` | 本地 Java 服务访问 RocketMQ 的 gRPC Proxy | 无 |
+| `elasticsearch` | 可选店铺全文检索投影，不是业务事实源 | `elasticsearch-data` |
 
 MySQL 仅在空数据卷首次创建时导入对应初始化 SQL。`.\tools\citycopilot.ps1 start` 和 `restart` 会在健康检查后执行可审计的增量迁移；当前会预检并补齐店铺 GCJ-02 坐标列与约束，异常数据存在时会停止而不是强行修改。
 
@@ -53,6 +62,7 @@ MySQL 仅在空数据卷首次创建时导入对应初始化 SQL。`.\tools\city
 - RocketMQ NameServer：`127.0.0.1:9876`
 - RocketMQ Broker：`127.0.0.1:10911`
 - RocketMQ Proxy：`127.0.0.1:18080` / `127.0.0.1:18081`
+- Elasticsearch（可选）：`127.0.0.1:9200`
 
 所有 Compose 端口默认只绑定本机。
 
@@ -75,7 +85,7 @@ Java 服务的 Working directory 设为仓库根目录后会自动加载 `.env`�
 # 停止并保留数据卷
 .\tools\citycopilot.ps1 stop
 
-# 删除 MySQL、Docker Redis 和上传文件卷
+# 删除 MySQL、Docker Redis、Elasticsearch 搜索投影和上传文件卷
 .\tools\citycopilot.ps1 reset -Force
 ```
 

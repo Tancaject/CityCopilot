@@ -186,7 +186,7 @@
 
 - [x] 契约、服务认证、用户身份转发、幂等冲突、远程降级和 MCP 适配测试通过
 - [x] `mvn -q clean verify`、前端 `npm run build` 与离线 eval gate 通过
-- [x] 启动编排明确留到下一阶段，不在本期引入 Nacos/Eureka、Spring Cloud Gateway、专用 MQ、Seata 或 Kubernetes
+- [x] 启动编排明确留到下一阶段，不在本期引入 Nacos/Eureka、Spring Cloud Gateway、专用 MQ、Seata 或集群编排平台
 
 **P5 验收口径**：Agent 编译期不依赖 Core、两个应用可独立打包，Agent 无业务数据库访问能力；Core 不可用时 Agent 保持存活并返回受控错误，恢复 Core 后无需重启 Agent 即可继续调用。
 

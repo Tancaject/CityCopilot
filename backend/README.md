@@ -5,6 +5,7 @@
 | Module | Role |
 |---|---|
 | `contracts` | Stable Tool, identity, request/response, and error contracts with no business implementation dependency. |
+| `search` | Optional shop-search port and rebuildable Elasticsearch projection; it owns no business facts. |
 | `core` | Core/Place facade: identity, community, shops, permissions, audit, GEO, public business APIs, and the internal Tool API. |
 | `commerce-service` | Commerce data owner: vouchers, orders, Redis + Lua admission, Reservation, Outbox, DLQ, and inventory consistency. |
 | `agent` | Independent Agent service: orchestration, remote Tool gateway, SSE chat, traces, Ops Agent, and an isolated Redis DB. |
@@ -24,7 +25,9 @@ The command starts infrastructure only; run the Java services from the IDE or Ma
 Dependency direction:
 
 ```text
+core             -> search
 core             -> contracts
+search           -> Spring Data Elasticsearch
 commerce-service -> contracts
 agent            -> contracts
 mcp-server       -> contracts

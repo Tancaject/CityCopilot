@@ -160,7 +160,7 @@ B1–B5 是引入更多分布式组件前的 P0 级前置条件；B10 必须在 
 - 不在第一阶段拆分优惠券、秒杀库存和订单事务边界。
 - 不宣称 RocketMQ 或业务链路实现端到端 exactly-once。
 - 不同时向 Redis Stream 和 RocketMQ 无事务双写同一个关键事件。
-- 不为简历关键词同时引入 Nacos、Seata、Kubernetes、服务网格和多个 MQ。
+- 不为简历关键词同时引入 Nacos、Seata、集群编排平台、服务网格和多个 MQ。
 - 不让 LLM 直接发送 MQ、执行任意 SQL、Shell 或任意 HTTP。
 - 不把单机 Compose 多容器描述为多主机高可用。
 - 不把未运行的 Testcontainers、真实模型、故障注入或压测写成完成结果。
