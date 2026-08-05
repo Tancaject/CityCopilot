@@ -1,0 +1,74 @@
+server:
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: ${CITYCOPILOT_COMMERCE_SHUTDOWN_TIMEOUT:30s}
+  task:
+    scheduling:
+      pool:
+        size: ${CITYCOPILOT_COMMERCE_SCHEDULER_POOL_SIZE:4}
+      shutdown:
+        await-termination: true
+        await-termination-period: ${CITYCOPILOT_COMMERCE_SCHEDULER_SHUTDOWN_TIMEOUT:25s}
+  sql:
+    init:
+      mode: never
+  datasource:
+    hikari:
+      maximum-pool-size: ${CITYCOPILOT_COMMERCE_DB_MAX_POOL_SIZE:30}
+      minimum-idle: ${CITYCOPILOT_COMMERCE_DB_MIN_IDLE:5}
+      connection-timeout: ${CITYCOPILOT_COMMERCE_DB_CONNECTION_TIMEOUT_MS:2000}
+      validation-timeout: ${CITYCOPILOT_COMMERCE_DB_VALIDATION_TIMEOUT_MS:1000}
+      idle-timeout: ${CITYCOPILOT_COMMERCE_DB_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${CITYCOPILOT_COMMERCE_DB_MAX_LIFETIME_MS:1800000}
+      keepalive-time: ${CITYCOPILOT_COMMERCE_DB_KEEPALIVE_MS:120000}
+  data:
+    redis:
+      connect-timeout: ${CITYCOPILOT_COMMERCE_REDIS_CONNECT_TIMEOUT:2s}
+      timeout: ${CITYCOPILOT_COMMERCE_REDIS_COMMAND_TIMEOUT:2s}
+      cluster:
+        nodes: ${CITYCOPILOT_REDIS_CLUSTER_NODES}
+        max-redirects: ${CITYCOPILOT_REDIS_CLUSTER_MAX_REDIRECTS:5}
+
+citycopilot:
+  commerce:
+    api-enabled: ${CITYCOPILOT_COMMERCE_API_ENABLED:false}
+    stream-worker-enabled: ${CITYCOPILOT_COMMERCE_STREAM_WORKER_ENABLED:false}
+    outbox-relay-enabled: ${CITYCOPILOT_COMMERCE_OUTBOX_RELAY_ENABLED:false}
+    reconciliation-enabled: ${CITYCOPILOT_COMMERCE_RECONCILIATION_ENABLED:false}
+    inventory-bootstrap-enabled: ${CITYCOPILOT_COMMERCE_INVENTORY_BOOTSTRAP_ENABLED:false}
+    redis-physical-shard-count: ${CITYCOPILOT_COMMERCE_REDIS_PHYSICAL_SHARD_COUNT:16}
+    redis-routing-generation: ${CITYCOPILOT_COMMERCE_REDIS_ROUTING_GENERATION:v1}
+    routing-control-auto-initialize: ${CITYCOPILOT_COMMERCE_ROUTING_CONTROL_AUTO_INITIALIZE:false}
+    stream-max-deliveries: ${CITYCOPILOT_COMMERCE_STREAM_MAX_DELIVERIES:10}
+    redis-required-replicas: ${CITYCOPILOT_COMMERCE_REDIS_REQUIRED_REPLICAS:1}
+    redis-replication-timeout-ms: ${CITYCOPILOT_COMMERCE_REDIS_REPLICATION_TIMEOUT_MS:1000}
+    redis-require-all-replicas: ${CITYCOPILOT_COMMERCE_REDIS_REQUIRE_ALL_REPLICAS:true}
+    admission-recovery-batch-size: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_BATCH_SIZE:100}
+    admission-recovery-min-age-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_MIN_AGE_MS:5000}
+    admission-recovery-lease-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_LEASE_MS:30000}
+    admission-recovery-recheck-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_RECHECK_MS:5000}
+    admission-recovery-max-attempts: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_MAX_ATTEMPTS:20}
+    admission-recovery-poll-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_POLL_MS:1000}
+    admission-max-backlog: ${CITYCOPILOT_COMMERCE_ADMISSION_MAX_BACKLOG:50000}
+    admission-max-oldest-age-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_MAX_OLDEST_AGE_MS:300000}
+    admission-capacity-cache-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_CAPACITY_CACHE_MS:1000}
+    admission-metrics-refresh-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_METRICS_REFRESH_MS:5000}
+    metadata-update-fence-ttl-ms: ${CITYCOPILOT_COMMERCE_METADATA_UPDATE_FENCE_TTL_MS:300000}
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState,ping
+        readiness:
+          include: readinessState,db,redis,commerceRouting
+  health:
+    db:
+      enabled: true
+    redis:
+      enabled: true

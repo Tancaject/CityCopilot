@@ -12,6 +12,9 @@ import java.time.Duration;
 public class RocketMqProperties {
     private boolean enabled;
     private boolean consumerEnabled = true;
+    private boolean sslEnabled;
+    private String accessKey = "";
+    private String secretKey = "";
     private String endpoints = "127.0.0.1:8081";
     private String commerceTopic = "citycopilot-commerce-events-v1";
     private String opsTopic = "citycopilot-ops-events-v1";

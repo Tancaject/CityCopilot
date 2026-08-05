@@ -24,17 +24,27 @@ WHERE table_schema = DATABASE()
     'commerce_outbox_event',
     'commerce_inbox_event',
     'commerce_dead_letter',
-    'commerce_order_recovery'
+    'commerce_order_recovery',
+    'commerce_admission_ledger',
+    'commerce_id_segment'
   );
 SELECT COUNT(*) FROM commerce_seckill_voucher WHERE stock < 0;
+SELECT COUNT(*) FROM commerce_id_segment
+WHERE namespace='order' AND next_value>=0;
+SELECT COUNT(*) FROM commerce_id_segment
+WHERE namespace='voucher' AND next_value>=0;
 "@
     $result = [ordered]@{
         requiredTables = [int64]$commerce[0]
         negativeStockRows = [int64]$commerce[1]
+        orderIdSegmentSeeded = [int64]$commerce[2] -eq 1
+        voucherIdSegmentSeeded = [int64]$commerce[3] -eq 1
     }
     $result["integrityGate"] = (
-        $result.requiredTables -eq 9 -and
-        $result.negativeStockRows -eq 0
+        $result.requiredTables -eq 11 -and
+        $result.negativeStockRows -eq 0 -and
+        $result.orderIdSegmentSeeded -and
+        $result.voucherIdSegmentSeeded
     )
     $result | ConvertTo-Json -Depth 4
     if (-not $result.integrityGate) { exit 2 }

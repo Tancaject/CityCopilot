@@ -8,7 +8,6 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,6 +22,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CommerceConsistencyServiceTest {
@@ -69,6 +70,218 @@ class CommerceConsistencyServiceTest {
         assertThat(snapshot.get("missingRedisBuyers")).isEqualTo(List.of("20"));
         assertThat(snapshot.get("unexpectedRedisBuyers")).isEqualTo(List.of("30"));
         assertThat(snapshot.get("databaseBuyerHash")).isNotEqualTo(snapshot.get("redisBuyerHash"));
+        assertThat(snapshot).containsEntry("reconciliationFenceRequired", true);
+    }
+
+    @Test
+    void reconciliationFenceUsesStableTokenAndReplicaConfirmation() {
+        Fixture fixture = new Fixture(true);
+
+        fixture.service.ensureReconciliationFence(100L);
+
+        verify(fixture.replicatedRedis).setIfAbsent(
+                "reconciliation_inventory_fence",
+                CommerceOrderService.FENCE_PREFIX + 100L,
+                CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN
+        );
+    }
+
+    @Test
+    void repairNeverOverwritesAnotherMaintenanceFenceOwner() {
+        Fixture fixture = new Fixture(true);
+        when(fixture.replicatedRedis.setIfAbsent(
+                eq("consistency_repair_fence"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString()
+        )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT);
+        when(fixture.values.get(CommerceOrderService.FENCE_PREFIX + 100L))
+                .thenReturn("voucher-admin-update:v1");
+
+        assertThatThrownBy(() -> fixture.service.repair(100L, "evidence"))
+                .isInstanceOfSatisfying(
+                        CommerceApiException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMERCE_INVENTORY_MAINTENANCE")
+                );
+
+        verify(fixture.replicatedRedis, never()).compareAndSet(
+                anyString(),
+                anyString(),
+                anyString(),
+                anyString()
+        );
+        verify(fixture.replicatedRedis, never()).deleteIfEquals(
+                anyString(),
+                anyString(),
+                anyString()
+        );
+    }
+
+    @Test
+    void staleEvidenceLeavesAutomaticReconciliationFenceUntouched() {
+        Fixture fixture = new Fixture(true);
+        fixture.stubVoucher(100L, 5, "5", List.of(10L), Set.of("10"), 0);
+        Map<String, Object> before = fixture.service.snapshot(100L);
+        when(fixture.replicatedRedis.setIfAbsent(
+                eq("consistency_repair_fence"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString()
+        )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT);
+        when(fixture.values.get(CommerceOrderService.FENCE_PREFIX + 100L))
+                .thenReturn(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN);
+        when(fixture.values.get(CommerceOrderService.STOCK_PREFIX + 100L)).thenReturn("4");
+
+        assertThatThrownBy(() -> fixture.service.repair(
+                100L,
+                String.valueOf(before.get("evidenceHash"))
+        )).isInstanceOfSatisfying(
+                CommerceApiException.class,
+                error -> assertThat(error.code()).isEqualTo("COMMERCE_STALE_EVIDENCE")
+        );
+
+        verify(fixture.replicatedRedis, never()).deleteIfEquals(
+                anyString(),
+                anyString(),
+                anyString()
+        );
+        verify(fixture.replicatedRedis, never()).compareAndSet(
+                eq("consistency_repair_takeover"),
+                anyString(),
+                anyString(),
+                anyString()
+        );
+    }
+
+    @Test
+    void staleEvidencePromotesNewRepairFenceToPersistentReconciliationFence() {
+        Fixture fixture = new Fixture(true);
+        fixture.stubVoucher(100L, 5, "5", List.of(10L), Set.of("10"), 0);
+        Map<String, Object> before = fixture.service.snapshot(100L);
+        when(fixture.values.get(CommerceOrderService.STOCK_PREFIX + 100L)).thenReturn("4");
+        when(fixture.replicatedRedis.compareAndSet(
+                eq("consistency_repair_restore_reconciliation_fence"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString(),
+                eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN)
+        )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
+
+        assertThatThrownBy(() -> fixture.service.repair(
+                100L,
+                String.valueOf(before.get("evidenceHash"))
+        )).isInstanceOfSatisfying(
+                CommerceApiException.class,
+                error -> assertThat(error.code()).isEqualTo("COMMERCE_STALE_EVIDENCE")
+        );
+
+        verify(fixture.replicatedRedis).setIfAbsent(
+                eq("consistency_repair_fence"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString()
+        );
+        verify(fixture.replicatedRedis).compareAndSet(
+                eq("consistency_repair_restore_reconciliation_fence"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString(),
+                eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN)
+        );
+        verify(fixture.replicatedRedis, never()).deleteIfEquals(
+                anyString(),
+                anyString(),
+                anyString()
+        );
+    }
+
+    @Test
+    void failedRepairRestoresAutomaticFenceAndNeverReleasesIt() {
+        Fixture fixture = new Fixture(true);
+        fixture.stubVoucher(100L, 5, "4", List.of(10L), Set.of("10"), 0);
+        Map<String, Object> before = fixture.service.snapshot(100L);
+        when(fixture.replicatedRedis.setIfAbsent(
+                eq("consistency_repair_fence"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString()
+        )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT);
+        when(fixture.values.get(CommerceOrderService.FENCE_PREFIX + 100L))
+                .thenReturn(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN);
+        when(fixture.replicatedRedis.compareAndSet(
+                eq("consistency_repair_takeover"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN),
+                anyString()
+        )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
+        when(fixture.replicatedRedis.compareAndSet(
+                eq("consistency_repair_restore_reconciliation_fence"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString(),
+                eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN)
+        )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
+
+        assertThatThrownBy(() -> fixture.service.repair(
+                100L,
+                String.valueOf(before.get("evidenceHash"))
+        )).isInstanceOfSatisfying(
+                CommerceApiException.class,
+                error -> assertThat(error.code()).isEqualTo("COMMERCE_REPAIR_VERIFICATION_FAILED")
+        );
+
+        verify(fixture.replicatedRedis).compareAndSet(
+                eq("consistency_repair_restore_reconciliation_fence"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString(),
+                eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN)
+        );
+        verify(fixture.replicatedRedis, never()).deleteIfEquals(
+                anyString(),
+                anyString(),
+                anyString()
+        );
+    }
+
+    @Test
+    void successfulVerifiedRepairDeletesTakenOverAutomaticFence() {
+        Fixture fixture = new Fixture(true);
+        fixture.stubVoucher(100L, 5, "4", List.of(10L), Set.of("10", "20"), 0);
+        when(fixture.values.get(CommerceOrderService.STOCK_PREFIX + 100L))
+                .thenReturn("4", "4", "4", "5", "5");
+        when(fixture.sets.members(CommerceOrderService.BUYER_PREFIX + 100L))
+                .thenReturn(
+                        Set.of("10", "20"),
+                        Set.of("10", "20"),
+                        Set.of("10", "20"),
+                        Set.of("10"),
+                        Set.of("10")
+                );
+        Map<String, Object> before = fixture.service.snapshot(100L);
+        when(fixture.replicatedRedis.setIfAbsent(
+                eq("consistency_repair_fence"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString()
+        )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT);
+        when(fixture.values.get(CommerceOrderService.FENCE_PREFIX + 100L))
+                .thenReturn(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN);
+        when(fixture.replicatedRedis.compareAndSet(
+                eq("consistency_repair_takeover"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN),
+                anyString()
+        )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
+
+        Map<String, Object> result = fixture.service.repair(
+                100L,
+                String.valueOf(before.get("evidenceHash"))
+        );
+
+        assertThat(result).containsEntry("verified", true);
+        verify(fixture.replicatedRedis).deleteIfEquals(
+                eq("consistency_repair_release"),
+                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                anyString()
+        );
+        verify(fixture.replicatedRedis, never()).compareAndSet(
+                eq("consistency_repair_restore_reconciliation_fence"),
+                anyString(),
+                anyString(),
+                anyString()
+        );
     }
 
     @Test
@@ -93,6 +306,8 @@ class CommerceConsistencyServiceTest {
         Fixture fixture = new Fixture();
         fixture.stubVoucher(100L, 5, "4", List.of(10L), Set.of("10", "20"), 1);
         Map<String, Object> before = fixture.service.snapshot(100L);
+
+        assertThat(before).containsEntry("reconciliationFenceRequired", false);
 
         assertThatThrownBy(() -> fixture.service.repair(
                 100L,
@@ -188,9 +403,15 @@ class CommerceConsistencyServiceTest {
         private final AtomicReference<List<Map<String, Object>>> recoveryRows =
                 new AtomicReference<>(List.of());
         private final AtomicInteger globalHealthReads = new AtomicInteger();
+        private final CommerceRedisReplicationExecutor replicatedRedis =
+                mock(CommerceRedisReplicationExecutor.class);
         private final CommerceConsistencyService service;
 
         private Fixture() {
+            this(false);
+        }
+
+        private Fixture(boolean useReplicatedRedis) {
             when(redis.opsForValue()).thenReturn(values);
             when(redis.opsForSet()).thenReturn(sets);
             when(redis.execute(
@@ -198,7 +419,19 @@ class CommerceConsistencyServiceTest {
                     anyList(),
                     any(Object[].class)
             )).thenReturn(5L);
-            service = new CommerceConsistencyService(jdbc, redis, new ObjectMapper()) {
+            when(replicatedRedis.setIfAbsent(anyString(), anyString(), anyString()))
+                    .thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
+            when(replicatedRedis.deleteIfEquals(anyString(), anyString(), anyString()))
+                    .thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
+            service = new CommerceConsistencyService(
+                    jdbc,
+                    redis,
+                    new ObjectMapper(),
+                    new CommerceRedisKeyspace(1, "0"),
+                    useReplicatedRedis ? replicatedRedis : null,
+                    null,
+                    null
+            ) {
                 @Override
                 public Map<String, Object> globalStreamHealth() {
                     globalHealthReads.incrementAndGet();
@@ -238,8 +471,7 @@ class CommerceConsistencyServiceTest {
             when(sets.size(CommerceOrderService.INFLIGHT_PREFIX + voucherId)).thenReturn(inFlight);
             when(values.setIfAbsent(
                     eq(CommerceOrderService.FENCE_PREFIX + voucherId),
-                    anyString(),
-                    eq(Duration.ofSeconds(30))
+                    anyString()
             )).thenReturn(true);
             when(sets.members(CommerceOrderService.BUYER_PREFIX + voucherId)).thenReturn(redisBuyers);
         }

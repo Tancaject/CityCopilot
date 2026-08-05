@@ -1,5 +1,6 @@
 package com.citycopilot.commerce;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,17 +23,37 @@ public class CommerceVoucherService {
     private final PlaceAuthorityClient place;
     private final CommerceOrderIdGenerator ids;
     private final CommerceRedisInventoryBootstrap inventory;
+    private final CommerceRedisCampaignMetadata campaignMetadata;
+    private final CommerceRuntimeMutationLeases runtimeLeases;
+    private final CommerceRoutingGuard routing;
 
+    @Autowired
     public CommerceVoucherService(
             JdbcTemplate jdbc,
             PlaceAuthorityClient place,
             CommerceOrderIdGenerator ids,
-            CommerceRedisInventoryBootstrap inventory
+            CommerceRedisInventoryBootstrap inventory,
+            CommerceRedisCampaignMetadata campaignMetadata,
+            CommerceRuntimeMutationLeases runtimeLeases,
+            CommerceRoutingGuard routing
     ) {
         this.jdbc = jdbc;
         this.place = place;
         this.ids = ids;
         this.inventory = inventory;
+        this.campaignMetadata = campaignMetadata;
+        this.runtimeLeases = runtimeLeases;
+        this.routing = routing;
+    }
+
+    CommerceVoucherService(
+            JdbcTemplate jdbc,
+            PlaceAuthorityClient place,
+            CommerceOrderIdGenerator ids,
+            CommerceRedisInventoryBootstrap inventory,
+            CommerceRedisCampaignMetadata campaignMetadata
+    ) {
+        this(jdbc, place, ids, inventory, campaignMetadata, null, null);
     }
 
     public List<Map<String, Object>> list(long shopId) {
@@ -61,6 +82,7 @@ public class CommerceVoucherService {
 
     @Transactional
     public long create(Map<String, Object> request, long actorId, boolean admin) {
+        beginTransactionalMutation();
         long shopId = requiredLong(request, "shopId");
         Map<String, Object> authority = place.requireWriteAuthority(shopId, actorId, admin);
         validateCreate(request);
@@ -98,7 +120,10 @@ public class CommerceVoucherService {
                     timestamp(request.get("beginTime"), null),
                     timestamp(request.get("endTime"), null)
             );
-            afterCommit(() -> inventory.initializeNewVoucher(id, stock));
+            afterCommit(() -> {
+                inventory.initializeNewVoucher(id, stock);
+                campaignMetadata.refreshAfterCommit(id);
+            });
         }
         return id;
     }
@@ -110,6 +135,7 @@ public class CommerceVoucherService {
             long actorId,
             boolean admin
     ) {
+        beginTransactionalMutation();
         Map<String, Object> existing = jdbc.queryForMap(
                 "SELECT * FROM commerce_voucher WHERE id=?",
                 id
@@ -117,6 +143,14 @@ public class CommerceVoucherService {
         long shopId = ((Number) existing.get("shop_id")).longValue();
         place.requireWriteAuthority(shopId, actorId, admin);
         validateUpdate(request, existing);
+        boolean seckillVoucher = ((Number) existing.get("type")).intValue() == 1;
+        long campaignRevision = -1L;
+        if (seckillVoucher) {
+            // Removing the Redis authority before the database change makes a
+            // failed update or failed refresh close admission instead of
+            // serving stale campaign state.
+            campaignRevision = campaignMetadata.invalidateBeforeChange(id);
+        }
         jdbc.update("""
                 UPDATE commerce_voucher
                 SET title=COALESCE(?,title),sub_title=COALESCE(?,sub_title),
@@ -145,6 +179,10 @@ public class CommerceVoucherService {
                     id
             );
         }
+        if (seckillVoucher) {
+            long committedRevision = campaignRevision;
+            afterCommit(() -> campaignMetadata.refreshAfterCommit(id, committedRevision));
+        }
         return normalize(jdbc.queryForMap("""
                 SELECT v.*,s.stock,s.begin_time,s.end_time
                 FROM commerce_voucher v
@@ -159,6 +197,18 @@ public class CommerceVoucherService {
             throw new CommerceApiException("COMMERCE_INVALID_ARGUMENT", key + " is required", 400);
         }
         return number;
+    }
+
+    private void beginTransactionalMutation() {
+        if (runtimeLeases == null) return;
+        CommerceRuntimeMutationLeases.MutationLease lease = runtimeLeases.acquireMutation();
+        try {
+            routing.requireRuntimeMutationActive();
+            runtimeLeases.releaseAfterTransaction(lease);
+        } catch (RuntimeException failure) {
+            lease.close();
+            throw failure;
+        }
     }
 
     private Long optionalLong(Object value) {

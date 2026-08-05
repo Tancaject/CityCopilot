@@ -54,9 +54,10 @@ class CommerceVoucherServiceTest {
         PlaceAuthorityClient place = mock(PlaceAuthorityClient.class);
         CommerceOrderIdGenerator ids = mock(CommerceOrderIdGenerator.class);
         CommerceRedisInventoryBootstrap inventory = mock(CommerceRedisInventoryBootstrap.class);
+        CommerceRedisCampaignMetadata metadata = mock(CommerceRedisCampaignMetadata.class);
         when(place.requireWriteAuthority(1L, 7L, true))
                 .thenReturn(Map.of("name", "Demo", "ownerUserId", 7L));
-        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory);
+        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata);
 
         assertThatThrownBy(() -> service.create(Map.of(
                 "shopId", 1L,
@@ -81,10 +82,11 @@ class CommerceVoucherServiceTest {
         PlaceAuthorityClient place = mock(PlaceAuthorityClient.class);
         CommerceOrderIdGenerator ids = mock(CommerceOrderIdGenerator.class);
         CommerceRedisInventoryBootstrap inventory = mock(CommerceRedisInventoryBootstrap.class);
+        CommerceRedisCampaignMetadata metadata = mock(CommerceRedisCampaignMetadata.class);
         when(place.requireWriteAuthority(1L, 7L, true))
                 .thenReturn(Map.of("name", "Demo", "ownerUserId", 7L));
         when(ids.nextVoucherId()).thenReturn(123L);
-        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory);
+        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata);
 
         long created = service.create(Map.of(
                 "shopId", 1L,
@@ -100,6 +102,7 @@ class CommerceVoucherServiceTest {
         assertThat(created).isEqualTo(123L);
         verify(ids).nextVoucherId();
         verify(inventory).initializeNewVoucher(123L, 10);
+        verify(metadata).refreshAfterCommit(123L);
         verify(jdbc, org.mockito.Mockito.times(3))
                 .update(anyString(), any(Object[].class));
     }
@@ -110,6 +113,7 @@ class CommerceVoucherServiceTest {
         PlaceAuthorityClient place = mock(PlaceAuthorityClient.class);
         CommerceOrderIdGenerator ids = mock(CommerceOrderIdGenerator.class);
         CommerceRedisInventoryBootstrap inventory = mock(CommerceRedisInventoryBootstrap.class);
+        CommerceRedisCampaignMetadata metadata = mock(CommerceRedisCampaignMetadata.class);
         when(jdbc.queryForMap(
                 org.mockito.ArgumentMatchers.contains("SELECT * FROM commerce_voucher"),
                 org.mockito.ArgumentMatchers.eq(123L)
@@ -130,10 +134,65 @@ class CommerceVoucherServiceTest {
                 "begin_time", Timestamp.from(Instant.parse("2026-07-30T00:00:00Z")),
                 "end_time", Timestamp.from(Instant.parse("2026-07-31T00:00:00Z"))
         ));
-        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory);
+        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata);
 
         assertThatThrownBy(() -> service.update(123L, Map.of("stock", 11), 7L, true))
                 .isInstanceOf(CommerceApiException.class)
                 .hasMessage("Direct stock changes are disabled; use fenced inventory maintenance");
+    }
+
+    @Test
+    void closesAdmissionBeforeASeckillUpdateAndRefreshesMetadataAfterward() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        PlaceAuthorityClient place = mock(PlaceAuthorityClient.class);
+        CommerceOrderIdGenerator ids = mock(CommerceOrderIdGenerator.class);
+        CommerceRedisInventoryBootstrap inventory = mock(CommerceRedisInventoryBootstrap.class);
+        CommerceRedisCampaignMetadata metadata = mock(CommerceRedisCampaignMetadata.class);
+        when(metadata.invalidateBeforeChange(123L)).thenReturn(7L);
+        Map<String, Object> existing = Map.of(
+                "id", 123L,
+                "shop_id", 1L,
+                "title", "Existing",
+                "pay_value", 50,
+                "actual_value", 100,
+                "type", 1,
+                "status", 1
+        );
+        Map<String, Object> seckill = Map.of(
+                "stock", 10,
+                "begin_time", Timestamp.from(Instant.parse("2026-07-30T00:00:00Z")),
+                "end_time", Timestamp.from(Instant.parse("2026-07-31T00:00:00Z"))
+        );
+        when(jdbc.queryForMap(
+                org.mockito.ArgumentMatchers.contains("SELECT * FROM commerce_voucher"),
+                org.mockito.ArgumentMatchers.eq(123L)
+        )).thenReturn(existing);
+        when(jdbc.queryForMap(
+                org.mockito.ArgumentMatchers.contains("FROM commerce_seckill_voucher"),
+                org.mockito.ArgumentMatchers.eq(123L)
+        )).thenReturn(seckill);
+        when(jdbc.queryForMap(
+                org.mockito.ArgumentMatchers.contains("SELECT v.*,s.stock"),
+                org.mockito.ArgumentMatchers.eq(123L)
+        )).thenReturn(Map.ofEntries(
+                Map.entry("id", 123L),
+                Map.entry("shop_id", 1L),
+                Map.entry("title", "Existing"),
+                Map.entry("pay_value", 50),
+                Map.entry("actual_value", 100),
+                Map.entry("type", 1),
+                Map.entry("status", 2),
+                Map.entry("stock", 10),
+                Map.entry("begin_time", seckill.get("begin_time")),
+                Map.entry("end_time", seckill.get("end_time"))
+        ));
+        CommerceVoucherService service = new CommerceVoucherService(
+                jdbc, place, ids, inventory, metadata
+        );
+
+        service.update(123L, Map.of("status", 2), 7L, true);
+
+        verify(metadata).invalidateBeforeChange(123L);
+        verify(metadata).refreshAfterCommit(123L, 7L);
     }
 }

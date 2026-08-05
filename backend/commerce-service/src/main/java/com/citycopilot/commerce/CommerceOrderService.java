@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DuplicateKeyException;
@@ -32,25 +33,30 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
 @Service
 public class CommerceOrderService {
     private static final Logger log = LoggerFactory.getLogger(CommerceOrderService.class);
-    static final String STOCK_PREFIX = "commerce:seckill:stock:";
-    static final String BUYER_PREFIX = "commerce:seckill:buyers:";
-    static final String IDEMPOTENCY_PREFIX = "commerce:seckill:idempotency:";
-    static final String FENCE_PREFIX = "commerce:seckill:fence:";
-    public static final String INFLIGHT_PREFIX = "commerce:seckill:inflight:";
-    static final String RESTORE_MARKER_PREFIX = "commerce:seckill:restore:";
-    static final String COMPENSATION_MARKER_PREFIX = "commerce:seckill:compensation:";
-    static final String STREAM = "commerce:stream:orders";
+    static final String STOCK_PREFIX = "commerce:{commerce:0:1:0}:seckill:stock:";
+    static final String BUYER_PREFIX = "commerce:{commerce:0:1:0}:seckill:buyers:";
+    static final String IDEMPOTENCY_PREFIX = "commerce:{commerce:0:1:0}:seckill:idempotency:";
+    static final String FENCE_PREFIX = "commerce:{commerce:0:1:0}:seckill:fence:";
+    static final String INFLIGHT_PREFIX = "commerce:{commerce:0:1:0}:seckill:inflight:";
+    static final String RESTORE_MARKER_PREFIX = "commerce:{commerce:0:1:0}:seckill:restore:";
+    static final String COMPENSATION_MARKER_PREFIX = "commerce:{commerce:0:1:0}:seckill:compensation:";
+    static final String STREAM = "commerce:{commerce:0:1:0}:stream:orders";
     static final String GROUP = "commerce-order-workers";
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT = script("lua/commerce_seckill.lua");
+    private static final DefaultRedisScript<Long> RECOVER_ADMISSION_SCRIPT =
+            script("lua/commerce_recover_admission.lua");
     private static final DefaultRedisScript<Long> COMPENSATE_SCRIPT = script("lua/commerce_compensate.lua");
     private static final DefaultRedisScript<Long> FINALIZE_ORDER_SCRIPT =
             script("lua/commerce_finalize_order.lua");
+    private static final DefaultRedisScript<Long> ACK_DELETE_SCRIPT =
+            script("lua/commerce_ack_delete.lua");
     private static final DefaultRedisScript<Long> RESTORE_INVENTORY_SCRIPT =
             script("lua/commerce_restore_inventory.lua");
     private static final DefaultRedisScript<Long> RELEASE_FENCE_SCRIPT =
@@ -70,42 +76,92 @@ public class CommerceOrderService {
     private final TransactionTemplate transactions;
     private final ObjectMapper objectMapper;
     private final CommerceOrderIdGenerator orderIds;
+    private final CommerceAdmissionDurabilityService durableAdmissions;
+    private final CommerceRedisReplicationExecutor replicatedRedis;
+    private final CommerceRedisKeyspace keyspace;
+    private final CommerceRuntimeMutationLeases runtimeLeases;
+    private final CommerceRoutingGuard routing;
     private final String consumerName;
     private final boolean streamEnabled;
     private final int streamBatchSize;
+    private final int streamMaxDeliveries;
 
+    @Autowired
     public CommerceOrderService(
             JdbcTemplate jdbc,
             StringRedisTemplate redis,
             TransactionTemplate transactions,
             ObjectMapper objectMapper,
             CommerceOrderIdGenerator orderIds,
+            CommerceAdmissionDurabilityService durableAdmissions,
+            CommerceRedisReplicationExecutor replicatedRedis,
+            CommerceRedisKeyspace keyspace,
+            CommerceRuntimeMutationLeases runtimeLeases,
+            CommerceRoutingGuard routing,
             @Value("${citycopilot.commerce.consumer-name:commerce-local}") String consumerName,
-            @Value("${citycopilot.commerce.stream-enabled:true}") boolean streamEnabled,
-            @Value("${citycopilot.commerce.stream-batch-size:100}") int streamBatchSize
+            @Value("${citycopilot.commerce.stream-worker-enabled:${citycopilot.commerce.stream-enabled:true}}")
+            boolean streamEnabled,
+            @Value("${citycopilot.commerce.stream-batch-size:100}") int streamBatchSize,
+            @Value("${citycopilot.commerce.stream-max-deliveries:10}") int streamMaxDeliveries
     ) {
         this.jdbc = jdbc;
         this.redis = redis;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
         this.orderIds = orderIds;
+        this.durableAdmissions = durableAdmissions;
+        this.replicatedRedis = replicatedRedis;
+        this.keyspace = keyspace;
+        this.runtimeLeases = runtimeLeases;
+        this.routing = routing;
         this.consumerName = consumerName + "-" + UUID.randomUUID().toString().substring(0, 8);
         this.streamEnabled = streamEnabled;
         this.streamBatchSize = Math.max(1, streamBatchSize);
+        this.streamMaxDeliveries = Math.max(1, streamMaxDeliveries);
+    }
+
+    CommerceOrderService(
+            JdbcTemplate jdbc,
+            StringRedisTemplate redis,
+            TransactionTemplate transactions,
+            ObjectMapper objectMapper,
+            CommerceOrderIdGenerator orderIds,
+            CommerceAdmissionDurabilityService durableAdmissions,
+            CommerceRedisReplicationExecutor replicatedRedis,
+            String consumerName,
+            boolean streamEnabled,
+            int streamBatchSize
+    ) {
+        this(
+                jdbc, redis, transactions, objectMapper, orderIds,
+                durableAdmissions, replicatedRedis,
+                new CommerceRedisKeyspace(1, "0"), null, null,
+                consumerName, streamEnabled, streamBatchSize, 10
+        );
     }
 
     @PostConstruct
     void initializeStream() {
         if (!streamEnabled) return;
-        RecordId bootstrap = null;
-        try {
-            bootstrap = redis.opsForStream().add(STREAM, Map.of("bootstrap", "true"));
-            redis.opsForStream().createGroup(STREAM, ReadOffset.latest(), GROUP);
-        } catch (Exception ignored) {
-            // Group already exists.
-        } finally {
-            if (bootstrap != null) {
-                redis.opsForStream().delete(STREAM, bootstrap);
+        for (String stream : keyspace.streams()) {
+            RecordId bootstrap = null;
+            try {
+                bootstrap = redis.opsForStream().add(stream, Map.of("bootstrap", "true"));
+                redis.opsForStream().createGroup(stream, ReadOffset.from("0-0"), GROUP);
+            } catch (RuntimeException failure) {
+                if (!isBusyGroup(failure)) {
+                    throw failure;
+                }
+            } finally {
+                if (bootstrap != null) {
+                    try {
+                        redis.opsForStream().delete(stream, bootstrap);
+                    } catch (RuntimeException cleanupFailure) {
+                        // A leftover bootstrap record is harmless and is ACKed by
+                        // the normal worker. Do not hide the initialization error.
+                        log.warn("Unable to remove Commerce stream bootstrap record {}", bootstrap);
+                    }
+                }
             }
         }
     }
@@ -113,29 +169,53 @@ public class CommerceOrderService {
     public Map<String, Object> seckill(long voucherId, long userId, String idempotencyKey) {
         requirePositive(voucherId, "voucherId");
         requirePositive(userId, "userId");
-        String key = normalizeIdempotencyKey(idempotencyKey, UUID.randomUUID().toString());
-        List<Map<String, Object>> existing = jdbc.queryForList(
-                "SELECT id,voucher_id,status,version FROM commerce_order WHERE user_id=? AND idempotency_key=? LIMIT 1",
-                userId,
-                key
+        String key = normalizeRequiredIdempotencyKey(idempotencyKey);
+        if (runtimeLeases == null) {
+            return seckillWithAdmissionLease(voucherId, userId, key, null);
+        }
+        try (CommerceRuntimeMutationLeases.MutationLease lease =
+                     runtimeLeases.acquireAdmission(voucherId)) {
+            routing.requireAdmissionActive(voucherId);
+            return seckillWithAdmissionLease(voucherId, userId, key, lease);
+        }
+    }
+
+    private Map<String, Object> seckillWithAdmissionLease(
+            long voucherId,
+            long userId,
+            String key,
+            CommerceRuntimeMutationLeases.MutationLease lease
+    ) {
+        String requestFingerprint = requestFingerprint(voucherId);
+        CommerceAdmissionDurabilityService.Admission durable = durableAdmissions.prepare(
+                voucherId, userId, key, requestFingerprint, null
         );
-        if (!existing.isEmpty()) {
-            long existingVoucherId = ((Number) existing.get(0).get("voucher_id")).longValue();
-            if (existingVoucherId != voucherId) {
-                throw idempotencyConflict();
-            }
-            return orderResult(existing.get(0), "IDEMPOTENT_REPLAY");
+        if (durable.wasAccepted()) {
+            assertLease(lease);
+            return accepted(durable.orderId(), key, "IDEMPOTENT_REPLAY");
         }
-        String admissionKey = admissionKey(userId, key);
-        AdmissionIdentity pending = admissionIdentity(redis.opsForValue().get(admissionKey));
-        if (pending != null) {
-            if (pending.voucherId() != voucherId) {
-                throw idempotencyConflict();
-            }
-            return accepted(pending.orderId(), key, "IDEMPOTENT_REPLAY");
+        try {
+            AdmissionIdentity globalIdentity = reserveGlobalIdempotency(
+                    voucherId, userId, key, requestFingerprint, durable.orderId()
+            );
+            // Always execute the voucher-local Lua, including on replay. Its
+            // same-value idempotency write lets the node-bound WAIT confirm
+            // this slot rather than trusting a read from another connection.
+            Map<String, Object> response = admit(
+                    voucherId,
+                    userId,
+                    globalIdentity.orderId(),
+                    key,
+                    requestFingerprint
+            );
+            durableAdmissions.markAccepted(durable);
+            assertLease(lease);
+            return response;
+        } catch (CommerceApiException rejection) {
+            persistStableRejection(durable, rejection);
+            assertLease(lease);
+            throw rejection;
         }
-        long orderId = orderIds.nextId();
-        return admit(voucherId, userId, orderId, key);
     }
 
     Map<String, Object> replayAdmission(
@@ -148,6 +228,23 @@ public class CommerceOrderService {
         requirePositive(voucherId, "voucherId");
         requirePositive(userId, "userId");
         String key = normalizeIdempotencyKey(idempotencyKey, "dead-letter-order:" + orderId);
+        if (runtimeLeases == null) {
+            return replayAdmissionWithLease(orderId, voucherId, userId, key, null);
+        }
+        try (CommerceRuntimeMutationLeases.MutationLease lease =
+                     runtimeLeases.acquireAdmission(voucherId)) {
+            routing.requireAdmissionActive(voucherId);
+            return replayAdmissionWithLease(orderId, voucherId, userId, key, lease);
+        }
+    }
+
+    private Map<String, Object> replayAdmissionWithLease(
+            long orderId,
+            long voucherId,
+            long userId,
+            String key,
+            CommerceRuntimeMutationLeases.MutationLease lease
+    ) {
         List<Map<String, Object>> existing = jdbc.queryForList("""
                 SELECT id,status,version,user_id,voucher_id,idempotency_key
                 FROM commerce_order
@@ -167,49 +264,66 @@ public class CommerceOrderService {
                         409
                 );
             }
+            assertLease(lease);
             return orderResult(row, "IDEMPOTENT_REPLAY");
         }
-        return admit(voucherId, userId, orderId, key);
+        String fingerprint = requestFingerprint(voucherId);
+        CommerceAdmissionDurabilityService.Admission durable = durableAdmissions.prepare(
+                voucherId, userId, key, fingerprint, orderId
+        );
+        if (durable.wasAccepted()) {
+            assertLease(lease);
+            return accepted(durable.orderId(), key, "IDEMPOTENT_REPLAY");
+        }
+        try {
+            AdmissionIdentity globalIdentity = reserveGlobalIdempotency(
+                    voucherId, userId, key, fingerprint, orderId
+            );
+            if (globalIdentity.orderId() != orderId) {
+                throw new CommerceApiException(
+                        "COMMERCE_REPLAY_IDENTITY_CONFLICT",
+                        "Dead-letter order identity conflicts with the global idempotency registry",
+                        409
+                );
+            }
+            Map<String, Object> response = admit(voucherId, userId, orderId, key, fingerprint);
+            durableAdmissions.markAccepted(durable);
+            assertLease(lease);
+            return response;
+        } catch (CommerceApiException rejection) {
+            persistStableRejection(durable, rejection);
+            assertLease(lease);
+            throw rejection;
+        }
     }
 
     private Map<String, Object> admit(
             long voucherId,
             long userId,
             long orderId,
-            String idempotencyKey
+            String idempotencyKey,
+            String requestFingerprint
     ) {
-        String admissionKey = admissionKey(userId, idempotencyKey);
+        String admissionKey = admissionKey(voucherId, userId, idempotencyKey);
         Long result;
         try {
-            result = transactions.execute(status -> {
-                validateVoucherForAdmission(voucherId, Instant.now());
-                return redis.execute(
-                        SECKILL_SCRIPT,
-                        List.of(
-                                STOCK_PREFIX + voucherId,
-                                BUYER_PREFIX + voucherId,
-                                STREAM,
-                                admissionKey,
-                                FENCE_PREFIX + voucherId,
-                                inflightKey(voucherId)
-                        ),
-                        String.valueOf(userId),
-                        String.valueOf(orderId),
-                        String.valueOf(voucherId),
-                        idempotencyKey
-                );
-            });
-        } catch (CommerceApiException error) {
-            throw error;
-        } catch (RuntimeException error) {
-            throw new CommerceApiException(
-                    "COMMERCE_REDIS_UNAVAILABLE",
-                    "Seckill admission unavailable",
-                    503
+            result = replicatedRedis.executeReplicatedScript(
+                    "voucher_admission",
+                    keyspace.stock(voucherId),
+                    SECKILL_SCRIPT,
+                    admissionScriptKeys(voucherId, userId, idempotencyKey),
+                    String.valueOf(userId),
+                    String.valueOf(orderId),
+                    String.valueOf(voucherId),
+                    idempotencyKey,
+                    requestFingerprint,
+                    keyspace.activeAdmissionGateValue()
             );
+        } catch (RuntimeException error) {
+            throw admissionOutcomeUnknown(error);
         }
-        if (result == null || result == 5L) {
-            throw new CommerceApiException("COMMERCE_REDIS_UNAVAILABLE", "Seckill admission unavailable", 503);
+        if (result == null || result == 5L || result == 7L) {
+            throw admissionUnavailable();
         }
         if (result == 1L) {
             throw new CommerceApiException("SECKILL_STOCK_NOT_ENOUGH", "Voucher stock exhausted", 409);
@@ -217,11 +331,10 @@ public class CommerceOrderService {
         if (result == 2L) {
             throw new CommerceApiException("SECKILL_DUPLICATE_ORDER", "User already purchased this voucher", 409);
         }
+        if (result == 3L) {
+            return accepted(orderId, idempotencyKey, "IDEMPOTENT_REPLAY");
+        }
         if (result == 4L) {
-            AdmissionIdentity existing = admissionIdentity(redis.opsForValue().get(admissionKey));
-            if (existing != null && existing.voucherId() == voucherId) {
-                return accepted(existing.orderId(), idempotencyKey, "IDEMPOTENT_REPLAY");
-            }
             throw idempotencyConflict();
         }
         if (result == 6L) {
@@ -231,29 +344,116 @@ public class CommerceOrderService {
                     503
             );
         }
-        return accepted(
-                orderId,
-                idempotencyKey,
-                result == 3L ? "IDEMPOTENT_REPLAY" : "COMMERCE_ORDER_ACCEPTED"
+        if (result == 8L) {
+            throw new CommerceApiException("VOUCHER_NOT_AVAILABLE", "Voucher is not active", 409);
+        }
+        if (result == 9L) {
+            throw new CommerceApiException("SECKILL_NOT_STARTED", "Seckill has not started", 409);
+        }
+        if (result == 10L) {
+            throw new CommerceApiException("SECKILL_ENDED", "Seckill has ended", 409);
+        }
+        if (result == 11L) {
+            throw new CommerceApiException(
+                    "COMMERCE_ROUTING_NOT_ACTIVE",
+                    "Commerce order admission is not active for this Redis shard",
+                    503
+            );
+        }
+        if (result != 0L) {
+            throw admissionUnavailable();
+        }
+        return accepted(orderId, idempotencyKey, "COMMERCE_ORDER_ACCEPTED");
+    }
+
+    private List<String> admissionScriptKeys(
+            long voucherId,
+            long userId,
+            String idempotencyKey
+    ) {
+        return List.of(
+                keyspace.campaignMeta(voucherId),
+                keyspace.stock(voucherId),
+                keyspace.buyers(voucherId),
+                keyspace.stream(voucherId),
+                admissionKey(voucherId, userId, idempotencyKey),
+                keyspace.fence(voucherId),
+                keyspace.inflight(voucherId),
+                keyspace.admissionRoutingGate(voucherId)
         );
+    }
+
+    private void persistStableRejection(
+            CommerceAdmissionDurabilityService.Admission durable,
+            CommerceApiException rejection
+    ) {
+        if (durable.status() != CommerceAdmissionDurabilityService.Status.PREPARED) return;
+        if (switch (rejection.code()) {
+            case "SECKILL_STOCK_NOT_ENOUGH", "SECKILL_DUPLICATE_ORDER",
+                    "COMMERCE_IDEMPOTENCY_CONFLICT", "COMMERCE_REPLAY_IDENTITY_CONFLICT",
+                    "VOUCHER_NOT_AVAILABLE", "SECKILL_NOT_STARTED", "SECKILL_ENDED" -> true;
+            default -> false;
+        }) {
+            // If this write fails, markRejected throws a 503 instead of
+            // returning a rejection that future retries cannot reproduce.
+            durableAdmissions.markRejected(durable, rejection);
+        }
+    }
+
+    private AdmissionIdentity reserveGlobalIdempotency(
+            long voucherId,
+            long userId,
+            String idempotencyKey,
+            String requestFingerprint,
+            Long requiredOrderId
+    ) {
+        String registryKey = keyspace.globalIdempotency(userId, idempotencyKey);
+        long candidateOrderId;
+        try {
+            candidateOrderId = requiredOrderId == null ? orderIds.nextId() : requiredOrderId;
+            String stored = replicatedRedis.reserveGlobalIdentity(
+                    registryKey,
+                    admissionIdentity(candidateOrderId, voucherId, requestFingerprint)
+            );
+            AdmissionIdentity existing = admissionIdentity(stored);
+            if (existing == null) throw admissionUnavailable();
+            if (!existing.matches(voucherId, requestFingerprint)) {
+                throw idempotencyConflict();
+            }
+            if (requiredOrderId != null && existing.orderId() != requiredOrderId) {
+                throw new CommerceApiException(
+                        "COMMERCE_REPLAY_IDENTITY_CONFLICT",
+                        "Dead-letter order identity conflicts with the global idempotency registry",
+                        409
+                );
+            }
+            return existing;
+        } catch (CommerceApiException known) {
+            throw known;
+        } catch (RuntimeException unavailable) {
+            throw admissionUnavailable();
+        }
     }
 
     @Scheduled(fixedDelayString = "${citycopilot.commerce.stream-poll-ms:50}")
     public void consumeOrders() {
         if (!streamEnabled) return;
-        List<MapRecord<String, Object, Object>> records;
-        try {
-            records = redis.opsForStream().read(
-                    Consumer.from(GROUP, consumerName),
-                    StreamReadOptions.empty().count(streamBatchSize).block(Duration.ofMillis(250)),
-                    StreamOffset.create(STREAM, ReadOffset.lastConsumed())
-            );
-        } catch (Exception unavailable) {
-            return;
-        }
-        if (records == null) return;
-        for (MapRecord<String, Object, Object> record : records) {
-            processSafely(record);
+        // Redis Cluster cannot XREADGROUP keys from different slots in one
+        // command, so each logical hash-bucket stream is polled independently.
+        for (String stream : keyspace.streams()) {
+            try {
+                List<MapRecord<String, Object, Object>> records = redis.opsForStream().read(
+                        Consumer.from(GROUP, consumerName),
+                        StreamReadOptions.empty().count(streamBatchSize),
+                        StreamOffset.create(stream, ReadOffset.lastConsumed())
+                );
+                if (records == null) continue;
+                for (MapRecord<String, Object, Object> record : records) {
+                    processSafely(record, 1L);
+                }
+            } catch (Exception unavailable) {
+                log.debug("Commerce shard stream {} is temporarily unavailable", stream);
+            }
         }
     }
 
@@ -263,53 +463,445 @@ public class CommerceOrderService {
     )
     public void reclaimPendingOrders() {
         if (!streamEnabled) return;
-        try {
-            PendingMessages pending = redis.opsForStream().pending(
-                    STREAM,
-                    GROUP,
-                    Range.unbounded(),
-                    streamBatchSize
-            );
-            List<RecordId> stale = new ArrayList<>();
-            for (PendingMessage message : pending) {
-                if (message.getElapsedTimeSinceLastDelivery().compareTo(PENDING_MIN_IDLE) >= 0) {
-                    stale.add(message.getId());
-                }
-            }
-            if (stale.isEmpty()) return;
-            List<MapRecord<String, Object, Object>> claimed = redis.opsForStream().claim(
-                    STREAM,
-                    GROUP,
-                    consumerName,
-                    PENDING_MIN_IDLE,
-                    stale.toArray(RecordId[]::new)
-            );
-            for (MapRecord<String, Object, Object> record : claimed) {
-                processSafely(record);
-            }
-        } catch (Exception unavailable) {
-            log.warn("Unable to reclaim pending Commerce orders: {}", unavailable.getMessage());
+        for (String stream : keyspace.streams()) {
+            reclaimPendingStream(stream);
         }
     }
 
-    private void processSafely(MapRecord<String, Object, Object> record) {
+    private void reclaimPendingStream(String stream) {
+        try {
+            Range<String> scanRange = Range.unbounded();
+            String previousLastId = null;
+            while (true) {
+                PendingMessages pending = redis.opsForStream().pending(
+                        stream,
+                        GROUP,
+                        scanRange,
+                        streamBatchSize
+                );
+                if (pending == null || pending.isEmpty()) return;
+
+                List<RecordId> stale = new ArrayList<>();
+                Map<String, Long> deliveryCounts = new LinkedHashMap<>();
+                String lastId = null;
+                for (PendingMessage message : pending) {
+                    lastId = message.getIdAsString();
+                    if (message.getElapsedTimeSinceLastDelivery().compareTo(PENDING_MIN_IDLE) >= 0) {
+                        stale.add(message.getId());
+                        deliveryCounts.put(
+                                message.getIdAsString(),
+                                Math.max(1L, message.getTotalDeliveryCount() + 1L)
+                        );
+                    }
+                }
+
+                if (!stale.isEmpty()) {
+                    List<MapRecord<String, Object, Object>> claimed = redis.opsForStream().claim(
+                            stream,
+                            GROUP,
+                            consumerName,
+                            PENDING_MIN_IDLE,
+                            stale.toArray(RecordId[]::new)
+                    );
+                    if (claimed != null) {
+                        for (MapRecord<String, Object, Object> record : claimed) {
+                            processSafely(
+                                    record,
+                                    deliveryCounts.getOrDefault(record.getId().getValue(), 1L)
+                            );
+                        }
+                    }
+                }
+
+                if (pending.size() < streamBatchSize || lastId == null) return;
+                if (lastId.equals(previousLastId)) {
+                    log.warn("Commerce pending scan did not advance beyond {}; stopping this pass", lastId);
+                    return;
+                }
+                previousLastId = lastId;
+                scanRange = Range.rightUnbounded(Range.Bound.exclusive(lastId));
+            }
+        } catch (Exception unavailable) {
+            log.warn(
+                    "Unable to reclaim pending Commerce orders from {}: {}",
+                    stream,
+                    unavailable.getMessage()
+            );
+        }
+    }
+
+    @Scheduled(
+            fixedDelayString = "${citycopilot.commerce.admission-recovery-poll-ms:1000}",
+            initialDelayString = "${citycopilot.commerce.admission-recovery-poll-ms:1000}"
+    )
+    public void recoverDurableAdmissions() {
+        if (!streamEnabled) return;
+        for (CommerceAdmissionDurabilityService.Admission admission
+                : durableAdmissions.claimAcceptedBatch()) {
+            recoverDurableAdmission(admission);
+        }
+    }
+
+    private void recoverDurableAdmission(
+            CommerceAdmissionDurabilityService.Admission admission
+    ) {
+        try {
+            if (durableOrderExists(admission)) {
+                durableAdmissions.markOrderCreated(admission);
+                return;
+            }
+            AdmissionIdentity global = reserveGlobalIdempotency(
+                    admission.voucherId(),
+                    admission.userId(),
+                    admission.idempotencyKey(),
+                    admission.requestFingerprint(),
+                    admission.orderId()
+            );
+            if (global.orderId() != admission.orderId()) {
+                throw new IllegalStateException("Durable admission global identity conflicts");
+            }
+            Long result = replicatedRedis.executeReplicatedScript(
+                    "voucher_admission_recovery",
+                    keyspace.stock(admission.voucherId()),
+                    RECOVER_ADMISSION_SCRIPT,
+                    admissionScriptKeys(
+                            admission.voucherId(),
+                            admission.userId(),
+                            admission.idempotencyKey()
+                    ),
+                    String.valueOf(admission.userId()),
+                    String.valueOf(admission.orderId()),
+                    String.valueOf(admission.voucherId()),
+                    admission.idempotencyKey(),
+                    admission.requestFingerprint(),
+                    keyspace.activeAdmissionGateValue(),
+                    keyspace.drainingAdmissionGateValue()
+            );
+            if (result == null || result != 0L && result != 3L) {
+                throw new IllegalStateException(
+                        "Redis durable admission recovery returned " + result
+                );
+            }
+            durableAdmissions.releaseAfterQueueConfirmation(admission);
+        } catch (RuntimeException failure) {
+            try {
+                durableAdmissions.releaseForRetryOrRepair(admission, failure);
+            } catch (RuntimeException ledgerFailure) {
+                log.error(
+                        "Unable to record failed durable admission recovery for order {}",
+                        admission.orderId(),
+                        ledgerFailure
+                );
+            }
+        }
+    }
+
+    private boolean durableOrderExists(
+            CommerceAdmissionDurabilityService.Admission admission
+    ) {
+        List<Map<String, Object>> orders = jdbc.queryForList("""
+                SELECT id,user_id,voucher_id,idempotency_key
+                FROM commerce_order
+                WHERE id=? OR (user_id=? AND idempotency_key=?)
+                LIMIT 2
+                """, admission.orderId(), admission.userId(), admission.idempotencyKey());
+        if (orders.isEmpty()) return false;
+        if (orders.size() != 1) {
+            throw new IllegalStateException("Durable admission matches multiple Commerce orders");
+        }
+        Map<String, Object> order = orders.get(0);
+        boolean identical = ((Number) order.get("id")).longValue() == admission.orderId()
+                && ((Number) order.get("user_id")).longValue() == admission.userId()
+                && ((Number) order.get("voucher_id")).longValue() == admission.voucherId()
+                && admission.idempotencyKey().equals(String.valueOf(order.get("idempotency_key")));
+        if (!identical) {
+            throw new IllegalStateException("Durable admission conflicts with an existing Commerce order");
+        }
+        return true;
+    }
+
+    void processSafely(MapRecord<String, Object, Object> record, long deliveryCount) {
         try {
             process(record);
         } catch (RuntimeException malformed) {
-            // One malformed record must not prevent the remaining batch from
-            // progressing. Keep it pending for explicit operator recovery.
+            if (deliveryCount >= streamMaxDeliveries) {
+                deadLetterPoisonRecord(record, deliveryCount, malformed);
+                return;
+            }
             log.error(
-                    "Unable to parse Commerce order record {}; leaving it pending",
+                    "Unable to process Commerce order record {} after delivery {}; leaving it pending",
                     record.getId().getValue(),
+                    deliveryCount,
                     malformed
             );
         }
     }
 
+    private void deadLetterPoisonRecord(
+            MapRecord<String, Object, Object> record,
+            long deliveryCount,
+            RuntimeException failure
+    ) {
+        String recordId = record.getId().getValue();
+        String stream = recordStream(record);
+        String sourceId = keyspace.recoverySourceId(stream, recordId);
+        PoisonIdentity identity = poisonIdentity(record);
+        try {
+            if (identity != null && keyspace.stream(identity.voucherId()).equals(stream)) {
+                terminalizeIdentifiedPoison(
+                        record,
+                        sourceId,
+                        stream,
+                        recordId,
+                        identity,
+                        deliveryCount,
+                        failure
+                );
+            } else {
+                String message = poisonMessage(
+                        deliveryCount,
+                        "operator_repair_required; identity_unproven",
+                        failure
+                );
+                persistDeadLetter(sourceId, record.getValue(), message);
+                Long acknowledged = acknowledgeAndDelete(stream, recordId);
+                if (acknowledged == null || acknowledged != 1L) {
+                    throw new IllegalStateException("Redis did not acknowledge poison stream record");
+                }
+            }
+            log.error(
+                    "Dead-lettered poison Commerce stream record {} after {} deliveries",
+                    sourceId,
+                    deliveryCount,
+                    failure
+            );
+        } catch (RuntimeException terminalFailure) {
+            log.error(
+                    "Unable to durably dead-letter poison Commerce stream record {}; leaving it pending",
+                    sourceId,
+                    terminalFailure
+            );
+        }
+    }
+
+    private void terminalizeIdentifiedPoison(
+            MapRecord<String, Object, Object> record,
+            String sourceId,
+            String stream,
+            String recordId,
+            PoisonIdentity identity,
+            long deliveryCount,
+            RuntimeException failure
+    ) {
+        ensureRecoveryRecord(
+                sourceId,
+                identity.orderId(),
+                identity.voucherId(),
+                identity.userId(),
+                identity.idempotencyKey(),
+                record.getValue()
+        );
+        Integer durableOrder = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM commerce_order
+                WHERE id=? AND user_id=? AND voucher_id=? AND idempotency_key=?
+                """, Integer.class, identity.orderId(), identity.userId(),
+                identity.voucherId(), identity.idempotencyKey());
+        if (durableOrder != null && durableOrder == 1) {
+            durableAdmissions.markOrderCreated(
+                    identity.orderId(), identity.voucherId(), identity.userId(),
+                    identity.idempotencyKey()
+            );
+            String message = poisonMessage(
+                    deliveryCount,
+                    "durable_order_created; finalize_only",
+                    failure
+            );
+            persistPoisonTerminal(sourceId, record.getValue(), message, PHASE_ORDER_CREATED, 0);
+            finalizeStreamRecord(
+                    sourceId, stream, recordId, identity.orderId(), identity.voucherId()
+            );
+            return;
+        }
+
+        if (durableAdmissions.isDurablyAccepted(
+                identity.orderId(), identity.voucherId(), identity.userId(),
+                identity.idempotencyKey()
+        )) {
+            durableAdmissions.markRepairRequired(
+                    identity.orderId(), identity.voucherId(), identity.userId(),
+                    identity.idempotencyKey(), failure
+            );
+            String message = poisonMessage(
+                    deliveryCount,
+                    "durable_admission_preserved; operator_repair_required",
+                    failure
+            );
+            persistPoisonTerminal(
+                    sourceId, record.getValue(), message, PHASE_REPAIR_REQUIRED, 0
+            );
+            finalizeStreamRecord(
+                    sourceId, stream, recordId, identity.orderId(), identity.voucherId()
+            );
+            return;
+        }
+
+        Integer durableReservation = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM commerce_reservation
+                WHERE order_id=? AND voucher_id=? AND user_id=?
+                  AND status IN ('RESERVED','ORDER_CREATED')
+                """, Integer.class, identity.orderId(), identity.voucherId(), identity.userId());
+        String phase = recoveryPhase(sourceId);
+        if (isStreamTerminal(phase)) {
+            String message = poisonMessage(
+                    deliveryCount,
+                    "existing_terminal_phase=" + phase,
+                    failure
+            );
+            persistDeadLetter(sourceId, record.getValue(), message);
+            finalizeStreamRecord(
+                    sourceId, stream, recordId, identity.orderId(), identity.voucherId()
+            );
+            return;
+        }
+        if (durableReservation != null && durableReservation > 0) {
+            String message = poisonMessage(
+                    deliveryCount,
+                    "operator_repair_required; durable_reservation_exists",
+                    failure
+            );
+            persistPoisonTerminal(sourceId, record.getValue(), message, PHASE_REPAIR_REQUIRED, 1);
+            finalizeStreamRecord(
+                    sourceId, stream, recordId, identity.orderId(), identity.voucherId()
+            );
+            return;
+        }
+
+        if (PHASE_RECEIVED.equals(phase)) {
+            int intent = jdbc.update("""
+                    UPDATE commerce_order_recovery
+                    SET phase=?, last_error=?
+                    WHERE source_id=? AND phase=?
+                      AND (claim_token IS NULL OR claimed_until<CURRENT_TIMESTAMP(3))
+                    """, PHASE_COMPENSATION_REQUIRED, truncate(failure.getMessage()),
+                    sourceId, PHASE_RECEIVED);
+            if (intent != 1) {
+                throw new IllegalStateException("Poison recovery is owned by another worker");
+            }
+            phase = PHASE_COMPENSATION_REQUIRED;
+        }
+        if (!PHASE_COMPENSATION_REQUIRED.equals(phase)) {
+            String message = poisonMessage(
+                    deliveryCount,
+                    "operator_repair_required; unexpected_phase=" + phase,
+                    failure
+            );
+            persistPoisonTerminal(
+                    sourceId, record.getValue(), message, PHASE_REPAIR_REQUIRED, 1
+            );
+            finalizeStreamRecord(
+                    sourceId, stream, recordId, identity.orderId(), identity.voucherId()
+            );
+            return;
+        }
+
+        long compensationResult = compensate(
+                sourceId,
+                identity.voucherId(),
+                identity.userId(),
+                identity.orderId(),
+                identity.idempotencyKey()
+        );
+        boolean compensated = compensationResult == 1L;
+        String terminalPhase = compensated ? PHASE_DEAD_LETTERED : PHASE_REPAIR_REQUIRED;
+        String terminalAction = compensated
+                ? "admission_compensated; replay_safe"
+                : "operator_repair_required; compensation_result=" + compensationResult;
+        String message = poisonMessage(deliveryCount, terminalAction, failure);
+        persistPoisonTerminal(
+                sourceId,
+                record.getValue(),
+                message,
+                terminalPhase,
+                compensated ? 0 : 1
+        );
+        finalizeStreamRecord(
+                sourceId, stream, recordId, identity.orderId(), identity.voucherId()
+        );
+    }
+
+    private void persistPoisonTerminal(
+            String sourceId,
+            Map<Object, Object> payload,
+            String message,
+            String phase,
+            int compensationDelta
+    ) {
+        transactions.executeWithoutResult(status -> {
+            int terminal = jdbc.update("""
+                    UPDATE commerce_order_recovery
+                    SET phase=?, compensation_delta=?, last_error=?,
+                        terminal_at=CURRENT_TIMESTAMP(3),
+                        claim_token=NULL, claim_owner=NULL, claimed_until=NULL
+                    WHERE source_id=?
+                    """, phase, compensationDelta, message, sourceId);
+            if (terminal != 1) {
+                throw new IllegalStateException("Unable to persist poison recovery terminal phase");
+            }
+            persistDeadLetter(sourceId, payload, message);
+        });
+    }
+
+    private void persistDeadLetter(
+            String sourceId,
+            Map<Object, Object> payload,
+            String message
+    ) {
+        jdbc.update("""
+                INSERT INTO commerce_dead_letter(source_id,payload_json,error_message)
+                VALUES (?,?,?)
+                ON DUPLICATE KEY UPDATE
+                    error_message=VALUES(error_message), retry_count=retry_count+1
+                """, sourceId, json(payload), message);
+    }
+
+    private String poisonMessage(
+            long deliveryCount,
+            String terminalAction,
+            RuntimeException failure
+    ) {
+        return truncate(
+                "stream_delivery_limit=" + deliveryCount + "; "
+                        + terminalAction + "; " + failure.getMessage()
+        );
+    }
+
+    private PoisonIdentity poisonIdentity(MapRecord<String, Object, Object> record) {
+        try {
+            return new PoisonIdentity(
+                    number(record, "orderId"),
+                    number(record, "voucherId"),
+                    number(record, "userId"),
+                    text(record, "idempotencyKey")
+            );
+        } catch (RuntimeException malformed) {
+            return null;
+        }
+    }
+
+    private Long acknowledgeAndDelete(String stream, String recordId) {
+        return redis.execute(
+                ACK_DELETE_SCRIPT,
+                List.of(stream),
+                GROUP,
+                recordId
+        );
+    }
+
     void process(MapRecord<String, Object, Object> record) {
+        String stream = recordStream(record);
         if ("true".equals(String.valueOf(record.getValue().get("bootstrap")))) {
             try {
-                redis.opsForStream().acknowledge(STREAM, GROUP, record.getId());
+                acknowledgeAndDelete(stream, record.getId().getValue());
             } catch (RuntimeException unavailable) {
                 log.warn("Unable to acknowledge Commerce stream bootstrap record {}", record.getId());
             }
@@ -319,17 +911,26 @@ public class CommerceOrderService {
         long userId = number(record, "userId");
         long voucherId = number(record, "voucherId");
         String idempotencyKey = text(record, "idempotencyKey");
-        String sourceId = record.getId().getValue();
+        if (!keyspace.stream(voucherId).equals(stream)) {
+            throw new IllegalArgumentException(
+                    "Voucher was published to the wrong Commerce logical shard"
+            );
+        }
+        String recordId = record.getId().getValue();
+        String sourceId = keyspace.recoverySourceId(stream, recordId);
         try {
             ensureRecoveryRecord(sourceId, orderId, voucherId, userId, idempotencyKey, record.getValue());
         } catch (Exception persistenceFailure) {
             log.error("Unable to initialize Commerce recovery row for {}; leaving it pending", sourceId, persistenceFailure);
-            return;
+            throw new IllegalStateException("Unable to initialize Commerce recovery row", persistenceFailure);
         }
         String phase = recoveryPhase(sourceId);
         if (isStreamTerminal(phase)) {
-            finalizeStreamRecord(sourceId, orderId, voucherId);
+            finalizeStreamRecord(sourceId, stream, recordId, orderId, voucherId);
             return;
+        }
+        if (!PHASE_RECEIVED.equals(phase) && !PHASE_COMPENSATION_REQUIRED.equals(phase)) {
+            throw new IllegalStateException("Unknown Commerce recovery phase: " + phase);
         }
         String claimToken = claimRecovery(sourceId);
         if (claimToken == null) {
@@ -346,11 +947,29 @@ public class CommerceOrderService {
                             WHERE id=? AND user_id=? AND voucher_id=? AND idempotency_key=?
                             """, Integer.class, orderId, userId, voucherId, idempotencyKey);
                     if (identicalOrder != null && identicalOrder == 1) {
+                        durableAdmissions.markOrderCreated(
+                                orderId, voucherId, userId, idempotencyKey
+                        );
                         markExistingOrderCreated(sourceId, claimToken);
+                    } else if (durableAdmissions.isDurablyAccepted(
+                            orderId, voucherId, userId, idempotencyKey
+                    )) {
+                        throw new IllegalStateException(
+                                "Durably accepted order conflicts with an existing database identity",
+                                duplicate
+                        );
                     } else {
                         markCompensationRequired(sourceId, claimToken, duplicate);
                     }
                 } catch (Exception failure) {
+                    if (durableAdmissions.isDurablyAccepted(
+                            orderId, voucherId, userId, idempotencyKey
+                    )) {
+                        throw new IllegalStateException(
+                                "Durably accepted order persistence failed; leaving the Stream pending",
+                                failure
+                        );
+                    }
                     markCompensationRequired(sourceId, claimToken, failure);
                 }
                 phase = recoveryPhase(sourceId);
@@ -360,13 +979,17 @@ public class CommerceOrderService {
             }
             phase = recoveryPhase(sourceId);
             if (isStreamTerminal(phase)) {
-                finalizeStreamRecord(sourceId, orderId, voucherId);
+                finalizeStreamRecord(sourceId, stream, recordId, orderId, voucherId);
             }
         } catch (LostRecoveryClaim lostClaim) {
             log.debug("Commerce recovery ownership changed for {}", sourceId);
         } catch (Exception recoveryFailure) {
             releaseRecoveryClaim(sourceId, claimToken);
             log.error("Unable to finish Commerce order record {}; leaving it pending", sourceId, recoveryFailure);
+            throw new IllegalStateException(
+                    "Unable to finish Commerce order recovery",
+                    recoveryFailure
+            );
         }
     }
 
@@ -450,6 +1073,7 @@ public class CommerceOrderService {
                     event.get("eventId"), event.get("eventType"), event.get("aggregateType"),
                     event.get("aggregateId"), event.get("aggregateVersion"), json(event)
             );
+            durableAdmissions.markOrderCreated(orderId, voucherId, userId, idempotencyKey);
             int terminal = jdbc.update("""
                     UPDATE commerce_order_recovery
                     SET phase=?, terminal_at=CURRENT_TIMESTAMP(3),
@@ -494,27 +1118,31 @@ public class CommerceOrderService {
             long userId,
             String idempotencyKey
     ) {
+        // Commit the DB ownership check before any Redis call. If the process
+        // dies after the Lua marker is written, the same phase can replay the
+        // compensation without holding a database transaction open.
+        requireOwnedPhase(sourceId, claimToken, PHASE_COMPENSATION_REQUIRED);
+        String failure = jdbc.queryForObject(
+                "SELECT last_error FROM commerce_order_recovery WHERE source_id=?",
+                String.class,
+                sourceId
+        );
+        long compensationResult = compensate(
+                sourceId,
+                voucherId,
+                userId,
+                orderId,
+                idempotencyKey
+        );
+        boolean repairRequired = compensationResult != 1L;
+        int compensationDelta = repairRequired ? 1 : 0;
+        String terminalPhase = repairRequired ? PHASE_REPAIR_REQUIRED : PHASE_DEAD_LETTERED;
+        String recoveryMessage = repairRequired
+                ? truncate((failure == null ? "order_processing_failed" : failure)
+                + "; compensation_result=" + compensationResult)
+                : truncate(failure);
         transactions.executeWithoutResult(status -> {
             requireOwnedPhase(sourceId, claimToken, PHASE_COMPENSATION_REQUIRED);
-            String failure = jdbc.queryForObject(
-                    "SELECT last_error FROM commerce_order_recovery WHERE source_id=?",
-                    String.class,
-                    sourceId
-            );
-            long compensationResult = compensate(
-                    sourceId,
-                    voucherId,
-                    userId,
-                    orderId,
-                    idempotencyKey
-            );
-            boolean repairRequired = compensationResult != 1L;
-            int compensationDelta = repairRequired ? 1 : 0;
-            String terminalPhase = repairRequired ? PHASE_REPAIR_REQUIRED : PHASE_DEAD_LETTERED;
-            String recoveryMessage = repairRequired
-                    ? truncate((failure == null ? "order_processing_failed" : failure)
-                    + "; compensation_result=" + compensationResult)
-                    : truncate(failure);
             jdbc.update("""
                     INSERT INTO commerce_dead_letter(
                         source_id,payload_json,error_message
@@ -612,17 +1240,23 @@ public class CommerceOrderService {
                 || PHASE_RESTORED.equals(phase);
     }
 
-    void finalizeStreamRecord(String sourceId, long orderId, long voucherId) {
+    void finalizeStreamRecord(
+            String sourceId,
+            String stream,
+            String recordId,
+            long orderId,
+            long voucherId
+    ) {
         try {
             Long result = redis.execute(
                     FINALIZE_ORDER_SCRIPT,
                     List.of(
-                            inflightKey(voucherId),
-                            STREAM,
-                            COMPENSATION_MARKER_PREFIX + sourceId
+                            keyspace.inflight(voucherId),
+                            stream,
+                            keyspace.compensationMarker(voucherId, sourceId)
                     ),
-                    inflightMember(sourceId, orderId),
-                    sourceId,
+                    inflightMember(recordId, orderId),
+                    recordId,
                     GROUP
             );
             if (result == null) {
@@ -671,6 +1305,27 @@ public class CommerceOrderService {
     }
 
     public Map<String, Object> transition(long orderId, long userId, String action, Integer payType, boolean admin) {
+        if (runtimeLeases == null) {
+            return transitionWithLease(orderId, userId, action, payType, admin, null);
+        }
+        try (CommerceRuntimeMutationLeases.MutationLease lease = runtimeLeases.acquireMutation()) {
+            routing.requireRuntimeMutationActive();
+            Map<String, Object> result = transitionWithLease(
+                    orderId, userId, action, payType, admin, lease
+            );
+            lease.renewAndAssert();
+            return result;
+        }
+    }
+
+    private Map<String, Object> transitionWithLease(
+            long orderId,
+            long userId,
+            String action,
+            Integer payType,
+            boolean admin,
+            CommerceRuntimeMutationLeases.MutationLease lease
+    ) {
         Map<String, Transition> transitions = Map.of(
                 "pay", new Transition(1, 2),
                 "cancel", new Transition(1, 4),
@@ -702,6 +1357,7 @@ public class CommerceOrderService {
         boolean transitionCommitted = false;
         try {
             Boolean changed = transactions.execute(status -> {
+                assertLease(lease);
                 int updated;
                 if ("pay".equals(action)) {
                     updated = admin
@@ -731,6 +1387,9 @@ public class CommerceOrderService {
                     );
                 }
                 appendStateEvent(orderId, userId, action, transition.to());
+                // TransactionTemplate commits only after this callback returns.
+                // A lost routing lease therefore rolls back every SQL mutation.
+                assertLease(lease);
                 return true;
             });
             if (!Boolean.TRUE.equals(changed)) {
@@ -747,7 +1406,8 @@ public class CommerceOrderService {
                         recoverySourceId,
                         orderId,
                         voucherId,
-                        fenceToken
+                        fenceToken,
+                        lease
                 );
             }
             Map<String, Object> result = order(orderId, userId, admin);
@@ -767,6 +1427,7 @@ public class CommerceOrderService {
             initialDelayString = "${citycopilot.commerce.inventory-recovery-ms:5000}"
     )
     public void resumePendingInventoryRestores() {
+        if (!streamEnabled) return;
         List<Map<String, Object>> pending;
         try {
             pending = jdbc.queryForList("""
@@ -780,17 +1441,24 @@ public class CommerceOrderService {
             return;
         }
         for (Map<String, Object> row : pending) {
-            try {
+            try (CommerceRuntimeMutationLeases.MutationLease lease =
+                         runtimeLeases == null ? null : runtimeLeases.acquireRecoveryMutation()) {
                 attemptTransitionInventoryRestore(
                         String.valueOf(row.get("source_id")),
                         ((Number) row.get("order_id")).longValue(),
                         ((Number) row.get("voucher_id")).longValue(),
-                        String.valueOf(row.get("inventory_fence_token"))
+                        String.valueOf(row.get("inventory_fence_token")),
+                        lease
                 );
+                assertLease(lease);
             } catch (Exception failure) {
                 log.warn("Unable to resume inventory restore for {}", row.get("source_id"));
             }
         }
+    }
+
+    private void assertLease(CommerceRuntimeMutationLeases.MutationLease lease) {
+        if (lease != null) lease.renewAndAssert();
     }
 
     String attemptTransitionInventoryRestore(
@@ -799,14 +1467,27 @@ public class CommerceOrderService {
             long voucherId,
             String fenceToken
     ) {
+        return attemptTransitionInventoryRestore(
+                sourceId, orderId, voucherId, fenceToken, null
+        );
+    }
+
+    private String attemptTransitionInventoryRestore(
+            String sourceId,
+            long orderId,
+            long voucherId,
+            String fenceToken,
+            CommerceRuntimeMutationLeases.MutationLease lease
+    ) {
         Long restored;
         try {
+            assertLease(lease);
             restored = redis.execute(
                     RESTORE_INVENTORY_SCRIPT,
                     List.of(
-                            FENCE_PREFIX + voucherId,
-                            STOCK_PREFIX + voucherId,
-                            RESTORE_MARKER_PREFIX + sourceId
+                            keyspace.fence(voucherId),
+                            keyspace.stock(voucherId),
+                            keyspace.restoreMarker(voucherId, sourceId)
                     ),
                     fenceToken
             );
@@ -817,6 +1498,7 @@ public class CommerceOrderService {
             return PHASE_RESTORE_PENDING;
         }
         if (restored != null && (restored == 1L || restored == 2L)) {
+            assertLease(lease);
             int completed = jdbc.update("""
                     UPDATE commerce_order_recovery
                     SET phase=?, compensation_delta=0, terminal_at=CURRENT_TIMESTAMP(3)
@@ -824,22 +1506,25 @@ public class CommerceOrderService {
                     """, PHASE_RESTORED, sourceId, PHASE_RESTORE_PENDING);
             if (completed == 1) {
                 try {
-                    redis.delete(RESTORE_MARKER_PREFIX + sourceId);
+                    redis.delete(keyspace.restoreMarker(voucherId, sourceId));
                 } catch (Exception cleanupFailure) {
                     log.debug("Unable to remove completed inventory restore marker {}", sourceId);
                 }
             }
+            assertLease(lease);
             return PHASE_RESTORED;
         }
         String reason = restored != null && restored == -2L
-                ? "redis_stock_missing_during_transition_restore"
+                 ? "redis_stock_missing_during_transition_restore"
                 : "inventory_fence_expired_before_transition_restore";
+        assertLease(lease);
         jdbc.update("""
                 UPDATE commerce_order_recovery
                 SET phase=?, compensation_delta=1, last_error=?,
                     terminal_at=CURRENT_TIMESTAMP(3)
                 WHERE source_id=? AND phase=?
                 """, PHASE_REPAIR_REQUIRED, reason, sourceId, PHASE_RESTORE_PENDING);
+        assertLease(lease);
         releaseInventoryFence(voucherId, fenceToken);
         return PHASE_REPAIR_REQUIRED;
     }
@@ -898,10 +1583,10 @@ public class CommerceOrderService {
         Long result = redis.execute(
                 COMPENSATE_SCRIPT,
                 List.of(
-                        STOCK_PREFIX + voucherId,
-                        BUYER_PREFIX + voucherId,
-                        admissionKey(userId, idempotencyKey),
-                        COMPENSATION_MARKER_PREFIX + sourceId
+                        keyspace.stock(voucherId),
+                        keyspace.buyers(voucherId),
+                        admissionKey(voucherId, userId, idempotencyKey),
+                        keyspace.compensationMarker(voucherId, sourceId)
                 ),
                 String.valueOf(userId),
                 String.valueOf(orderId),
@@ -917,7 +1602,7 @@ public class CommerceOrderService {
     private String acquireInventoryFence(long voucherId) {
         String token = UUID.randomUUID().toString();
         Boolean acquired = redis.opsForValue().setIfAbsent(
-                FENCE_PREFIX + voucherId,
+                keyspace.fence(voucherId),
                 token,
                 INVENTORY_FENCE_TTL
         );
@@ -935,7 +1620,7 @@ public class CommerceOrderService {
         try {
             redis.execute(
                     RELEASE_FENCE_SCRIPT,
-                    List.of(FENCE_PREFIX + voucherId),
+                    List.of(keyspace.fence(voucherId)),
                     token
             );
         } catch (Exception failure) {
@@ -988,12 +1673,8 @@ public class CommerceOrderService {
         );
     }
 
-    private String admissionKey(long userId, String idempotencyKey) {
-        return IDEMPOTENCY_PREFIX + userId + ":" + idempotencyKey;
-    }
-
-    public static String inflightKey(long voucherId) {
-        return INFLIGHT_PREFIX + voucherId;
+    private String admissionKey(long voucherId, long userId, String idempotencyKey) {
+        return keyspace.idempotency(voucherId, userId, idempotencyKey);
     }
 
     static String inflightMember(String sourceId, long orderId) {
@@ -1002,17 +1683,52 @@ public class CommerceOrderService {
 
     private AdmissionIdentity admissionIdentity(String encoded) {
         if (encoded == null || encoded.isBlank()) return null;
-        String[] parts = encoded.split("\\|", 2);
-        if (parts.length != 2) {
+        String[] parts = encoded.split("\\|", 4);
+        if (parts.length < 2) {
             // Old numeric-only admissions cannot prove voucher identity and
             // must not be treated as a replay for an arbitrary voucher.
             return null;
         }
         try {
-            return new AdmissionIdentity(Long.parseLong(parts[0]), Long.parseLong(parts[1]));
+            return new AdmissionIdentity(
+                    Long.parseLong(parts[0]),
+                    Long.parseLong(parts[1]),
+                    parts.length >= 3 ? parts[2] : null,
+                    parts.length == 4 ? parts[3] : null
+            );
         } catch (NumberFormatException malformed) {
             return null;
         }
+    }
+
+    private String admissionIdentity(
+            long orderId,
+            long voucherId,
+            String requestFingerprint
+    ) {
+        return orderId + "|" + voucherId + "|" + requestFingerprint;
+    }
+
+    private String requestFingerprint(long voucherId) {
+        return "seckill:v1:" + voucherId;
+    }
+
+    private CommerceApiException admissionUnavailable() {
+        return new CommerceApiException(
+                "COMMERCE_REDIS_UNAVAILABLE",
+                "Seckill admission unavailable",
+                503
+        );
+    }
+
+    private CommerceApiException admissionOutcomeUnknown(RuntimeException cause) {
+        CommerceApiException error = new CommerceApiException(
+                "COMMERCE_ADMISSION_OUTCOME_UNKNOWN",
+                "Admission outcome is unknown; retry with the same Idempotency-Key",
+                503
+        );
+        error.initCause(cause);
+        return error;
     }
 
     private CommerceApiException idempotencyConflict() {
@@ -1035,18 +1751,15 @@ public class CommerceOrderService {
         return normalized;
     }
 
-    private void validateVoucherForAdmission(long voucherId, Instant now) {
-        List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT v.id,v.type,v.status,s.stock,s.begin_time,s.end_time
-                FROM commerce_voucher v
-                LEFT JOIN commerce_seckill_voucher s ON s.voucher_id=v.id
-                WHERE v.id=?
-                FOR UPDATE
-                """, voucherId);
-        if (rows.isEmpty()) {
-            throw new CommerceApiException("VOUCHER_NOT_FOUND", "Voucher not found", 404);
+    private String normalizeRequiredIdempotencyKey(String value) {
+        if (value == null || value.isBlank()) {
+            throw new CommerceApiException(
+                    "COMMERCE_IDEMPOTENCY_KEY_REQUIRED",
+                    "Idempotency-Key is required",
+                    400
+            );
         }
-        validateAdmissionConfig(rows.get(0), now);
+        return normalizeIdempotencyKey(value, "");
     }
 
     static void validateAdmissionConfig(Map<String, Object> voucher, Instant now) {
@@ -1104,6 +1817,13 @@ public class CommerceOrderService {
         return String.valueOf(value);
     }
 
+    private String recordStream(MapRecord<String, Object, Object> record) {
+        String stream = record.getStream();
+        if (stream != null) return stream;
+        if (keyspace.streams().size() == 1) return keyspace.streams().get(0);
+        throw new IllegalArgumentException("Stream record is missing its logical shard key");
+    }
+
     private void requirePositive(long value, String name) {
         if (value <= 0) throw new CommerceApiException("COMMERCE_INVALID_ARGUMENT", name + " must be positive", 400);
     }
@@ -1134,7 +1854,40 @@ public class CommerceOrderService {
 
     private record Transition(int from, int to) {}
 
-    private record AdmissionIdentity(long orderId, long voucherId) {}
+    private record AdmissionIdentity(
+            long orderId,
+            long voucherId,
+            String requestFingerprint,
+            String sourceId
+    ) {
+        private AdmissionIdentity(long orderId, long voucherId, String requestFingerprint) {
+            this(orderId, voucherId, requestFingerprint, null);
+        }
+
+        private boolean matches(long expectedVoucherId, String expectedFingerprint) {
+            return voucherId == expectedVoucherId
+                    && (requestFingerprint == null || requestFingerprint.equals(expectedFingerprint));
+        }
+    }
+
+    private record PoisonIdentity(
+            long orderId,
+            long voucherId,
+            long userId,
+            String idempotencyKey
+    ) {}
+
+    static boolean isBusyGroup(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.toUpperCase(Locale.ROOT).contains("BUSYGROUP")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
 
     private static final class LostRecoveryClaim extends RuntimeException {
     }

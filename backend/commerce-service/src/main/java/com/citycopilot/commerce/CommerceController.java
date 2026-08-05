@@ -1,5 +1,8 @@
 package com.citycopilot.commerce;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -9,36 +12,55 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/commerce/v1")
+@ConditionalOnProperty(
+        prefix = "citycopilot.commerce",
+        name = "api-enabled",
+        havingValue = "true",
+        matchIfMissing = true
+)
 public class CommerceController {
     private final CommerceOrderService orders;
     private final CommerceVoucherService vouchers;
     private final CommerceConsistencyService consistency;
     private final CommerceOperationsService operations;
+    private final CommerceRoutingGuard routing;
 
     public CommerceController(
             CommerceOrderService orders,
             CommerceVoucherService vouchers,
             CommerceConsistencyService consistency,
-            CommerceOperationsService operations
+            CommerceOperationsService operations,
+            CommerceRoutingGuard routing
     ) {
         this.orders = orders;
         this.vouchers = vouchers;
         this.consistency = consistency;
         this.operations = operations;
+        this.routing = routing;
     }
 
     @PostMapping("/seckill/{voucherId}")
-    Map<String, Object> seckill(
+    ResponseEntity<Map<String, Object>> seckill(
             @PathVariable long voucherId,
             @RequestHeader("X-CityCopilot-User-Id") long userId,
-            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
+            @RequestHeader("Idempotency-Key") String idempotencyKey
     ) {
-        return orders.seckill(voucherId, userId, idempotencyKey);
+        routing.requireAdmissionActive(voucherId);
+        Map<String, Object> result = orders.seckill(voucherId, userId, idempotencyKey);
+        ResponseEntity.BodyBuilder response = "COMMERCE_ORDER_ACCEPTED".equals(result.get("code"))
+                ? ResponseEntity.status(HttpStatus.ACCEPTED)
+                : ResponseEntity.ok();
+        Object orderId = result.get("orderId");
+        if (orderId != null) {
+            response.location(URI.create("/commerce/v1/orders/" + orderId));
+        }
+        return response.body(result);
     }
 
     @GetMapping("/orders/{orderId}")
@@ -156,6 +178,16 @@ public class CommerceController {
     ) {
         requireOpsAuthorization(opsAuthorized);
         return operations.replayDeadLetter(sourceId, actor);
+    }
+
+    @PostMapping("/ops/admissions/{orderId}/requeue")
+    Map<String, Object> requeueAdmissionRepair(
+            @PathVariable long orderId,
+            @RequestHeader(value = "X-CityCopilot-Ops-Authorized", defaultValue = "false") boolean opsAuthorized,
+            @RequestHeader(value = "X-CityCopilot-Actor", defaultValue = "unknown") String actor
+    ) {
+        requireOpsAuthorization(opsAuthorized);
+        return operations.requeueAdmissionRepair(orderId, actor);
     }
 
     private void requireOpsAuthorization(boolean authorized) {

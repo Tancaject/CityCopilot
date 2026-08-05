@@ -22,20 +22,23 @@ class CommerceRedisInventoryBootstrapTest {
         ValueOperations<String, String> values = mock(ValueOperations.class);
         @SuppressWarnings("unchecked")
         SetOperations<String, String> sets = mock(SetOperations.class);
+        CommerceRedisKeyspace keyspace = new CommerceRedisKeyspace(1, "0");
         when(redis.opsForValue()).thenReturn(values);
         when(redis.opsForSet()).thenReturn(sets);
-        when(sets.size(CommerceOrderService.inflightKey(100L))).thenReturn(0L);
-        when(sets.size(CommerceOrderService.inflightKey(101L))).thenReturn(0L);
-        when(sets.size(CommerceOrderService.inflightKey(102L))).thenReturn(1L);
-        when(values.setIfAbsent("commerce:seckill:stock:100", "8")).thenReturn(true);
-        CommerceRedisInventoryBootstrap bootstrap = new CommerceRedisInventoryBootstrap(jdbc, redis);
+        when(sets.size(keyspace.inflight(100L))).thenReturn(0L);
+        when(sets.size(keyspace.inflight(101L))).thenReturn(0L);
+        when(sets.size(keyspace.inflight(102L))).thenReturn(1L);
+        when(values.setIfAbsent(keyspace.stock(100L), "8")).thenReturn(true);
+        CommerceRedisInventoryBootstrap bootstrap = new CommerceRedisInventoryBootstrap(
+                jdbc, redis, keyspace, true
+        );
 
         assertThat(bootstrap.initializeIfFresh(100L, 8, 0, 0, 0)).isTrue();
         assertThat(bootstrap.initializeIfFresh(101L, 8, 1, 0, 0)).isFalse();
         assertThat(bootstrap.initializeIfFresh(102L, 8, 0, 0, 0)).isFalse();
 
-        verify(values).setIfAbsent("commerce:seckill:stock:100", "8");
-        verify(values, never()).setIfAbsent("commerce:seckill:stock:101", "8");
-        verify(values, never()).setIfAbsent("commerce:seckill:stock:102", "8");
+        verify(values).setIfAbsent(keyspace.stock(100L), "8");
+        verify(values, never()).setIfAbsent(keyspace.stock(101L), "8");
+        verify(values, never()).setIfAbsent(keyspace.stock(102L), "8");
     }
 }

@@ -9,7 +9,10 @@ if not admittedOrderId then
   redis.call('set', KEYS[4], '-3')
   return -3
 end
-if admittedOrderId ~= ARGV[2] .. '|' .. ARGV[4] then
+local expectedIdentity = ARGV[2] .. '|' .. ARGV[4]
+if admittedOrderId ~= expectedIdentity
+    and string.sub(admittedOrderId, 1, string.len(expectedIdentity) + 1)
+        ~= expectedIdentity .. '|' then
   redis.call('set', KEYS[4], '-1')
   return -1
 end

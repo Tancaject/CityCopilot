@@ -3,6 +3,8 @@ package com.citycopilot.commerce;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -23,14 +25,29 @@ final class CommerceRedisInventoryBootstrap {
 
     private final JdbcTemplate jdbc;
     private final StringRedisTemplate redis;
+    private final CommerceRedisKeyspace keyspace;
+    private final boolean bootstrapEnabled;
 
-    CommerceRedisInventoryBootstrap(JdbcTemplate jdbc, StringRedisTemplate redis) {
+    @Autowired
+    CommerceRedisInventoryBootstrap(
+            JdbcTemplate jdbc,
+            StringRedisTemplate redis,
+            CommerceRedisKeyspace keyspace,
+            @Value("${citycopilot.commerce.inventory-bootstrap-enabled:true}") boolean bootstrapEnabled
+    ) {
         this.jdbc = jdbc;
         this.redis = redis;
+        this.keyspace = keyspace;
+        this.bootstrapEnabled = bootstrapEnabled;
+    }
+
+    CommerceRedisInventoryBootstrap(JdbcTemplate jdbc, StringRedisTemplate redis) {
+        this(jdbc, redis, new CommerceRedisKeyspace(1, "0"), true);
     }
 
     @PostConstruct
     void initializeFreshInventory() {
+        if (!bootstrapEnabled) return;
         List<Map<String, Object>> vouchers = jdbc.queryForList("""
                 SELECT s.voucher_id,s.stock,
                        (SELECT COUNT(*) FROM commerce_order o
@@ -58,11 +75,11 @@ final class CommerceRedisInventoryBootstrap {
             long reservationCount,
             long recoveryCount
     ) {
-        String key = CommerceOrderService.STOCK_PREFIX + voucherId;
+        String key = keyspace.stock(voucherId);
         if (redis.opsForValue().get(key) != null) {
             return false;
         }
-        Long inFlight = redis.opsForSet().size(CommerceOrderService.inflightKey(voucherId));
+        Long inFlight = redis.opsForSet().size(keyspace.inflight(voucherId));
         if (orderCount != 0
                 || reservationCount != 0
                 || recoveryCount != 0

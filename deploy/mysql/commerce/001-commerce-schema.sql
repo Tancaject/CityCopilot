@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS commerce_order (
     pay_type TINYINT NULL,
     status TINYINT NOT NULL,
     version INT NOT NULL DEFAULT 0,
-    idempotency_key VARCHAR(128) NOT NULL,
+    idempotency_key VARCHAR(128) COLLATE utf8mb4_bin NOT NULL,
     create_time TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     pay_time TIMESTAMP(3) NULL,
     use_time TIMESTAMP(3) NULL,
@@ -96,7 +96,18 @@ CREATE TABLE IF NOT EXISTS commerce_outbox_event (
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (event_id),
-    KEY idx_commerce_outbox_ready (status, next_attempt_at)
+    UNIQUE KEY uk_commerce_outbox_aggregate_version (
+        aggregate_type,aggregate_id,event_type,aggregate_version
+    ),
+    KEY idx_commerce_outbox_ready (status, next_attempt_at),
+    KEY idx_commerce_outbox_claim (status, claimed_until)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS commerce_id_segment (
+    namespace VARCHAR(32) NOT NULL,
+    next_value BIGINT NOT NULL,
+    update_time TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (namespace)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS commerce_inbox_event (
@@ -124,7 +135,7 @@ CREATE TABLE IF NOT EXISTS commerce_order_recovery (
     order_id BIGINT NULL,
     voucher_id BIGINT NULL,
     user_id BIGINT NULL,
-    idempotency_key VARCHAR(128) NULL,
+    idempotency_key VARCHAR(128) COLLATE utf8mb4_bin NULL,
     payload_json LONGTEXT NULL,
     phase VARCHAR(32) NOT NULL,
     claim_token CHAR(36) NULL,
@@ -143,6 +154,37 @@ CREATE TABLE IF NOT EXISTS commerce_order_recovery (
     KEY idx_commerce_recovery_voucher (voucher_id, phase)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS commerce_admission_ledger (
+    order_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    idempotency_key VARCHAR(128) COLLATE utf8mb4_bin NOT NULL,
+    voucher_id BIGINT NOT NULL,
+    request_fingerprint VARCHAR(128) COLLATE utf8mb4_bin NOT NULL,
+    routing_generation VARCHAR(64) COLLATE utf8mb4_bin NOT NULL,
+    physical_shard_count INT NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    rejection_code VARCHAR(64) NULL,
+    rejection_http_status SMALLINT NULL,
+    rejection_message VARCHAR(255) NULL,
+    attempts INT NOT NULL DEFAULT 0,
+    claim_token CHAR(36) NULL,
+    claim_owner VARCHAR(191) NULL,
+    claimed_until TIMESTAMP(3) NULL,
+    accepted_at TIMESTAMP(3) NULL,
+    terminal_at TIMESTAMP(3) NULL,
+    last_error VARCHAR(1024) NULL,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (order_id),
+    UNIQUE KEY uk_commerce_admission_user_idempotency (user_id, idempotency_key),
+    KEY idx_commerce_admission_recovery (
+        routing_generation, physical_shard_count, status, accepted_at, claimed_until
+    ),
+    CONSTRAINT chk_commerce_admission_status CHECK (
+        status IN ('PREPARED','ACCEPTED','REJECTED','ORDER_CREATED','REPAIR_REQUIRED')
+    )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 INSERT IGNORE INTO shop_summary_projection(shop_id,shop_name,owner_user_id,source_version)
 VALUES (1,'Commerce Migration Demo Shop',1,1);
 
@@ -152,3 +194,11 @@ INSERT IGNORE INTO commerce_voucher(
 
 INSERT IGNORE INTO commerce_seckill_voucher(voucher_id,stock,begin_time,end_time)
 VALUES (100,100,CURRENT_TIMESTAMP(3)-INTERVAL 1 DAY,CURRENT_TIMESTAMP(3)+INTERVAL 30 DAY);
+
+INSERT INTO commerce_id_segment(namespace,next_value)
+SELECT 'order',COALESCE(MAX(id),0) FROM commerce_order
+ON DUPLICATE KEY UPDATE next_value=GREATEST(next_value,VALUES(next_value));
+
+INSERT INTO commerce_id_segment(namespace,next_value)
+SELECT 'voucher',COALESCE(MAX(id),0) FROM commerce_voucher
+ON DUPLICATE KEY UPDATE next_value=GREATEST(next_value,VALUES(next_value));

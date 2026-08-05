@@ -3,6 +3,7 @@ package com.citycopilot.commerce;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,15 +20,35 @@ public class CommerceOperationsService {
     private final JdbcTemplate jdbc;
     private final CommerceOrderService orders;
     private final ObjectMapper objectMapper;
+    private final CommerceRoutingGuard routing;
+    private final CommerceAdmissionDurabilityService admissions;
+    private final CommerceRuntimeMutationLeases runtimeLeases;
 
+    @Autowired
     public CommerceOperationsService(
             JdbcTemplate jdbc,
             CommerceOrderService orders,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            CommerceRoutingGuard routing,
+            CommerceAdmissionDurabilityService admissions,
+            CommerceRuntimeMutationLeases runtimeLeases
     ) {
         this.jdbc = jdbc;
         this.orders = orders;
         this.objectMapper = objectMapper;
+        this.routing = routing;
+        this.admissions = admissions;
+        this.runtimeLeases = runtimeLeases;
+    }
+
+    CommerceOperationsService(
+            JdbcTemplate jdbc,
+            CommerceOrderService orders,
+            ObjectMapper objectMapper,
+            CommerceRoutingGuard routing,
+            CommerceAdmissionDurabilityService admissions
+    ) {
+        this(jdbc, orders, objectMapper, routing, admissions, null);
     }
 
     public Map<String, Object> summary(Instant fromInclusive, Instant toExclusive) {
@@ -95,6 +116,7 @@ public class CommerceOperationsService {
 
     @Transactional
     public Map<String, Object> replayDeadLetter(String sourceId, String actor) {
+        beginTransactionalMutation();
         if (sourceId == null || sourceId.isBlank()) {
             throw new CommerceApiException(
                     "COMMERCE_INVALID_ARGUMENT",
@@ -136,6 +158,7 @@ public class CommerceOperationsService {
         String idempotencyKey = payload.get("idempotencyKey") == null
                 ? "dead-letter-order:" + orderId
                 : String.valueOf(payload.get("idempotencyKey"));
+        routing.requireAdmissionActive(voucherId);
         Map<String, Object> accepted = orders.replayAdmission(
                 orderId,
                 voucherId,
@@ -157,6 +180,24 @@ public class CommerceOperationsService {
         return Map.copyOf(result);
     }
 
+    @Transactional
+    public Map<String, Object> requeueAdmissionRepair(long orderId, String actor) {
+        beginTransactionalMutation();
+        if (orderId <= 0) {
+            throw new CommerceApiException(
+                    "COMMERCE_INVALID_ARGUMENT",
+                    "A positive orderId is required",
+                    400
+            );
+        }
+        appendAdmissionRepairRequeueAudit(orderId, actor);
+        admissions.requeueRepairRequired(orderId);
+        return Map.of(
+                "status", "requeued",
+                "orderId", String.valueOf(orderId)
+        );
+    }
+
     private Map<String, Object> payload(Object raw) {
         try {
             Map<String, Object> value = objectMapper.readValue(
@@ -173,6 +214,18 @@ public class CommerceOperationsService {
                     "Dead-letter payload cannot be replayed",
                     409
             );
+        }
+    }
+
+    private void beginTransactionalMutation() {
+        if (runtimeLeases == null) return;
+        CommerceRuntimeMutationLeases.MutationLease lease = runtimeLeases.acquireMutation();
+        try {
+            routing.requireRuntimeMutationActive();
+            runtimeLeases.releaseAfterTransaction(lease);
+        } catch (RuntimeException failure) {
+            lease.close();
+            throw failure;
         }
     }
 
@@ -246,6 +299,44 @@ public class CommerceOperationsService {
             );
         } catch (Exception error) {
             throw new IllegalStateException("Unable to persist dead-letter replay audit", error);
+        }
+    }
+
+    private void appendAdmissionRepairRequeueAudit(long orderId, String actor) {
+        String eventId = UUID.randomUUID().toString();
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("eventId", eventId);
+        event.put("eventType", "commerce.admission.repair.requeued");
+        event.put("schemaVersion", 1);
+        event.put("aggregateType", "commerce_admission_repair_requeue");
+        event.put("aggregateId", eventId);
+        event.put("aggregateVersion", 1);
+        event.put("sourceService", "commerce-service");
+        event.put("occurredAt", Instant.now().toString());
+        event.put("correlationId", String.valueOf(orderId));
+        event.put("payload", Map.of(
+                "orderId", String.valueOf(orderId),
+                "actor", actor == null || actor.isBlank() ? "unknown" : actor
+        ));
+        try {
+            jdbc.update("""
+                    INSERT INTO commerce_outbox_event(
+                        event_id,event_type,aggregate_type,aggregate_id,aggregate_version,
+                        topic,payload_json,status
+                    ) VALUES (?,?,?,?,?,'citycopilot-ops-events-v1',?,'READY')
+                    """,
+                    eventId,
+                    event.get("eventType"),
+                    event.get("aggregateType"),
+                    event.get("aggregateId"),
+                    event.get("aggregateVersion"),
+                    objectMapper.writeValueAsString(event)
+            );
+        } catch (Exception error) {
+            throw new IllegalStateException(
+                    "Unable to persist admission repair-requeue audit",
+                    error
+            );
         }
     }
 }

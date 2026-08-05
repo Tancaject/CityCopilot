@@ -2,6 +2,9 @@ package com.citycopilot.commerce;
 
 import com.citycopilot.contract.event.StockDiscrepancyDetectedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -14,21 +17,32 @@ import java.util.Map;
 import java.util.UUID;
 
 @Component
+@ConditionalOnProperty(
+        prefix = "citycopilot.commerce",
+        name = "reconciliation-enabled",
+        havingValue = "true",
+        matchIfMissing = true
+)
 public class CommerceReconciliationJob {
+    private static final Logger log = LoggerFactory.getLogger(CommerceReconciliationJob.class);
+
     private final JdbcTemplate jdbc;
     private final StringRedisTemplate redis;
     private final CommerceConsistencyService consistency;
+    private final CommerceRedisCampaignMetadata campaignMetadata;
     private final ObjectMapper objectMapper;
 
     public CommerceReconciliationJob(
             JdbcTemplate jdbc,
             StringRedisTemplate redis,
             CommerceConsistencyService consistency,
+            CommerceRedisCampaignMetadata campaignMetadata,
             ObjectMapper objectMapper
     ) {
         this.jdbc = jdbc;
         this.redis = redis;
         this.consistency = consistency;
+        this.campaignMetadata = campaignMetadata;
         this.objectMapper = objectMapper;
     }
 
@@ -38,24 +52,47 @@ public class CommerceReconciliationJob {
                 "SELECT voucher_id FROM commerce_seckill_voucher",
                 Long.class
         )) {
-            Map<String, Object> snapshot = consistency.snapshotForReconciliation(voucherId);
-            String streakKey = "commerce:metrics:seckill:discrepancy-streak:" + voucherId;
-            if (Boolean.TRUE.equals(snapshot.get("consistent"))) {
-                redis.delete(streakKey);
-                continue;
+            try {
+                reconcileVoucher(voucherId);
+            } catch (RuntimeException failure) {
+                log.error(
+                        "Commerce reconciliation failed for voucher {}; continuing with remaining vouchers",
+                        voucherId,
+                        failure
+                );
             }
-            Long streak = redis.opsForValue().increment(streakKey);
-            redis.expire(streakKey, Duration.ofHours(1));
-            if (streak == null || streak < 2) continue;
-            String incidentKey = "seckill-stock:" + voucherId;
-            Boolean claimed = redis.opsForValue().setIfAbsent(
-                    "commerce:event:stock-discrepancy:cooldown:" + voucherId,
-                    incidentKey,
-                    Duration.ofMinutes(5)
-            );
-            if (Boolean.TRUE.equals(claimed)) {
-                appendEvent(voucherId, snapshot, incidentKey);
-            }
+        }
+    }
+
+    private void reconcileVoucher(long voucherId) {
+        // This role is deployed as a singleton. Re-publishing from the
+        // database repairs metadata removed by a rolled-back admin update
+        // or by a failed afterCommit Redis refresh. Any refresh failure
+        // deletes the key and therefore keeps admission fail-closed.
+        campaignMetadata.refreshAfterCommit(voucherId);
+        Map<String, Object> snapshot = consistency.snapshotForReconciliation(voucherId);
+        String streakKey = "commerce:metrics:seckill:discrepancy-streak:" + voucherId;
+        if (Boolean.TRUE.equals(snapshot.get("consistent"))) {
+            redis.delete(streakKey);
+            return;
+        }
+        if (Boolean.TRUE.equals(snapshot.get("reconciliationFenceRequired"))) {
+            // Stop new admissions on the first quiescent stock/buyer
+            // mismatch. Incident de-duplication remains streak-based, but
+            // safety no longer waits for alert publication.
+            consistency.ensureReconciliationFence(voucherId);
+        }
+        Long streak = redis.opsForValue().increment(streakKey);
+        redis.expire(streakKey, Duration.ofHours(1));
+        if (streak == null || streak < 2) return;
+        String incidentKey = "seckill-stock:" + voucherId;
+        Boolean claimed = redis.opsForValue().setIfAbsent(
+                "commerce:event:stock-discrepancy:cooldown:" + voucherId,
+                incidentKey,
+                Duration.ofMinutes(5)
+        );
+        if (Boolean.TRUE.equals(claimed)) {
+            appendEvent(voucherId, snapshot, incidentKey);
         }
     }
 

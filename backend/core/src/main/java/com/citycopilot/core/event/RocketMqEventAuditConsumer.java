@@ -8,7 +8,9 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.apache.rocketmq.client.apis.ClientConfiguration;
+import org.apache.rocketmq.client.apis.ClientConfigurationBuilder;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
+import org.apache.rocketmq.client.apis.StaticSessionCredentialsProvider;
 import org.apache.rocketmq.client.apis.consumer.ConsumeResult;
 import org.apache.rocketmq.client.apis.consumer.FilterExpression;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
@@ -51,10 +53,7 @@ public class RocketMqEventAuditConsumer {
         if (!properties.isEnabled() || !properties.isConsumerEnabled()) {
             return;
         }
-        ClientConfiguration configuration = ClientConfiguration.newBuilder()
-                .setEndpoints(properties.getEndpoints())
-                .setRequestTimeout(properties.getRequestTimeout())
-                .build();
+        ClientConfiguration configuration = clientConfiguration(properties);
         consumer = provider.newPushConsumerBuilder()
                 .setClientConfiguration(configuration)
                 .setConsumerGroup(properties.getAuditConsumerGroup())
@@ -65,6 +64,22 @@ public class RocketMqEventAuditConsumer {
                 .setMessageListener(this::consume)
                 .setConsumptionThreadCount(2)
                 .build();
+    }
+
+    static ClientConfiguration clientConfiguration(RocketMqProperties properties) {
+        ClientConfigurationBuilder builder = ClientConfiguration.newBuilder()
+                .setEndpoints(properties.getEndpoints())
+                .setRequestTimeout(properties.getRequestTimeout())
+                .enableSsl(properties.isSslEnabled());
+        String accessKey = properties.getAccessKey() == null ? "" : properties.getAccessKey().trim();
+        String secretKey = properties.getSecretKey() == null ? "" : properties.getSecretKey().trim();
+        if (!accessKey.isEmpty() || !secretKey.isEmpty()) {
+            if (accessKey.isEmpty() || secretKey.isEmpty()) {
+                throw new IllegalStateException("RocketMQ access key and secret key must be configured together");
+            }
+            builder.setCredentialProvider(new StaticSessionCredentialsProvider(accessKey, secretKey));
+        }
+        return builder.build();
     }
 
     private ConsumeResult consume(MessageView message) {

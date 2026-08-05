@@ -1,26 +1,38 @@
 package com.citycopilot.commerce;
 
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Durable MySQL hi/lo allocator.
+ *
+ * <p>One short database transaction reserves a configurable segment; IDs
+ * inside that segment are served from memory. A crashed process only wastes
+ * the unused tail and can never cause Redis failover to reissue accepted IDs.</p>
+ */
 @Component
 final class CommerceOrderIdGenerator {
-    private static final long BEGIN_TIMESTAMP = 1_767_225_600L;
-    private static final int SEQUENCE_BITS = 32;
-    private static final long MAX_SEQUENCE = 0xffff_ffffL;
-    private static final DateTimeFormatter DAY = DateTimeFormatter
-            .ofPattern("yyyyMMdd")
-            .withZone(ZoneOffset.UTC);
+    private final JdbcTemplate jdbc;
+    private final TransactionTemplate transactions;
+    private final int segmentSize;
+    private final Map<String, LocalSegment> segments = new ConcurrentHashMap<>();
 
-    private final StringRedisTemplate redis;
-
-    CommerceOrderIdGenerator(StringRedisTemplate redis) {
-        this.redis = redis;
+    CommerceOrderIdGenerator(
+            JdbcTemplate jdbc,
+            TransactionTemplate transactions,
+            @Value("${citycopilot.commerce.id-segment-size:1024}") int segmentSize
+    ) {
+        if (segmentSize < 1 || segmentSize > 1_048_576) {
+            throw new IllegalArgumentException("Commerce ID segment size must be 1..1048576");
+        }
+        this.jdbc = jdbc;
+        this.transactions = transactions;
+        this.segmentSize = segmentSize;
     }
 
     long nextId() {
@@ -32,16 +44,62 @@ final class CommerceOrderIdGenerator {
     }
 
     private long nextId(String namespace) {
-        Instant now = Instant.now();
-        long timestamp = now.getEpochSecond() - BEGIN_TIMESTAMP;
-        String key = "commerce:id:" + namespace + ":" + DAY.format(now);
-        Long sequence = redis.opsForValue().increment(key);
-        if (sequence == null || sequence <= 0 || sequence > MAX_SEQUENCE) {
-            throw new IllegalStateException("Unable to allocate a unique commerce " + namespace + " id");
+        return segments.computeIfAbsent(namespace, ignored -> new LocalSegment())
+                .next(namespace);
+    }
+
+    private long allocateUpperBound(String namespace) {
+        Long upperBound = transactions.execute(status -> {
+            jdbc.update("""
+                    INSERT IGNORE INTO commerce_id_segment(namespace,next_value)
+                    VALUES (?,0)
+                    """, namespace);
+            Long current = jdbc.queryForObject("""
+                    SELECT next_value FROM commerce_id_segment
+                    WHERE namespace=?
+                    FOR UPDATE
+                    """, Long.class, namespace);
+            if (current == null || current < 0) {
+                throw new IllegalStateException("Commerce ID segment state is invalid");
+            }
+            final long next;
+            try {
+                next = Math.addExact(current, segmentSize);
+            } catch (ArithmeticException overflow) {
+                throw new IllegalStateException("Commerce ID sequence is exhausted", overflow);
+            }
+            int updated = jdbc.update("""
+                    UPDATE commerce_id_segment
+                    SET next_value=?,update_time=CURRENT_TIMESTAMP(3)
+                    WHERE namespace=? AND next_value=?
+                    """, next, namespace, current);
+            if (updated != 1) {
+                throw new IllegalStateException("Commerce ID segment allocation lost its database lock");
+            }
+            return next;
+        });
+        if (upperBound == null || upperBound < segmentSize) {
+            throw new IllegalStateException("Unable to allocate a durable Commerce ID segment");
         }
-        if (sequence == 1L) {
-            redis.expire(key, Duration.ofDays(2));
+        return upperBound;
+    }
+
+    private final class LocalSegment {
+        private long next;
+        private int remaining;
+
+        synchronized long next(String namespace) {
+            if (remaining == 0) {
+                long allocatedUpperBound = allocateUpperBound(namespace);
+                next = allocatedUpperBound - segmentSize + 1L;
+                remaining = segmentSize;
+            }
+            long value = next;
+            remaining--;
+            if (remaining > 0) {
+                next = Math.incrementExact(next);
+            }
+            return value;
         }
-        return (timestamp << SEQUENCE_BITS) | sequence;
     }
 }

@@ -3,6 +3,7 @@ package com.citycopilot.commerce;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -28,14 +29,19 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class CommerceOrderProcessingTest {
-    private static final String SOURCE_ID = "1720000000000-0";
+    private static final String RECORD_ID = "1720000000000-0";
+    private static final String SOURCE_ID = "0:1:0:" + RECORD_ID;
 
     private JdbcTemplate jdbc;
     private StringRedisTemplate redis;
     private TransactionTemplate transactions;
+    private CommerceOrderIdGenerator ids;
+    private CommerceAdmissionDurabilityService durableAdmissions;
+    private CommerceRedisReplicationExecutor replicatedRedis;
     private CommerceOrderService service;
 
     @BeforeEach
@@ -43,17 +49,97 @@ class CommerceOrderProcessingTest {
         jdbc = mock(JdbcTemplate.class);
         redis = mock(StringRedisTemplate.class);
         transactions = mock(TransactionTemplate.class);
-        CommerceOrderIdGenerator ids = mock(CommerceOrderIdGenerator.class);
+        ids = mock(CommerceOrderIdGenerator.class);
+        durableAdmissions = mock(CommerceAdmissionDurabilityService.class);
+        replicatedRedis = mock(CommerceRedisReplicationExecutor.class);
         service = new CommerceOrderService(
                 jdbc,
                 redis,
                 transactions,
                 new ObjectMapper(),
                 ids,
+                durableAdmissions,
+                replicatedRedis,
                 "test",
                 true,
                 10
         );
+    }
+
+    @Test
+    void admissionWithAPreallocatedIdAvoidsJdbcAndUsesOneSameSlotVoucherScript() {
+        when(durableAdmissions.prepare(
+                100L, 200L, "request-1", "seckill:v1:100", null
+        )).thenReturn(preparedAdmission());
+        when(replicatedRedis.reserveGlobalIdentity(anyString(), anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
+        when(replicatedRedis.executeReplicatedScript(
+                anyString(), anyString(), any(DefaultRedisScript.class),
+                anyList(), any(String[].class)
+        )).thenReturn(0L);
+
+        Map<String, Object> result = service.seckill(100L, 200L, "request-1");
+
+        assertThat(result.get("orderId")).isEqualTo("300");
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<List> keys = ArgumentCaptor.forClass(List.class);
+        verify(replicatedRedis).executeReplicatedScript(
+                eq("voucher_admission"),
+                anyString(),
+                any(DefaultRedisScript.class),
+                keys.capture(),
+                any(String[].class)
+        );
+        assertThat(keys.getValue()).hasSize(8);
+        assertThat(keys.getValue())
+                .allSatisfy(key -> assertThat(String.valueOf(key))
+                        .contains("{commerce:0:1:0}"));
+        verify(durableAdmissions).markAccepted(preparedAdmission());
+        verifyNoInteractions(jdbc, transactions);
+    }
+
+    @Test
+    void shardRoutingGateClosesAdmissionWhenCutoverStarts() {
+        when(durableAdmissions.prepare(
+                100L, 200L, "request-1", "seckill:v1:100", null
+        )).thenReturn(preparedAdmission());
+        when(replicatedRedis.reserveGlobalIdentity(anyString(), anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
+        when(replicatedRedis.executeReplicatedScript(
+                anyString(), anyString(), any(DefaultRedisScript.class),
+                anyList(), any(String[].class)
+        )).thenReturn(11L);
+
+        assertThatThrownBy(() -> service.seckill(100L, 200L, "request-1"))
+                .isInstanceOfSatisfying(
+                        CommerceApiException.class,
+                        error -> assertThat(error.code()).isEqualTo("COMMERCE_ROUTING_NOT_ACTIVE")
+                );
+    }
+
+    @Test
+    void replicatedAdmissionFailureReportsUnknownOutcomeAndRequiresSameKeyRetry() {
+        when(durableAdmissions.prepare(
+                100L, 200L, "request-1", "seckill:v1:100", null
+        )).thenReturn(preparedAdmission());
+        when(replicatedRedis.reserveGlobalIdentity(anyString(), anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
+        when(replicatedRedis.executeReplicatedScript(
+                anyString(), anyString(), any(DefaultRedisScript.class),
+                anyList(), any(String[].class)
+        )).thenThrow(new IllegalStateException("WAIT confirmation timed out"));
+
+        assertThatThrownBy(() -> service.seckill(100L, 200L, "request-1"))
+                .isInstanceOfSatisfying(
+                        CommerceApiException.class,
+                        error -> {
+                            assertThat(error.code()).isEqualTo(
+                                    "COMMERCE_ADMISSION_OUTCOME_UNKNOWN"
+                            );
+                            assertThat(error.getMessage()).contains("same Idempotency-Key");
+                        }
+                );
+        verify(durableAdmissions, never()).markAccepted(any());
     }
 
     @Test
@@ -125,23 +211,22 @@ class CommerceOrderProcessingTest {
 
     @Test
     void idempotencyKeyCannotReplayAnOrderForAnotherVoucher() {
-        when(jdbc.queryForList(
-                contains("WHERE user_id=? AND idempotency_key=?"),
-                eq(200L),
-                eq("request-1")
-        )).thenReturn(List.of(Map.of(
-                "id", 300L,
-                "voucher_id", 99L,
-                "status", 1,
-                "version", 0
-        )));
+        when(durableAdmissions.prepare(
+                100L, 200L, "request-1", "seckill:v1:100", null
+        )).thenReturn(preparedAdmission());
+        CommerceRedisKeyspace keyspace = new CommerceRedisKeyspace(1, "0");
+        when(replicatedRedis.reserveGlobalIdentity(
+                eq(keyspace.globalIdempotency(200L, "request-1")),
+                anyString()
+        ))
+                .thenReturn("300|99|seckill:v1:99");
 
         assertThatThrownBy(() -> service.seckill(100L, 200L, "request-1"))
                 .isInstanceOfSatisfying(
                         CommerceApiException.class,
                         error -> assertThat(error.code()).isEqualTo("COMMERCE_IDEMPOTENCY_CONFLICT")
                 );
-        verify(redis, never()).opsForValue();
+        verify(jdbc, never()).queryForList(anyString(), any(Object[].class));
     }
 
     @Test
@@ -261,7 +346,7 @@ class CommerceOrderProcessingTest {
     @SuppressWarnings("unchecked")
     private MapRecord<String, Object, Object> record() {
         MapRecord<String, Object, Object> record = mock(MapRecord.class);
-        when(record.getId()).thenReturn(RecordId.of(SOURCE_ID));
+        when(record.getId()).thenReturn(RecordId.of(RECORD_ID));
         when(record.getValue()).thenReturn(Map.of(
                 "orderId", "300",
                 "voucherId", "100",
@@ -269,5 +354,23 @@ class CommerceOrderProcessingTest {
                 "idempotencyKey", "request-1"
         ));
         return record;
+    }
+
+    private CommerceAdmissionDurabilityService.Admission preparedAdmission() {
+        return new CommerceAdmissionDurabilityService.Admission(
+                300L,
+                100L,
+                200L,
+                "request-1",
+                "seckill:v1:100",
+                CommerceAdmissionDurabilityService.Status.PREPARED,
+                null,
+                0,
+                null,
+                0,
+                null,
+                "0",
+                1
+        );
     }
 }

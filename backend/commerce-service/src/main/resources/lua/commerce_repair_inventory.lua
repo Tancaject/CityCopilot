@@ -10,5 +10,4 @@ for index = 3, #ARGV do
   redis.call('sadd', KEYS[3], ARGV[index])
 end
 redis.call('set', KEYS[2], ARGV[2])
-redis.call('del', KEYS[1])
 return targetStock

@@ -1,0 +1,53 @@
+package com.citycopilot.commerce;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.http.ResponseEntity;
+
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class CommerceExceptionAdviceTest {
+    private final CommerceExceptionAdvice advice = new CommerceExceptionAdvice();
+
+    @Test
+    void unknownAdmissionOutcomeIncludesRetryAfter() {
+        ResponseEntity<Map<String, Object>> response = advice.handle(
+                new CommerceApiException(
+                        "COMMERCE_ADMISSION_OUTCOME_UNKNOWN",
+                        "Retry with the same Idempotency-Key",
+                        503
+                )
+        );
+
+        assertThat(response.getStatusCode().value()).isEqualTo(503);
+        assertThat(response.getHeaders().getFirst("Retry-After")).isEqualTo("1");
+        assertThat(response.getBody()).containsEntry(
+                "code",
+                "COMMERCE_ADMISSION_OUTCOME_UNKNOWN"
+        );
+    }
+
+    @Test
+    void postAdmissionLeaseLossIncludesRetryAfter() {
+        ResponseEntity<Map<String, Object>> response = advice.handle(
+                new CommerceApiException(
+                        "COMMERCE_ROUTING_MUTATION_LEASE_LOST",
+                        "Admission lease could not be confirmed",
+                        503
+                )
+        );
+
+        assertThat(response.getStatusCode().value()).isEqualTo(503);
+        assertThat(response.getHeaders().getFirst("Retry-After")).isEqualTo("1");
+    }
+
+    @Test
+    void stableBusinessRejectionHasNoRetryAfter() {
+        ResponseEntity<Map<String, Object>> response = advice.handle(
+                new CommerceApiException("SECKILL_STOCK_NOT_ENOUGH", "Sold out", 409)
+        );
+
+        assertThat(response.getHeaders()).doesNotContainKey("Retry-After");
+    }
+}

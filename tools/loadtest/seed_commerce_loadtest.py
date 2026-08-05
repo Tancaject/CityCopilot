@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import socket
 import subprocess
 import time
@@ -16,8 +17,33 @@ ROOT = Path(__file__).resolve().parents[2]
 TOKENS = Path(__file__).with_name("commerce-tokens.csv")
 VOUCHER_ID = 200
 START_USER_ID = 200_000
-STREAM = "commerce:stream:orders"
 CONSUMER_GROUP = "commerce-order-workers"
+SAFE_GENERATION = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
+ROUTING_CONTROL_KEY = "commerce:{commerce-runtime}:routing"
+
+
+def java_long_hash(value: int) -> int:
+    hashed = (value ^ (value >> 32)) & 0xFFFFFFFF
+    return hashed - 0x100000000 if hashed >= 0x80000000 else hashed
+
+
+def physical_shard(voucher_id: int, shard_count: int) -> int:
+    return java_long_hash(voucher_id) % shard_count
+
+
+def shard_prefix(generation: str, shard_count: int, shard: int) -> str:
+    return f"commerce:{{commerce:{generation}:{shard_count}:{shard}}}:"
+
+
+def voucher_prefix(generation: str, shard_count: int, voucher_id: int) -> str:
+    return shard_prefix(generation, shard_count, physical_shard(voucher_id, shard_count))
+
+
+def stream_keys(generation: str, shard_count: int) -> list[str]:
+    return [
+        f"{shard_prefix(generation, shard_count, shard)}stream:orders"
+        for shard in range(shard_count)
+    ]
 
 
 def env_file() -> dict[str, str]:
@@ -82,21 +108,67 @@ def redis_cli(*arguments: str) -> list[str]:
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise RuntimeError(f"Redis command failed: {detail}")
-    return completed.stdout.splitlines()
+    lines = completed.stdout.splitlines()
+    if lines and lines[0].startswith(("ERR", "NOGROUP", "NOAUTH", "NOPERM", "WRONGTYPE")):
+        raise RuntimeError(f"Redis command failed: {lines[0]}")
+    return lines
 
 
-def stream_status() -> dict[str, object]:
-    pending_lines = redis_cli("XPENDING", STREAM, CONSUMER_GROUP)
-    group_lines = redis_cli("XINFO", "GROUPS", STREAM)
-    last_entry_lines = redis_cli("XREVRANGE", STREAM, "+", "-", "COUNT", "1")
+def routing_state(generation: str, shard_count: int, voucher_id: int) -> dict[str, str]:
+    control_lines = redis_cli("GET", ROUTING_CONTROL_KEY)
+    control = control_lines[0] if control_lines else ""
+    fields = control.split("|")
+    if len(fields) != 5 or fields[:4] != ["v1", "ACTIVE", generation, str(shard_count)]:
+        raise RuntimeError(
+            "Commerce routing control is not ACTIVE for the load-test fingerprint: "
+            f"actual={control!r}, expected={generation}/{shard_count}"
+        )
+    prefix = voucher_prefix(generation, shard_count, voucher_id)
+    gate_key = f"{prefix}runtime:routing-gate"
+    gate_lines = redis_cli("GET", gate_key)
+    gate = gate_lines[0] if gate_lines else ""
+    expected_gate = f"v1|ACTIVE|{generation}|{shard_count}"
+    if gate != expected_gate:
+        raise RuntimeError(
+            f"Commerce routing gate is not active: key={gate_key}, actual={gate!r}"
+        )
+    return {
+        "control": control,
+        "gate": gate,
+        "gateKey": gate_key,
+    }
+
+
+def one_stream_status(stream: str) -> dict[str, object]:
+    exists_lines = redis_cli("EXISTS", stream)
+    if not exists_lines or int(exists_lines[0]) == 0:
+        return {"stream": stream, "pending": 0, "lag": 0, "drained": True}
+    length = int(redis_cli("XLEN", stream)[0])
+    try:
+        pending_lines = redis_cli("XPENDING", stream, CONSUMER_GROUP)
+    except RuntimeError:
+        if length == 0:
+            return {"stream": stream, "pending": 0, "lag": 0, "drained": True}
+        raise
+    group_lines = redis_cli("XINFO", "GROUPS", stream)
+    last_entry_lines = redis_cli("XREVRANGE", stream, "+", "-", "COUNT", "1")
     pending = int(pending_lines[0]) if pending_lines and pending_lines[0] else 0
-    group = dict(zip(group_lines[0::2], group_lines[1::2]))
-    lag_text = group.get("lag", "")
+    selected: dict[str, str] = {}
+    current_group = ""
+    for field, value in zip(group_lines[0::2], group_lines[1::2]):
+        if field == "name":
+            current_group = value
+        if current_group == CONSUMER_GROUP:
+            selected[field] = value
+    if not selected:
+        raise RuntimeError(f"Consumer group {CONSUMER_GROUP} is missing for {stream}")
+    lag_text = selected.get("lag", "")
     lag = int(lag_text) if lag_text else None
     stream_tail_id = last_entry_lines[0] if last_entry_lines else None
-    last_delivered_id = group.get("last-delivered-id")
+    last_delivered_id = selected.get("last-delivered-id")
     delivered_to_tail = bool(last_delivered_id and last_delivered_id == stream_tail_id)
     return {
+        "stream": stream,
         "pending": pending,
         "lag": lag,
         "lastDeliveredId": last_delivered_id,
@@ -105,26 +177,78 @@ def stream_status() -> dict[str, object]:
     }
 
 
-def wait_for_stream_drain(timeout_seconds: int) -> None:
+def stream_status(generation: str, shard_count: int) -> dict[str, object]:
+    shards = [one_stream_status(stream) for stream in stream_keys(generation, shard_count)]
+    return {
+        "pending": sum(int(shard["pending"]) for shard in shards),
+        "lag": sum(int(shard["lag"] or 0) for shard in shards),
+        "drained": all(bool(shard["drained"]) for shard in shards),
+        "shards": shards,
+    }
+
+
+def wait_for_stream_drain(
+        timeout_seconds: int,
+        generation: str,
+        shard_count: int,
+) -> None:
     deadline = time.monotonic() + timeout_seconds
     while True:
-        status = stream_status()
+        status = stream_status(generation, shard_count)
         if status["drained"]:
             return
         if time.monotonic() >= deadline:
             raise RuntimeError(
                 "Previous seckill stream has not drained: "
+                f"generation={generation}, shards={shard_count}, "
                 f"pending={status['pending']}, lag={status['lag']}"
             )
         time.sleep(2)
 
 
-def seed(stock: int, users: int, drain_timeout_seconds: int) -> None:
-    wait_for_stream_drain(drain_timeout_seconds)
+def delete_matching_keys(pattern: str, predicate=None) -> int:
+    keys = [
+        key for key in redis_cli("--scan", "--pattern", pattern)
+        if key and (predicate is None or predicate(key))
+    ]
+    for offset in range(0, len(keys), 500):
+        redis_cli("DEL", *keys[offset:offset + 500])
+    return len(keys)
+
+
+def belongs_to_load_user(key: str, users: int) -> bool:
+    try:
+        user_id = int(key.split("}:", 1)[1].split(":", 1)[0])
+    except (IndexError, ValueError):
+        return False
+    return START_USER_ID <= user_id < START_USER_ID + users
+
+
+def belongs_to_voucher_load_user(key: str, users: int) -> bool:
+    marker = f"seckill:idempotency:{VOUCHER_ID}:"
+    try:
+        user_id = int(key.split(marker, 1)[1].split(":", 1)[0])
+    except (IndexError, ValueError):
+        return False
+    return START_USER_ID <= user_id < START_USER_ID + users
+
+
+def seed(
+        stock: int,
+        users: int,
+        drain_timeout_seconds: int,
+        generation: str,
+        shard_count: int,
+) -> None:
+    active_routing = routing_state(generation, shard_count, VOUCHER_ID)
+    wait_for_stream_drain(drain_timeout_seconds, generation, shard_count)
     mysql(f"""
 DELETE FROM commerce_dead_letter
 WHERE JSON_VALID(payload_json)
 AND JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.voucherId'))=CAST({VOUCHER_ID} AS CHAR);
+DELETE FROM commerce_admission_ledger
+WHERE voucher_id={VOUCHER_ID}
+AND user_id>={START_USER_ID} AND user_id<{START_USER_ID + users};
 DELETE FROM commerce_outbox_event
 WHERE (aggregate_type='commerce_order'
        AND aggregate_id IN (SELECT CAST(id AS CHAR) FROM commerce_order WHERE voucher_id={VOUCHER_ID}))
@@ -148,12 +272,40 @@ ON DUPLICATE KEY UPDATE stock={stock},begin_time=VALUES(begin_time),end_time=VAL
         with TOKENS.open(newline="", encoding="utf-8") as handle:
             previous_tokens = [row[0] for row in csv.reader(handle) if row]
     tokens = [uuid.uuid4().hex for _ in range(users)]
+    prefix = voucher_prefix(generation, shard_count, VOUCHER_ID)
+    stock_key = f"{prefix}seckill:stock:{VOUCHER_ID}"
+    buyers_key = f"{prefix}seckill:buyers:{VOUCHER_ID}"
+    inflight_key = f"{prefix}seckill:inflight:{VOUCHER_ID}"
+    metadata_key = f"{prefix}seckill:meta:{VOUCHER_ID}"
+    revision_key = f"{prefix}seckill:meta-revision:{VOUCHER_ID}"
+    update_fence_key = f"{prefix}seckill:meta-update-fence:{VOUCHER_ID}"
+    voucher_idempotency_removed = delete_matching_keys(
+        f"commerce:{{commerce:*}}:seckill:idempotency:{VOUCHER_ID}:*",
+        lambda key: belongs_to_voucher_load_user(key, users),
+    )
+    global_idempotency_removed = delete_matching_keys(
+        "commerce:{commerce-idempotency:*}:*",
+        lambda key: belongs_to_load_user(key, users),
+    )
+    now_millis = int(time.time() * 1000)
     commands: list[tuple[object, ...]] = [
         *(("DEL", f"login:token:{token}") for token in previous_tokens),
-        ("DEL", f"commerce:seckill:stock:{VOUCHER_ID}"),
-        ("DEL", f"commerce:seckill:buyers:{VOUCHER_ID}"),
-        ("DEL", f"commerce:seckill:inflight:{VOUCHER_ID}"),
-        ("SET", f"commerce:seckill:stock:{VOUCHER_ID}", stock),
+        ("DEL", stock_key),
+        ("DEL", buyers_key),
+        ("DEL", inflight_key),
+        ("DEL", metadata_key),
+        ("DEL", revision_key),
+        ("DEL", update_fence_key),
+        ("SET", stock_key, stock),
+        (
+            "HSET", metadata_key,
+            "voucherId", VOUCHER_ID,
+            "type", 1,
+            "status", 1,
+            "beginEpochMillis", now_millis - 86_400_000,
+            "endEpochMillis", now_millis + 86_400_000,
+            "sourceVersion", "load-test",
+        ),
     ]
     for index, token in enumerate(tokens):
         user_id = START_USER_ID + index
@@ -168,6 +320,13 @@ ON DUPLICATE KEY UPDATE stock={stock},begin_time=VALUES(begin_time),end_time=VAL
         "voucherId": VOUCHER_ID,
         "stock": stock,
         "users": users,
+        "routingGeneration": generation,
+        "physicalShardCount": shard_count,
+        "voucherShard": physical_shard(VOUCHER_ID, shard_count),
+        "routingControl": active_routing["control"],
+        "routingGate": active_routing["gate"],
+        "voucherIdempotencyRemoved": voucher_idempotency_removed,
+        "globalIdempotencyRemoved": global_idempotency_removed,
         "previousTokensRemoved": len(previous_tokens),
         "tokens": str(TOKENS),
     }, indent=2))
@@ -175,6 +334,9 @@ ON DUPLICATE KEY UPDATE stock={stock},begin_time=VALUES(begin_time),end_time=VAL
 
 def verify(
         initial_stock: int,
+        users: int,
+        generation: str,
+        shard_count: int,
         allow_unpublished: bool = False,
         expected_orders: int | None = None,
 ) -> int:
@@ -193,6 +355,21 @@ FROM commerce_reservation WHERE voucher_id={VOUCHER_ID};
 SELECT COUNT(*) FROM commerce_order_recovery
 WHERE voucher_id={VOUCHER_ID}
 AND phase IN ('RECEIVED','COMPENSATION_REQUIRED','RESTORE_PENDING');
+SELECT COUNT(*),
+       COALESCE(SUM(status='PREPARED'),0),
+       COALESCE(SUM(status='ACCEPTED'),0),
+       COALESCE(SUM(status='REPAIR_REQUIRED'),0),
+       COALESCE(SUM(status='ORDER_CREATED'),0)
+FROM commerce_admission_ledger
+WHERE voucher_id={VOUCHER_ID}
+AND routing_generation='{generation}' AND physical_shard_count={shard_count}
+AND user_id>={START_USER_ID} AND user_id<{START_USER_ID + users};
+SELECT COUNT(*) FROM commerce_admission_ledger
+WHERE voucher_id={VOUCHER_ID}
+AND user_id>={START_USER_ID} AND user_id<{START_USER_ID + users}
+AND NOT (
+  routing_generation='{generation}' AND physical_shard_count={shard_count}
+);
 """)
     order_count, distinct_users, minimum_user, maximum_user = map(int, rows[0].split("\t"))
     database_stock = int(rows[1])
@@ -200,14 +377,24 @@ AND phase IN ('RECEIVED','COMPENSATION_REQUIRED','RESTORE_PENDING');
     dead_letters = int(rows[3])
     reservation_count, order_created_reservations = map(int, rows[4].split("\t"))
     unresolved_recovery = int(rows[5])
+    (
+        ledger_count,
+        ledger_prepared,
+        ledger_accepted,
+        ledger_repair_required,
+        ledger_order_created,
+    ) = map(int, rows[6].split("\t"))
+    cross_generation_ledger = int(rows[7])
     env = env_file()
+    active_routing = routing_state(generation, shard_count, VOUCHER_ID)
+    prefix = voucher_prefix(generation, shard_count, VOUCHER_ID)
     # Read only the Commerce keys with the administrative test harness account.
     with socket.create_connection(("127.0.0.1", int(env.get("CITYCOPILOT_REDIS_PORT", "6380"))), timeout=10) as connection:
         connection.sendall(
             encode("AUTH", env["CITYCOPILOT_REDIS_PASSWORD"])
-            + encode("GET", f"commerce:seckill:stock:{VOUCHER_ID}")
-            + encode("SCARD", f"commerce:seckill:buyers:{VOUCHER_ID}")
-            + encode("SCARD", f"commerce:seckill:inflight:{VOUCHER_ID}")
+            + encode("GET", f"{prefix}seckill:stock:{VOUCHER_ID}")
+            + encode("SCARD", f"{prefix}seckill:buyers:{VOUCHER_ID}")
+            + encode("SCARD", f"{prefix}seckill:inflight:{VOUCHER_ID}")
         )
         reader = connection.makefile("rb")
         if not reader.readline().startswith(b"+OK"):
@@ -223,9 +410,23 @@ AND phase IN ('RECEIVED','COMPENSATION_REQUIRED','RESTORE_PENDING');
         if not inflight_reply.startswith(b":"):
             raise RuntimeError("Unexpected Redis in-flight SCARD response")
         redis_inflight = int(inflight_reply[1:])
-    stream = stream_status()
+    stream = stream_status(generation, shard_count)
+    current_global_prefix = (
+        f"commerce:{{commerce-idempotency:{generation}:{shard_count}:"
+    )
+    cross_generation_global_keys = [
+        key for key in redis_cli("--scan", "--pattern", "commerce:{commerce-idempotency:*}:*")
+        if key
+        and belongs_to_load_user(key, users)
+        and not key.startswith(current_global_prefix)
+    ]
     report = {
         "voucherId": VOUCHER_ID,
+        "routingGeneration": generation,
+        "physicalShardCount": shard_count,
+        "voucherShard": physical_shard(VOUCHER_ID, shard_count),
+        "routingControl": active_routing["control"],
+        "routingGate": active_routing["gate"],
         "orders": order_count,
         "distinctUsers": distinct_users,
         "userRange": [minimum_user, maximum_user],
@@ -236,9 +437,17 @@ AND phase IN ('RECEIVED','COMPENSATION_REQUIRED','RESTORE_PENDING');
         "redisBuyerCount": redis_buyers,
         "redisInFlight": redis_inflight,
         "unresolvedRecovery": unresolved_recovery,
+        "admissionLedgerCount": ledger_count,
+        "admissionLedgerPrepared": ledger_prepared,
+        "admissionLedgerAccepted": ledger_accepted,
+        "admissionLedgerRepairRequired": ledger_repair_required,
+        "admissionLedgerOrderCreated": ledger_order_created,
+        "crossGenerationAdmissionLedger": cross_generation_ledger,
+        "crossGenerationGlobalIdempotencyKeys": len(cross_generation_global_keys),
         "streamPending": stream["pending"],
         "streamLag": stream["lag"],
         "streamDrained": stream["drained"],
+        "streamShards": stream["shards"],
         "unpublishedOutbox": unpublished,
         "deadLetters": dead_letters,
         "expectedOrders": expected_orders,
@@ -259,6 +468,12 @@ AND phase IN ('RECEIVED','COMPENSATION_REQUIRED','RESTORE_PENDING');
         and order_created_reservations == order_count
         and redis_inflight == 0
         and unresolved_recovery == 0
+        and ledger_prepared == 0
+        and ledger_accepted == 0
+        and ledger_repair_required == 0
+        and ledger_order_created == order_count
+        and cross_generation_ledger == 0
+        and not cross_generation_global_keys
         and report["streamDrained"]
         and dead_letters == 0
         and outbox_valid
@@ -268,9 +483,19 @@ AND phase IN ('RECEIVED','COMPENSATION_REQUIRED','RESTORE_PENDING');
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    defaults = env_file()
     parser.add_argument("--stock", type=int, default=300)
     parser.add_argument("--users", type=int, default=300)
     parser.add_argument("--drain-timeout", type=int, default=600)
+    parser.add_argument(
+        "--routing-generation",
+        default=defaults.get("CITYCOPILOT_COMMERCE_REDIS_ROUTING_GENERATION", "v1"),
+    )
+    parser.add_argument(
+        "--physical-shard-count",
+        type=int,
+        default=int(defaults.get("CITYCOPILOT_COMMERCE_REDIS_PHYSICAL_SHARD_COUNT", "1")),
+    )
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--wait-for-drain", action="store_true")
     parser.add_argument("--expected-orders", type=int)
@@ -284,13 +509,34 @@ def main() -> int:
         parser.error("--stock must be non-negative")
     if args.users <= 0:
         parser.error("--users must be positive")
+    if not SAFE_GENERATION.fullmatch(args.routing_generation):
+        parser.error("--routing-generation must match ^[A-Za-z0-9_-]{1,24}$")
+    if not 1 <= args.physical_shard_count <= 1024:
+        parser.error("--physical-shard-count must be between 1 and 1024")
     if args.expected_orders is not None and not 0 <= args.expected_orders <= args.stock:
         parser.error("--expected-orders must be between zero and --stock")
     if args.verify:
         if args.wait_for_drain:
-            wait_for_stream_drain(args.drain_timeout)
-        return verify(args.stock, args.allow_unpublished, args.expected_orders)
-    seed(args.stock, args.users, args.drain_timeout)
+            wait_for_stream_drain(
+                args.drain_timeout,
+                args.routing_generation,
+                args.physical_shard_count,
+            )
+        return verify(
+            args.stock,
+            args.users,
+            args.routing_generation,
+            args.physical_shard_count,
+            args.allow_unpublished,
+            args.expected_orders,
+        )
+    seed(
+        args.stock,
+        args.users,
+        args.drain_timeout,
+        args.routing_generation,
+        args.physical_shard_count,
+    )
     return 0
 
 

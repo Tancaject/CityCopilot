@@ -3,6 +3,7 @@ package com.citycopilot.core.commerce;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.utils.UserHolder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
@@ -18,15 +19,23 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class CommercePortClient {
     private static final String SERVICE_TOKEN = "X-CityCopilot-Service-Token";
     private static final String USER_ID = "X-CityCopilot-User-Id";
+    private static final String RETRY_AFTER_ONE_SECOND = "1";
+    private static final Set<String> RETRYABLE_SECKILL_OUTCOME_CODES = Set.of(
+            "COMMERCE_ADMISSION_OUTCOME_UNKNOWN",
+            "COMMERCE_DURABLE_ADMISSION_UNAVAILABLE",
+            "COMMERCE_ROUTING_MUTATION_LEASE_LOST"
+    );
 
     private final RestClient client;
     private final String token;
 
+    @Autowired
     public CommercePortClient(
             @Value("${citycopilot.commerce.base-url:http://127.0.0.1:8083}") String baseUrl,
             @Value("${citycopilot.commerce.service-token:}") String token
@@ -43,6 +52,11 @@ public class CommercePortClient {
         this.token = token;
     }
 
+    CommercePortClient(RestClient client, String token) {
+        this.client = client;
+        this.token = token;
+    }
+
     public Result seckill(Long voucherId, String idempotencyKey) {
         try {
             Map<String, Object> response = client.post()
@@ -56,11 +70,21 @@ public class CommercePortClient {
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
             Object orderId = response == null ? null : response.get("orderId");
-            return Result.ok(orderId == null ? null : String.valueOf(orderId));
+            Result result = Result.ok(orderId == null ? null : String.valueOf(orderId));
+            if (response != null && response.get("code") != null) {
+                result.setCode(String.valueOf(response.get("code")));
+            }
+            return result;
         } catch (RestClientResponseException error) {
-            return failure(error);
+            throw seckillFailure(error);
         } catch (RestClientException error) {
-            return unavailable();
+            throw new CommerceHttpException(
+                    503,
+                    "COMMERCE_ADMISSION_OUTCOME_UNKNOWN",
+                    sameIdempotencyKeyRetryMessage("Admission outcome is unknown"),
+                    RETRY_AFTER_ONE_SECOND,
+                    error
+            );
         }
     }
 
@@ -328,5 +352,70 @@ public class CommercePortClient {
 
     private Result unavailable() {
         return Result.fail("COMMERCE_UNAVAILABLE", "Commerce service unavailable");
+    }
+
+    private CommerceHttpException seckillFailure(RestClientResponseException error) {
+        String code = "COMMERCE_UNAVAILABLE";
+        String message = "Commerce request failed";
+        try {
+            Map<String, Object> body = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(error.getResponseBodyAsByteArray(), Map.class);
+            code = String.valueOf(body.getOrDefault("code", code));
+            message = String.valueOf(body.getOrDefault("message", message));
+        } catch (Exception ignored) {
+            // Preserve the upstream HTTP status even when its body is malformed.
+        }
+        boolean retryableOutcome = RETRYABLE_SECKILL_OUTCOME_CODES.contains(code);
+        if (retryableOutcome) {
+            message = sameIdempotencyKeyRetryMessage(message);
+        }
+        return new CommerceHttpException(
+                error.getStatusCode().value(),
+                code,
+                message,
+                retryableOutcome ? RETRY_AFTER_ONE_SECOND : null,
+                error
+        );
+    }
+
+    private static String sameIdempotencyKeyRetryMessage(String message) {
+        String normalized = message == null || message.isBlank()
+                ? "Admission outcome is unknown"
+                : message.trim();
+        if (normalized.toLowerCase(java.util.Locale.ROOT).contains("idempotency-key")) {
+            return normalized;
+        }
+        return normalized + "; retry with the same Idempotency-Key";
+    }
+
+    public static final class CommerceHttpException extends RuntimeException {
+        private final int status;
+        private final String code;
+        private final String retryAfter;
+
+        public CommerceHttpException(
+                int status,
+                String code,
+                String message,
+                String retryAfter,
+                Throwable cause
+        ) {
+            super(message, cause);
+            this.status = status;
+            this.code = code;
+            this.retryAfter = retryAfter;
+        }
+
+        public int status() {
+            return status;
+        }
+
+        public String code() {
+            return code;
+        }
+
+        public String retryAfter() {
+            return retryAfter;
+        }
     }
 }

@@ -11,6 +11,12 @@ param(
     [ValidateRange(30, 1800)]
     [int]$DrainTimeoutSeconds = 180,
 
+    [ValidatePattern("^[A-Za-z0-9_-]{1,24}$")]
+    [string]$RoutingGeneration = "v1",
+
+    [ValidateRange(1, 1024)]
+    [int]$PhysicalShardCount = 1,
+
     [switch]$BrokerOutage,
 
     [switch]$RequireOutboxDrain,
@@ -89,7 +95,11 @@ try {
         throw "Docker Compose is unavailable"
     }
 
-    & $python (Join-Path $PSScriptRoot "seed_commerce_loadtest.py") --stock $Users --users $Users
+    & $python (Join-Path $PSScriptRoot "seed_commerce_loadtest.py") `
+        --stock $Users `
+        --users $Users `
+        --routing-generation $RoutingGeneration `
+        --physical-shard-count $PhysicalShardCount
     if ($LASTEXITCODE -ne 0) {
         throw "Commerce load-test seeding failed"
     }
@@ -112,6 +122,7 @@ try {
         "-Jthreads=$Threads",
         "-Jramp=$RampSeconds",
         "-Jtokens=$tokenProperty",
+        "-JidempotencyPrefix=$runId",
         "-Jpath=/voucher-order/seckill/200",
         "-l", $jtl,
         "-e",
@@ -148,7 +159,14 @@ try {
     }
     $drainSeconds = [Math]::Round(((Get-Date) - $drainStarted).TotalSeconds, 3)
 
-    $verifyArguments = @((Join-Path $PSScriptRoot "seed_commerce_loadtest.py"), "--stock", $Users, "--verify")
+    $verifyArguments = @(
+        (Join-Path $PSScriptRoot "seed_commerce_loadtest.py"),
+        "--stock", $Users,
+        "--users", $Users,
+        "--verify",
+        "--routing-generation", $RoutingGeneration,
+        "--physical-shard-count", $PhysicalShardCount
+    )
     if (-not $mustDrainOutbox) {
         $verifyArguments += "--allow-unpublished"
     }
@@ -184,6 +202,8 @@ try {
             "Commerce seckill with local RocketMQ relay optional"
         }
         users = $Users
+        routingGeneration = $RoutingGeneration
+        physicalShardCount = $PhysicalShardCount
         threads = $Threads
         rampSeconds = $RampSeconds
         samples = $samples.Count
