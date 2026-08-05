@@ -1,0 +1,65 @@
+server:
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  datasource:
+    hikari:
+      maximum-pool-size: "${CITYCOPILOT_DB_POOL_MAX:30}"
+      minimum-idle: "${CITYCOPILOT_DB_POOL_MIN_IDLE:5}"
+      connection-timeout: "${CITYCOPILOT_DB_CONNECTION_TIMEOUT_MS:2000}"
+      validation-timeout: "${CITYCOPILOT_DB_VALIDATION_TIMEOUT_MS:1000}"
+      idle-timeout: "${CITYCOPILOT_DB_IDLE_TIMEOUT_MS:600000}"
+      max-lifetime: "${CITYCOPILOT_DB_MAX_LIFETIME_MS:1700000}"
+      keepalive-time: "${CITYCOPILOT_DB_KEEPALIVE_MS:300000}"
+  data:
+    redis:
+      connect-timeout: "${CITYCOPILOT_REDIS_CONNECT_TIMEOUT:1s}"
+      timeout: "${CITYCOPILOT_REDIS_COMMAND_TIMEOUT:1s}"
+      cluster:
+        nodes: "${CITYCOPILOT_REDIS_CLUSTER_NODES}"
+        max-redirects: "${CITYCOPILOT_REDIS_CLUSTER_MAX_REDIRECTS:5}"
+      lettuce:
+        shutdown-timeout: 100ms
+        pool:
+          max-active: "${CITYCOPILOT_REDIS_POOL_MAX_ACTIVE:32}"
+          max-idle: "${CITYCOPILOT_REDIS_POOL_MAX_IDLE:16}"
+          min-idle: "${CITYCOPILOT_REDIS_POOL_MIN_IDLE:4}"
+          max-wait: "${CITYCOPILOT_REDIS_POOL_MAX_WAIT:500ms}"
+  task:
+    scheduling:
+      pool:
+        size: "${CITYCOPILOT_SCHEDULER_POOL_SIZE:2}"
+      shutdown:
+        await-termination: true
+        await-termination-period: 20s
+
+citycopilot:
+  projection:
+    outbox-enabled: true
+    legacy-after-commit-enabled: false
+    roles:
+      api-enabled: "${CITYCOPILOT_ROLE_API_ENABLED:true}"
+      projector-enabled: "${CITYCOPILOT_ROLE_PROJECTOR_ENABLED:false}"
+      reconciliation-enabled: "${CITYCOPILOT_ROLE_RECONCILIATION_ENABLED:false}"
+  geo:
+    auto-sync-shop-index: "${CITYCOPILOT_GEO_AUTO_SYNC_SHOP_INDEX:false}"
+    reconcile-enabled: "${CITYCOPILOT_GEO_RECONCILE_ENABLED:false}"
+  upload:
+    enabled: "${CITYCOPILOT_UPLOAD_ENABLED:false}"
+
+management:
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState,ping
+        readiness:
+          include: readinessState,db,redis
+  health:
+    elasticsearch:
+      enabled: false

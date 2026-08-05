@@ -2,6 +2,7 @@ package com.citycopilot.core.service.discovery;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.citycopilot.core.config.GeoProperties;
+import com.citycopilot.core.config.ShopSearchProperties;
 import com.citycopilot.core.dto.ShopDiscoveryItemDTO;
 import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.service.IShopService;
@@ -164,12 +165,177 @@ class LocalShopDiscoveryProviderTest {
         assertEquals(50, limit.getValue());
     }
 
+    @Test
+    void preferredCategoryReranksWithoutFilteringOtherNearbyShops() {
+        IShopService shopService = mock(IShopService.class);
+        RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
+        GeoProperties properties = properties(GeoProperties.LocalDiscoveryMode.MYSQL);
+        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(
+                shop(1L, 1L, "附近餐厅", 120.0001D, 30D),
+                shop(2L, 1L, "江畔咖啡", 120.001D, 30D)
+        ));
+
+        List<ShopDiscoveryItemDTO> items = provider(shopService, properties, redis)
+                .discover(query().setPreferredCategory("咖啡"));
+
+        assertEquals(List.of(2L, 1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
+    }
+
+    @Test
+    void elasticsearchModeUsesOrderedSearchCandidatesWithoutCallingLegacyDiscovery() {
+        IShopService shopService = mock(IShopService.class);
+        RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
+        GeoProperties geoProperties = properties(GeoProperties.LocalDiscoveryMode.MYSQL);
+        ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
+        ShopSearchProperties searchProperties = searchProperties(ShopSearchProperties.Mode.ELASTICSEARCH);
+        ShopDiscoveryQuery query = query().setKeyword("coffee");
+        when(projection.shouldSearch(query)).thenReturn(true);
+        when(projection.search(query)).thenReturn(ShopSearchProjectionService.SearchCandidates.available(List.of(
+                new ShopSearchProjectionService.SearchCandidate(
+                        shop(2L, 7L, "Second", 120.002D, 30D), 200D, 0),
+                new ShopSearchProjectionService.SearchCandidate(
+                        shop(1L, 7L, "First", 120.001D, 30D), 100D, 1)
+        ), 2));
+
+        List<ShopDiscoveryItemDTO> items = provider(
+                shopService, geoProperties, redis, projection, searchProperties
+        ).discover(query);
+
+        assertEquals(List.of(2L, 1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
+        assertEquals(List.of(0, 1), items.stream().map(ShopDiscoveryItemDTO::getSearchRank).toList());
+        verify(shopService, never()).list(any(Wrapper.class));
+        verify(redis, never()).search(anyInt(), anyDouble(), anyDouble(), anyDouble(), anyInt());
+    }
+
+    @Test
+    void elasticsearchUnavailableFallsBackToLegacyDiscovery() {
+        IShopService shopService = mock(IShopService.class);
+        RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
+        GeoProperties geoProperties = properties(GeoProperties.LocalDiscoveryMode.MYSQL);
+        ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
+        ShopDiscoveryQuery query = query().setPreferredCategory("coffee");
+        when(projection.shouldSearch(query)).thenReturn(true);
+        when(projection.search(query)).thenReturn(
+                ShopSearchProjectionService.SearchCandidates.unavailable("INDEX_NOT_READY")
+        );
+        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(
+                shop(1L, 7L, "Legacy Coffee", 120.001D, 30D)
+        ));
+
+        List<ShopDiscoveryItemDTO> items = provider(
+                shopService,
+                geoProperties,
+                redis,
+                projection,
+                searchProperties(ShopSearchProperties.Mode.ELASTICSEARCH)
+        ).discover(query);
+
+        assertEquals(List.of(1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
+        verify(shopService).list(any(Wrapper.class));
+    }
+
+    @Test
+    void availableEmptySearchResultDoesNotFallBackToLegacyDiscovery() {
+        IShopService shopService = mock(IShopService.class);
+        RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
+        ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
+        ShopDiscoveryQuery query = query().setKeyword("missing");
+        when(projection.shouldSearch(query)).thenReturn(true);
+        when(projection.search(query)).thenReturn(
+                ShopSearchProjectionService.SearchCandidates.available(List.of(), 0)
+        );
+
+        List<ShopDiscoveryItemDTO> items = provider(
+                shopService,
+                properties(GeoProperties.LocalDiscoveryMode.MYSQL),
+                redis,
+                projection,
+                searchProperties(ShopSearchProperties.Mode.ELASTICSEARCH)
+        ).discover(query);
+
+        assertTrue(items.isEmpty());
+        verify(shopService, never()).list(any(Wrapper.class));
+    }
+
+    @Test
+    void searchShadowModeAlwaysReturnsLegacyResult() {
+        IShopService shopService = mock(IShopService.class);
+        RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
+        ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
+        ShopDiscoveryQuery query = query().setKeyword("coffee");
+        when(projection.shouldSearch(query)).thenReturn(true);
+        when(projection.search(query)).thenReturn(ShopSearchProjectionService.SearchCandidates.available(List.of(
+                new ShopSearchProjectionService.SearchCandidate(
+                        shop(2L, 7L, "Search", 120.002D, 30D), 200D, 0)
+        ), 1));
+        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(
+                shop(1L, 7L, "Legacy", 120.001D, 30D)
+        ));
+
+        List<ShopDiscoveryItemDTO> items = provider(
+                shopService,
+                properties(GeoProperties.LocalDiscoveryMode.MYSQL),
+                redis,
+                projection,
+                searchProperties(ShopSearchProperties.Mode.SHADOW)
+        ).discover(query);
+
+        assertEquals(List.of(1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
+        verify(projection).search(query);
+    }
+
+    @Test
+    void queryWithoutKeywordOrPreferenceKeepsLegacyPath() {
+        IShopService shopService = mock(IShopService.class);
+        RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
+        ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
+        ShopDiscoveryQuery query = query();
+        when(projection.shouldSearch(query)).thenReturn(false);
+        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(
+                shop(1L, 7L, "Legacy", 120.001D, 30D)
+        ));
+
+        List<ShopDiscoveryItemDTO> items = provider(
+                shopService,
+                properties(GeoProperties.LocalDiscoveryMode.MYSQL),
+                redis,
+                projection,
+                searchProperties(ShopSearchProperties.Mode.ELASTICSEARCH)
+        ).discover(query);
+
+        assertEquals(List.of(1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
+        verify(projection, never()).search(any());
+    }
+
     private LocalShopDiscoveryProvider provider(
             IShopService shopService,
             GeoProperties properties,
             RedisShopGeoSearchService redis
     ) {
         return new LocalShopDiscoveryProvider(shopService, properties, redis);
+    }
+
+    private LocalShopDiscoveryProvider provider(
+            IShopService shopService,
+            GeoProperties geoProperties,
+            RedisShopGeoSearchService redis,
+            ShopSearchProjectionService projection,
+            ShopSearchProperties searchProperties
+    ) {
+        return new LocalShopDiscoveryProvider(
+                shopService,
+                geoProperties,
+                redis,
+                projection,
+                searchProperties
+        );
+    }
+
+    private ShopSearchProperties searchProperties(ShopSearchProperties.Mode mode) {
+        ShopSearchProperties properties = new ShopSearchProperties();
+        properties.setEnabled(true);
+        properties.setMode(mode);
+        return properties;
     }
 
     private GeoProperties properties(GeoProperties.LocalDiscoveryMode mode) {

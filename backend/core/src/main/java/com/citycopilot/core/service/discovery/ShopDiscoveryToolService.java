@@ -48,14 +48,15 @@ public class ShopDiscoveryToolService {
 
     @AgentTool(
             name = "search_nearby_shops",
-            description = "Search orderable local shops around the user's current location",
-            optionalParameters = {"current", "size"}
+            description = "Search orderable local shops around the user's current location, optionally prioritizing shop names that match a preferred category hint",
+            optionalParameters = {"current", "size", "preferredCategory"}
     )
     public Result searchNearby(
             Integer current,
             Integer size,
             Double x,
-            Double y
+            Double y,
+            String preferredCategory
     ) {
         if (x == null || y == null) {
             return Result.fail("SHOP_GEO_INVALID", "坐标参数不合法");
@@ -64,7 +65,17 @@ public class ShopDiscoveryToolService {
                 .setCurrent(current)
                 .setSize(size)
                 .setX(x)
-                .setY(y));
+                .setY(y)
+                .setPreferredCategory(preferredCategory));
+    }
+
+    public Result searchNearby(
+            Integer current,
+            Integer size,
+            Double x,
+            Double y
+    ) {
+        return searchNearby(current, size, x, y, null);
     }
 
     private Result discoverLocal(ShopDiscoveryQuery query) {

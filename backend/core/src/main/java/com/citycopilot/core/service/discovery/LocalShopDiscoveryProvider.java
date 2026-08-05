@@ -5,10 +5,12 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.citycopilot.core.config.GeoProperties;
+import com.citycopilot.core.config.ShopSearchProperties;
 import com.citycopilot.core.dto.ShopDiscoveryItemDTO;
 import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.service.IShopService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -30,23 +32,66 @@ public class LocalShopDiscoveryProvider implements ShopDiscoveryProvider {
     private final IShopService shopService;
     private final GeoProperties geoProperties;
     private final RedisShopGeoSearchService redisGeoSearchService;
+    private final ShopSearchProjectionService searchProjectionService;
+    private final ShopSearchProperties searchProperties;
+
+    @Autowired
+    public LocalShopDiscoveryProvider(
+            IShopService shopService,
+            GeoProperties geoProperties,
+            RedisShopGeoSearchService redisGeoSearchService,
+            ShopSearchProjectionService searchProjectionService,
+            ShopSearchProperties searchProperties
+    ) {
+        this.shopService = shopService;
+        this.geoProperties = geoProperties;
+        this.redisGeoSearchService = redisGeoSearchService;
+        this.searchProjectionService = searchProjectionService;
+        this.searchProperties = searchProperties;
+    }
 
     public LocalShopDiscoveryProvider(
             IShopService shopService,
             GeoProperties geoProperties,
             RedisShopGeoSearchService redisGeoSearchService
     ) {
-        this.shopService = shopService;
-        this.geoProperties = geoProperties;
-        this.redisGeoSearchService = redisGeoSearchService;
+        this(shopService, geoProperties, redisGeoSearchService, null, new ShopSearchProperties());
     }
 
     @Override
     public List<ShopDiscoveryItemDTO> discover(ShopDiscoveryQuery query) {
-        if (query != null && query.hasValidPoint()) {
-            return discoverByPoint(query);
+        ShopDiscoveryQuery actualQuery = query == null ? new ShopDiscoveryQuery() : query;
+        if (searchProjectionService == null || !searchProjectionService.shouldSearch(actualQuery)) {
+            return discoverLegacy(actualQuery);
         }
-        return discoverByPage(query == null ? new ShopDiscoveryQuery() : query);
+
+        if (searchProperties.resolveMode() == ShopSearchProperties.Mode.ELASTICSEARCH) {
+            ShopSearchProjectionService.SearchCandidates searchResult = searchProjectionService.search(actualQuery);
+            return searchResult.available() ? toItems(searchResult) : discoverLegacy(actualQuery);
+        }
+
+        List<ShopDiscoveryItemDTO> legacyItems = discoverLegacy(actualQuery);
+        ShopSearchProjectionService.SearchCandidates searchResult = searchProjectionService.search(actualQuery);
+        if (searchResult.available()) {
+            List<ShopDiscoveryItemDTO> searchItems = toItems(searchResult);
+            List<Long> legacyIds = itemIds(legacyItems);
+            List<Long> searchIds = itemIds(searchItems);
+            if (!legacyIds.equals(searchIds)) {
+                log.info("Elasticsearch shop shadow mismatch: legacyIds={}, searchIds={}", legacyIds, searchIds);
+            }
+        }
+        return legacyItems;
+    }
+
+    private List<ShopDiscoveryItemDTO> discoverLegacy(ShopDiscoveryQuery query) {
+        return query.hasValidPoint() ? discoverByPoint(query) : discoverByPage(query);
+    }
+
+    private List<ShopDiscoveryItemDTO> toItems(ShopSearchProjectionService.SearchCandidates result) {
+        return result.candidates().stream()
+                .map(candidate -> toItem(candidate.shop(), candidate.distanceMeters())
+                        .setSearchRank(candidate.searchRank()))
+                .toList();
     }
 
     private List<ShopDiscoveryItemDTO> discoverByPoint(ShopDiscoveryQuery query) {
@@ -160,7 +205,7 @@ public class LocalShopDiscoveryProvider implements ShopDiscoveryProvider {
             }
         }
         return items.stream()
-                .sorted(Comparator.comparing(ShopDiscoveryItemDTO::getDistance))
+                .sorted(preferenceComparator(query))
                 .toList();
     }
 
@@ -187,7 +232,7 @@ public class LocalShopDiscoveryProvider implements ShopDiscoveryProvider {
                         DiscoveryGeoUtils.distanceMeters(query.getX(), query.getY(), shop.getX(), shop.getY())
                 ))
                 .filter(item -> item.getDistance() != null && item.getDistance() <= radius)
-                .sorted(Comparator.comparing(ShopDiscoveryItemDTO::getDistance))
+                .sorted(preferenceComparator(query))
                 .limit(resolveGeoFetchLimit(query))
                 .toList();
     }
@@ -210,7 +255,29 @@ public class LocalShopDiscoveryProvider implements ShopDiscoveryProvider {
         Page<Shop> page = baseQuery(query).page(new Page<>(1, query.resolveCandidateLimit(geoProperties)));
         return page.getRecords().stream()
                 .map(shop -> toItem(shop, null))
+                .sorted(preferenceComparator(query))
                 .toList();
+    }
+
+    private Comparator<ShopDiscoveryItemDTO> preferenceComparator(ShopDiscoveryQuery query) {
+        return Comparator
+                .comparingInt((ShopDiscoveryItemDTO item) -> preferredCategoryWeight(query, item))
+                .thenComparingDouble(item -> Objects.requireNonNullElse(item.getDistance(), Double.MAX_VALUE));
+    }
+
+    private int preferredCategoryWeight(ShopDiscoveryQuery query, ShopDiscoveryItemDTO item) {
+        if (query == null || !query.hasPreferredCategory() || item == null) {
+            return 0;
+        }
+        String category = DiscoveryGeoUtils.normalize(query.normalizedPreferredCategory());
+        if (StrUtil.isBlank(category)) {
+            return 0;
+        }
+        return containsNormalized(item.getName(), category) ? 0 : 1;
+    }
+
+    private boolean containsNormalized(String value, String expected) {
+        return DiscoveryGeoUtils.normalize(value).contains(expected);
     }
 
     private QueryChainWrapper<Shop> baseQuery(ShopDiscoveryQuery query) {

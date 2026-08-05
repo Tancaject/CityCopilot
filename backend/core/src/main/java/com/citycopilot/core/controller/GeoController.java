@@ -21,12 +21,18 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 
 @RestController
 @RequestMapping("/geo")
 @RequirePermission(PermissionCodes.GEO_READ)
+@ConditionalOnProperty(
+        prefix = "citycopilot.projection.roles",
+        name = "api-enabled",
+        havingValue = "true",
+        matchIfMissing = true)
 public class GeoController {
 
     @Resource

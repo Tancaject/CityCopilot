@@ -3,11 +3,17 @@ package com.citycopilot.core.controller;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.service.FileStorageService;
 import jakarta.annotation.Resource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("upload")
+@ConditionalOnProperty(
+        prefix = "citycopilot.upload",
+        name = "enabled",
+        havingValue = "true",
+        matchIfMissing = true)
 public class UploadController {
 
     @Resource

@@ -77,10 +77,20 @@ public class ShopDiscoveryService {
 
     private Comparator<ShopDiscoveryItemDTO> discoveryComparator() {
         return Comparator
-                .comparingInt(this::distanceBand)
+                .comparingInt(this::searchRankBand)
+                .thenComparingInt(this::searchRank)
+                .thenComparingInt(this::distanceBand)
                 .thenComparingInt(this::sourceWeight)
                 .thenComparingDouble(this::distanceValue)
                 .thenComparing(item -> StrUtil.blankToDefault(item.getName(), ""));
+    }
+
+    private int searchRankBand(ShopDiscoveryItemDTO item) {
+        return item.getSearchRank() == null ? 1 : 0;
+    }
+
+    private int searchRank(ShopDiscoveryItemDTO item) {
+        return item.getSearchRank() == null ? Integer.MAX_VALUE : item.getSearchRank();
     }
 
     private int distanceBand(ShopDiscoveryItemDTO item) {

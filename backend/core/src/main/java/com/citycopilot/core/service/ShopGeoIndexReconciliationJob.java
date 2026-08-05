@@ -1,6 +1,8 @@
 package com.citycopilot.core.service;
 
+import com.citycopilot.core.config.ShopProjectionProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -17,6 +19,9 @@ public class ShopGeoIndexReconciliationJob {
 
     private final ShopGeoIndexService shopGeoIndexService;
 
+    @Autowired(required = false)
+    private ShopProjectionProperties projectionProperties;
+
     public ShopGeoIndexReconciliationJob(ShopGeoIndexService shopGeoIndexService) {
         this.shopGeoIndexService = shopGeoIndexService;
     }
@@ -26,6 +31,10 @@ public class ShopGeoIndexReconciliationJob {
             fixedDelayString = "${citycopilot.geo.reconcile-interval-ms:60000}"
     )
     public void reconcileIfNecessary() {
+        if (projectionProperties != null
+                && !projectionProperties.getRoles().isReconciliationEnabled()) {
+            return;
+        }
         if (shopGeoIndexService.isReady()) {
             return;
         }

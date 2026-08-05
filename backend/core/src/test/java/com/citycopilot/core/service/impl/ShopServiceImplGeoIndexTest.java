@@ -1,7 +1,10 @@
 package com.citycopilot.core.service.impl;
 
 import com.citycopilot.core.entity.Shop;
+import com.citycopilot.core.config.ShopProjectionProperties;
+import com.citycopilot.core.projection.ShopProjectionOutboxRepository;
 import com.citycopilot.core.service.ShopGeoIndexService;
+import com.citycopilot.core.service.discovery.ShopSearchProjectionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +16,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -22,12 +26,18 @@ class ShopServiceImplGeoIndexTest {
 
     private ShopServiceImpl service;
     private ShopGeoIndexService shopGeoIndexService;
+    private ShopSearchProjectionService shopSearchProjectionService;
+    private ShopProjectionOutboxRepository projectionOutbox;
 
     @BeforeEach
     void setUp() {
         service = new ShopServiceImpl();
         shopGeoIndexService = mock(ShopGeoIndexService.class);
+        shopSearchProjectionService = mock(ShopSearchProjectionService.class);
+        projectionOutbox = mock(ShopProjectionOutboxRepository.class);
         ReflectionTestUtils.setField(service, "shopGeoIndexService", shopGeoIndexService);
+        ReflectionTestUtils.setField(service, "shopSearchProjectionService", shopSearchProjectionService);
+        ReflectionTestUtils.setField(service, "shopProjectionOutboxRepository", projectionOutbox);
     }
 
     @AfterEach
@@ -46,6 +56,7 @@ class ShopServiceImplGeoIndexTest {
         service.refreshShopGeoIndexAfterCommit(before, after);
 
         verify(shopGeoIndexService).refreshShopGeoIndex(before, after);
+        verify(shopSearchProjectionService).upsertLatestBestEffort(1L);
     }
 
     @Test
@@ -64,6 +75,7 @@ class ShopServiceImplGeoIndexTest {
         synchronizations.get(0).afterCommit();
 
         verify(shopGeoIndexService).refreshShopGeoIndex(before, after);
+        verify(shopSearchProjectionService).upsertLatestBestEffort(1L);
     }
 
     @Test
@@ -77,6 +89,7 @@ class ShopServiceImplGeoIndexTest {
                 .afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
 
         verify(shopGeoIndexService, never()).refreshShopGeoIndex(before, after);
+        verify(shopSearchProjectionService, never()).upsertLatestBestEffort(anyLong());
     }
 
     @Test
@@ -87,6 +100,8 @@ class ShopServiceImplGeoIndexTest {
         service.refreshShopGeoIndexAfterCommit(null, after);
 
         verify(shopGeoIndexService, never()).refreshShopGeoIndex(null, after);
+        verify(shopSearchProjectionService, never()).upsertLatestBestEffort(anyLong());
+        verify(shopSearchProjectionService).markReconciliationRequired();
     }
 
     @Test
@@ -96,6 +111,43 @@ class ShopServiceImplGeoIndexTest {
                 .when(shopGeoIndexService).refreshShopGeoIndex(null, after);
 
         assertDoesNotThrow(() -> service.refreshShopGeoIndexAfterCommit(null, after));
+        verify(shopSearchProjectionService).upsertLatestBestEffort(1L);
+    }
+
+    @Test
+    void searchFailureAfterCommitDoesNotEscapeAndMarksReconciliationNeeded() {
+        Shop after = shop(1L, 10L, 120.10, 30.10, "verified");
+        doThrow(new IllegalStateException("elasticsearch unavailable"))
+                .when(shopSearchProjectionService).upsertLatestBestEffort(1L);
+
+        assertDoesNotThrow(() -> service.refreshShopGeoIndexAfterCommit(null, after));
+
+        verify(shopGeoIndexService).refreshShopGeoIndex(null, after);
+        verify(shopSearchProjectionService).markReconciliationRequired();
+    }
+
+    @Test
+    void searchProjectionReloadsLatestShopByIdAfterCommit() {
+        Shop after = shop(8L, 7L, 120.10, 30.10, "verified");
+
+        service.refreshShopGeoIndexAfterCommit(null, after);
+
+        verify(shopSearchProjectionService).upsertLatestBestEffort(8L);
+    }
+
+    @Test
+    void enabledOutboxReplacesAfterCommitDualWrite() {
+        ShopProjectionProperties properties = new ShopProjectionProperties();
+        properties.setOutboxEnabled(true);
+        ReflectionTestUtils.setField(service, "shopProjectionProperties", properties);
+        Shop before = shop(8L, 6L, 120.00, 30.00, "verified");
+        Shop after = shop(8L, 7L, 120.10, 30.10, "verified");
+
+        ReflectionTestUtils.invokeMethod(service, "recordShopChanged", before, after);
+
+        verify(projectionOutbox).append(before, after);
+        verify(shopGeoIndexService, never()).refreshShopGeoIndex(before, after);
+        verify(shopSearchProjectionService, never()).upsertLatestBestEffort(anyLong());
     }
 
     private void beginTransactionSynchronization() {

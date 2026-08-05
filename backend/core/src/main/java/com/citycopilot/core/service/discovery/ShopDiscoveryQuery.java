@@ -11,6 +11,7 @@ import lombok.experimental.Accessors;
 public class ShopDiscoveryQuery {
     private Integer typeId;
     private String keyword;
+    private String preferredCategory;
     private Integer current;
     private Integer size;
     private Double x;
@@ -55,5 +56,13 @@ public class ShopDiscoveryQuery {
 
     public String normalizedKeyword() {
         return StrUtil.blankToDefault(keyword, "").trim();
+    }
+
+    public boolean hasPreferredCategory() {
+        return StrUtil.isNotBlank(preferredCategory);
+    }
+
+    public String normalizedPreferredCategory() {
+        return StrUtil.blankToDefault(preferredCategory, "").trim();
     }
 }

@@ -3,7 +3,10 @@ package com.citycopilot.core.service.discovery;
 import com.citycopilot.core.config.GeoProperties;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.ShopDiscoveryItemDTO;
+import com.citycopilot.core.tool.CoreToolRegistry;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationContext;
 
 import java.util.List;
 
@@ -11,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,6 +52,43 @@ class ShopDiscoveryToolServiceTest {
         Result missing = service.searchNearby(1, 5, null, null);
         assertFalse(missing.getSuccess());
         assertEquals("SHOP_GEO_INVALID", missing.getCode());
+    }
+
+    @Test
+    void nearbyToolPassesPreferredCategoryToLocalDiscovery() {
+        LocalShopDiscoveryProvider provider = mock(LocalShopDiscoveryProvider.class);
+        when(provider.discover(any())).thenReturn(List.of());
+        ShopDiscoveryToolService service = new ShopDiscoveryToolService(provider, new GeoProperties());
+
+        Result result = service.searchNearby(1, 5, 120D, 30D, "火锅");
+
+        assertTrue(result.getSuccess());
+        ArgumentCaptor<ShopDiscoveryQuery> query = ArgumentCaptor.forClass(ShopDiscoveryQuery.class);
+        verify(provider).discover(query.capture());
+        assertEquals("火锅", query.getValue().getPreferredCategory());
+    }
+
+    @Test
+    void nearbyToolPublishesPreferredCategoryAsOptionalCatalogParameter() {
+        LocalShopDiscoveryProvider provider = mock(LocalShopDiscoveryProvider.class);
+        ShopDiscoveryToolService service = new ShopDiscoveryToolService(provider, new GeoProperties());
+        ApplicationContext context = mock(ApplicationContext.class);
+        when(context.getBeanDefinitionNames()).thenReturn(new String[]{"shopDiscoveryToolService"});
+        doReturn(ShopDiscoveryToolService.class).when(context).getType("shopDiscoveryToolService");
+        when(context.getBean("shopDiscoveryToolService")).thenReturn(service);
+        CoreToolRegistry registry = new CoreToolRegistry(context);
+
+        registry.afterSingletonsInstantiated();
+
+        var definition = registry.definitions().stream()
+                .filter(tool -> "search_nearby_shops".equals(tool.name()))
+                .findFirst()
+                .orElseThrow();
+        var preferredCategory = definition.parameters().stream()
+                .filter(parameter -> "preferredCategory".equals(parameter.name()))
+                .findFirst()
+                .orElseThrow();
+        assertFalse(preferredCategory.required());
     }
 
     @Test

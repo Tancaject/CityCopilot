@@ -18,6 +18,7 @@
 
     <modules>
         <module>backend/contracts</module>
+        <module>backend/search</module>
         <module>backend/commerce-service</module>
         <module>backend/core</module>
         <module>backend/agent</module>

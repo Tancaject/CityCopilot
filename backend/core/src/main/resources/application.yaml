@@ -31,6 +31,10 @@ spring:
           max-idle: 10
           min-idle: 1
           time-between-eviction-runs: 10s
+  elasticsearch:
+    uris: "${CITYCOPILOT_ELASTICSEARCH_URIS:http://127.0.0.1:9200}"
+    connection-timeout: "${CITYCOPILOT_ELASTICSEARCH_CONNECT_TIMEOUT:1s}"
+    socket-timeout: "${CITYCOPILOT_ELASTICSEARCH_SOCKET_TIMEOUT:2s}"
   servlet:
     multipart:
       max-file-size: 5MB
@@ -109,6 +113,13 @@ citycopilot:
     city-limit: true
     shop-page-size: 5
     max-shop-page-size: 20
+  search:
+    enabled: "${CITYCOPILOT_SEARCH_ENABLED:false}"
+    mode: "${CITYCOPILOT_SEARCH_MODE:mysql}"
+    index-alias: "${CITYCOPILOT_SEARCH_INDEX_ALIAS:citycopilot-shop-search}"
+    max-page-size: "${CITYCOPILOT_SEARCH_MAX_PAGE_SIZE:500}"
+    reconcile-interval-ms: "${CITYCOPILOT_SEARCH_RECONCILE_INTERVAL_MS:60000}"
+    recovery-probe-interval-ms: "${CITYCOPILOT_SEARCH_RECOVERY_PROBE_INTERVAL_MS:5000}"
   amap:
     web-service-key: "${CITYCOPILOT_AMAP_WEB_SERVICE_KEY:}"
     geocode-url: https://restapi.amap.com/v3/geocode/geo
@@ -129,6 +140,9 @@ citycopilot:
   rocketmq:
     enabled: "${CITYCOPILOT_ROCKETMQ_ENABLED:true}"
     consumer-enabled: "${CITYCOPILOT_ROCKETMQ_CONSUMER_ENABLED:true}"
+    ssl-enabled: "${CITYCOPILOT_ROCKETMQ_SSL_ENABLED:false}"
+    access-key: "${CITYCOPILOT_ROCKETMQ_ACCESS_KEY:}"
+    secret-key: "${CITYCOPILOT_ROCKETMQ_SECRET_KEY:}"
     endpoints: "${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}"
     commerce-topic: citycopilot-commerce-events-v1
     ops-topic: citycopilot-ops-events-v1
@@ -144,6 +158,9 @@ management:
     health:
       probes:
         enabled: true
+  health:
+    elasticsearch:
+      enabled: false
   metrics:
     tags:
       application: city-copilot

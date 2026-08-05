@@ -14,6 +14,7 @@ import com.citycopilot.core.service.discovery.LegacyShopGeoQueryAdapter;
 import com.citycopilot.core.service.discovery.ShopDiscoveryQuery;
 import com.citycopilot.core.service.discovery.ShopDiscoveryService;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import jakarta.annotation.Resource;
 
@@ -25,6 +26,11 @@ import jakarta.annotation.Resource;
  */
 @RestController
 @RequestMapping("/shop")
+@ConditionalOnProperty(
+        prefix = "citycopilot.projection.roles",
+        name = "api-enabled",
+        havingValue = "true",
+        matchIfMissing = true)
 public class ShopController {
 
     @Resource

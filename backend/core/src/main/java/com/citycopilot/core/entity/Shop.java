@@ -2,6 +2,7 @@ package com.citycopilot.core.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -130,6 +131,17 @@ public class Shop implements Serializable {
      * 更新时间
      */
     private LocalDateTime updateTime;
+
+    /**
+     * Monotonic source version used by rebuildable search and GEO projections.
+     * It is advanced in the same transaction that appends ShopChanged to the
+     * projection outbox.
+     */
+    @TableField(
+            value = "projection_version",
+            insertStrategy = FieldStrategy.NEVER,
+            updateStrategy = FieldStrategy.NEVER)
+    private Long projectionVersion;
 
 
     @TableField(exist = false)

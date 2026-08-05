@@ -41,11 +41,15 @@ public class RedisShopGeoSearchService {
             double radiusMeters,
             int limit
     ) {
-        String key = typeId == null ? SHOP_GEO_ALL_KEY : SHOP_GEO_KEY + typeId;
         String generation = shopGeoIndexService.readyGeneration();
         if (generation == null) {
             return SearchResult.notReady();
         }
+        String key = generation.startsWith("v2:")
+                ? shopGeoIndexService.keyForGeneration(
+                        generation,
+                        typeId == null ? null : typeId.longValue())
+                : typeId == null ? SHOP_GEO_ALL_KEY : SHOP_GEO_KEY + typeId;
 
         GeoResults<RedisGeoCommands.GeoLocation<String>> results = redisTemplate.opsForGeo().search(
                 key,

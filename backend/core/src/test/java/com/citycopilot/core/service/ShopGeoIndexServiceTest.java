@@ -2,8 +2,13 @@ package com.citycopilot.core.service;
 
 import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.mapper.ShopMapper;
+import com.citycopilot.core.config.ShopProjectionProperties;
+import com.citycopilot.core.projection.ShopProjectionLeaseService;
+import com.citycopilot.core.projection.ShopProjectionOutboxRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.data.geo.Point;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.GeoOperations;
@@ -11,10 +16,13 @@ import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
+import java.util.function.Supplier;
 
 import static com.citycopilot.core.utils.RedisConstants.SHOP_GEO_ALL_KEY;
 import static com.citycopilot.core.utils.RedisConstants.SHOP_GEO_INDEX_META_KEY;
@@ -29,6 +37,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
@@ -199,6 +208,66 @@ class ShopGeoIndexServiceTest {
 
         assertFalse(service.isReady());
         verify(valueOperations, times(1)).get(SHOP_GEO_INDEX_READY_KEY);
+    }
+
+    @Test
+    void versionedRefreshUsesOneAtomicScriptOnTheActiveGeneration() {
+        String generation = "v2:9:test";
+        when(valueOperations.get(SHOP_GEO_INDEX_READY_KEY)).thenReturn(generation);
+        when(redisTemplate.execute(
+                any(RedisScript.class),
+                any(List.class),
+                any(Object[].class))).thenReturn(1L);
+        Shop current = shop(1L, 11L, 121.20, 31.20, "verified");
+
+        service.refreshShopGeoIndexVersioned(current, 4L);
+
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<RedisScript> script = ArgumentCaptor.forClass(RedisScript.class);
+        verify(redisTemplate).execute(
+                script.capture(),
+                argThat(keys -> keys.size() == 4
+                        && String.valueOf(keys.get(0)).contains("{projection}")
+                        && String.valueOf(keys.get(2)).endsWith(":all")
+                        && String.valueOf(keys.get(3)).endsWith(":type:11")),
+                any(Object[].class));
+        assertTrue(script.getValue().getScriptAsString().contains("current >= incoming"));
+    }
+
+    @Test
+    void generationRebuildCatchesUpBothClosedWatermarksBeforePublication() {
+        ShopProjectionLeaseService leases = mock(ShopProjectionLeaseService.class);
+        ShopProjectionLeaseService.Lease lease = mock(ShopProjectionLeaseService.Lease.class);
+        ShopProjectionOutboxRepository outbox = mock(ShopProjectionOutboxRepository.class);
+        ReflectionTestUtils.setField(service, "projectionLeaseService", leases);
+        ReflectionTestUtils.setField(service, "projectionProperties", new ShopProjectionProperties());
+        ReflectionTestUtils.setField(service, "projectionOutboxRepository", outbox);
+        when(leases.tryAcquire(anyString(), any())).thenReturn(Optional.of(lease));
+        when(lease.fencingToken()).thenReturn(9L);
+        when(lease.executeCutoverFenced(any())).thenAnswer(invocation ->
+                ((Supplier<?>) invocation.getArgument(0)).get());
+        when(outbox.highWatermark()).thenReturn(10L, 11L, 12L);
+        when(outbox.changesAfter(10L, 11L, 500)).thenReturn(List.of(
+                new ShopProjectionOutboxRepository.ProjectionChange(11L, 1L, 2L)));
+        when(outbox.changesAfter(11L, 12L, 500)).thenReturn(List.of(
+                new ShopProjectionOutboxRepository.ProjectionChange(12L, 1L, 3L)));
+        Shop base = shop(1L, 10L, 120D, 30D, "verified").setProjectionVersion(1L);
+        Shop current = shop(1L, 11L, 121D, 31D, "verified").setProjectionVersion(3L);
+        when(shopMapper.selectList(null)).thenReturn(List.of(base));
+        when(shopMapper.selectBatchIds(any(Collection.class))).thenReturn(List.of(current));
+        when(redisTemplate.execute(
+                any(RedisScript.class), any(List.class), any(Object[].class))).thenReturn(1L);
+
+        assertEquals(1, service.syncShopGeoIndex());
+
+        InOrder publicationOrder = inOrder(redisTemplate, valueOperations);
+        publicationOrder.verify(redisTemplate, times(2)).execute(
+                any(RedisScript.class), any(List.class), any(Object[].class));
+        publicationOrder.verify(valueOperations).set(
+                eq(SHOP_GEO_INDEX_READY_KEY), argThat(value -> value.startsWith("v2:9:")));
+        verify(outbox, times(3)).highWatermark();
+        verify(outbox).changesAfter(10L, 11L, 500);
+        verify(outbox).changesAfter(11L, 12L, 500);
     }
 
     private void mockScan(String... keys) {

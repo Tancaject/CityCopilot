@@ -4,14 +4,17 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.citycopilot.core.config.GeoProperties;
+import com.citycopilot.core.config.ShopProjectionProperties;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.ShopGeoUpdateDTO;
 import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.mapper.ShopMapper;
+import com.citycopilot.core.projection.ShopProjectionOutboxRepository;
 import com.citycopilot.core.service.IShopService;
 import com.citycopilot.core.service.IShopTypeService;
 import com.citycopilot.core.service.OperationLogService;
 import com.citycopilot.core.service.ShopGeoIndexService;
+import com.citycopilot.core.service.discovery.ShopSearchProjectionService;
 import com.citycopilot.core.utils.CacheClient;
 import com.citycopilot.core.utils.SystemConstants;
 import com.citycopilot.core.utils.UserHolder;
@@ -60,6 +63,15 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Resource
     private ShopGeoIndexService shopGeoIndexService;
 
+    @Resource
+    private ShopSearchProjectionService shopSearchProjectionService;
+
+    @Resource
+    private ShopProjectionOutboxRepository shopProjectionOutboxRepository;
+
+    @Resource
+    private ShopProjectionProperties shopProjectionProperties;
+
     @Override
     public Result queryShopById(Long id) {
         //日常使用：缓存穿透方案
@@ -84,7 +96,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         applyShopDefaults(shop);
         save(shop);
         Shop after = getById(shop.getId());
-        refreshShopGeoIndexAfterCommit(null, after);
+        recordShopChanged(null, after);
         operationLogService.record("shop", "shop_create", "shop", shop.getId(), String.valueOf(shop.getId()), null, after, true, null);
         return Result.ok(shop.getId());
     }
@@ -120,7 +132,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         // 删除缓存
         stringRedisTemplate.delete(CACHE_SHOP_KEY + id);
         Shop after = getById(id);
-        refreshShopGeoIndexAfterCommit(before, after);
+        recordShopChanged(before, after);
         operationLogService.record("shop", "shop_update", "shop", id, String.valueOf(id), before, after, true, null);
         return Result.ok();
     }
@@ -221,7 +233,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         stringRedisTemplate.delete(CACHE_SHOP_KEY + request.getId());
 
         Shop after = getById(request.getId());
-        refreshShopGeoIndexAfterCommit(before, after);
+        recordShopChanged(before, after);
         operationLogService.record("geo", "shop_geo_update", "shop", request.getId(), String.valueOf(request.getId()), before, after, true, null);
         return Result.ok(after);
     }
@@ -233,26 +245,51 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         return Result.ok(page);
     }
 
-    void refreshShopGeoIndexAfterCommit(Shop before, Shop after) {
+    void refreshShopIndexesAfterCommit(Shop before, Shop after) {
         Shop beforeSnapshot = geoIndexSnapshot(before);
         Shop afterSnapshot = geoIndexSnapshot(after);
+        Long searchShopId = after == null ? null : after.getId();
         if (TransactionSynchronizationManager.isActualTransactionActive()) {
             if (TransactionSynchronizationManager.isSynchronizationActive()) {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
-                        refreshShopGeoIndexSafely(beforeSnapshot, afterSnapshot);
+                        refreshShopIndexesSafely(beforeSnapshot, afterSnapshot, searchShopId);
                     }
                 });
             } else {
                 Long shopId = afterSnapshot != null
                         ? afterSnapshot.getId()
                         : beforeSnapshot == null ? null : beforeSnapshot.getId();
-                log.warn("Shop {} Redis GEO refresh skipped because transaction synchronization is unavailable", shopId);
+                if (shopSearchProjectionService != null) {
+                    shopSearchProjectionService.markReconciliationRequired();
+                }
+                log.warn("Shop {} index refresh skipped because transaction synchronization is unavailable", shopId);
             }
             return;
         }
-        refreshShopGeoIndexSafely(beforeSnapshot, afterSnapshot);
+        refreshShopIndexesSafely(beforeSnapshot, afterSnapshot, searchShopId);
+    }
+
+    private void recordShopChanged(Shop before, Shop after) {
+        if (shopProjectionProperties != null && shopProjectionProperties.isOutboxEnabled()) {
+            shopProjectionOutboxRepository.append(before, after);
+            return;
+        }
+        // Unit tests and explicitly opted-in legacy deployments retain the
+        // previous behavior. Production profiles keep this escape hatch off.
+        if (shopProjectionProperties == null || shopProjectionProperties.isLegacyAfterCommitEnabled()) {
+            refreshShopIndexesAfterCommit(before, after);
+        }
+    }
+
+    void refreshShopGeoIndexAfterCommit(Shop before, Shop after) {
+        refreshShopIndexesAfterCommit(before, after);
+    }
+
+    private void refreshShopIndexesSafely(Shop before, Shop after, Long searchShopId) {
+        refreshShopGeoIndexSafely(before, after);
+        refreshShopSearchProjectionSafely(searchShopId);
     }
 
     private void refreshShopGeoIndexSafely(Shop before, Shop after) {
@@ -261,6 +298,18 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         } catch (RuntimeException error) {
             Long shopId = after != null ? after.getId() : before == null ? null : before.getId();
             log.warn("Shop {} committed but Redis GEO index refresh failed: {}", shopId, error.getMessage());
+        }
+    }
+
+    private void refreshShopSearchProjectionSafely(Long shopId) {
+        if (shopSearchProjectionService == null || shopId == null) {
+            return;
+        }
+        try {
+            shopSearchProjectionService.upsertLatestBestEffort(shopId);
+        } catch (RuntimeException error) {
+            shopSearchProjectionService.markReconciliationRequired();
+            log.warn("Shop {} committed but search projection refresh failed: {}", shopId, error.getMessage());
         }
     }
 

@@ -7,6 +7,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Slf4j
 @Component
@@ -16,8 +17,15 @@ public class ShopGeoIndexRunner implements ApplicationRunner {
     @Resource
     private ShopGeoIndexService shopGeoIndexService;
 
+    @Autowired(required = false)
+    private ShopProjectionProperties projectionProperties;
+
     @Override
     public void run(ApplicationArguments args) {
+        if (projectionProperties != null
+                && !projectionProperties.getRoles().isReconciliationEnabled()) {
+            return;
+        }
         try {
             int indexed = shopGeoIndexService.syncShopGeoIndex();
             log.info("Shop GEO index startup sync completed: indexed={}, ready={}",

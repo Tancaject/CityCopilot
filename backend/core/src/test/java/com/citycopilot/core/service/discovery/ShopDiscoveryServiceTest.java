@@ -88,6 +88,26 @@ class ShopDiscoveryServiceTest {
     }
 
     @Test
+    void discoverPreservesSearchRelevanceOrderThroughFinalMergeSort() {
+        ShopDiscoveryItemDTO lowerRelevanceButCloser = local(
+                "1", null, "Alphabetically First", "A", 50D
+        ).setSearchRank(1);
+        ShopDiscoveryItemDTO higherRelevanceButFarther = local(
+                "2", null, "Alphabetically Last", "B", 800D
+        ).setSearchRank(0);
+        ShopDiscoveryService service = discoveryService(
+                List.of(lowerRelevanceButCloser, higherRelevanceButFarther),
+                List.of()
+        );
+
+        Result result = service.discover(query(1, 10));
+
+        assertEquals(List.of(2L, 1L), items(result).stream()
+                .map(ShopDiscoveryItemDTO::getId)
+                .toList());
+    }
+
+    @Test
     void discoverReturnsAmapResultsWhenLocalNearbyCandidatesAreEmpty() {
         GeoProperties geoProperties = new GeoProperties();
         geoProperties.setShopPageSize(10);

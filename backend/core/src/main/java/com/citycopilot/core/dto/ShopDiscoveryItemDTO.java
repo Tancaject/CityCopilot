@@ -1,5 +1,6 @@
 package com.citycopilot.core.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -31,4 +32,6 @@ public class ShopDiscoveryItemDTO {
     private Integer score;
     private String openHours;
     private Double distance;
+    @JsonIgnore
+    private Integer searchRank;
 }
