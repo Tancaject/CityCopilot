@@ -8,8 +8,10 @@ public class RedisConstants {
     public static final Long LOGIN_USER_TTL = 30L;
 
     public static final Long CACHE_NULL_TTL = 2L;
+    public static final Long CACHE_NULL_TTL_JITTER = 1L;
 
     public static final Long CACHE_SHOP_TTL = 30L;
+    public static final Long CACHE_SHOP_TTL_JITTER = 10L;
     public static final String CACHE_SHOP_KEY = "cache:shop:";
     public static final String CACHE_SHOP_TYPE_KEY = "cache:shop-type";
     public static final String CACHE_AMAP_GEOCODE_KEY = "cache:amap:geocode:";
@@ -17,6 +19,8 @@ public class RedisConstants {
 
     public static final String LOCK_SHOP_KEY = "lock:shop:";
     public static final Long LOCK_SHOP_TTL = 10L;
+    public static final Long CACHE_REBUILD_WAIT_MILLIS = 800L;
+    public static final Long CACHE_REBUILD_RETRY_MILLIS = 25L;
 
     public static final String BLOG_LIKED_KEY = "blog:liked:";
     public static final String FEED_KEY = "feed:";

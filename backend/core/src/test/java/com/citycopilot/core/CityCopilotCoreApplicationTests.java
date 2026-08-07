@@ -1,16 +1,11 @@
 package com.citycopilot.core;
 
 import com.citycopilot.core.entity.Shop;
-import com.citycopilot.core.service.IShopService;
 import com.citycopilot.core.service.impl.ShopServiceImpl;
-import com.citycopilot.core.utils.CacheClient;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
-
-import java.util.concurrent.TimeUnit;
-
 import org.springframework.data.geo.Point;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -18,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import static com.citycopilot.core.utils.RedisConstants.CACHE_SHOP_KEY;
 import static com.citycopilot.core.utils.RedisConstants.SHOP_GEO_KEY;
 
 @SpringBootTest
@@ -27,9 +21,6 @@ public class CityCopilotCoreApplicationTests {
 
     @Resource
     private ShopServiceImpl shopService;
-
-    @Resource
-    private CacheClient cacheClient;
 
     @Resource
     private StringRedisTemplate stringRedisTemplate;
@@ -53,12 +44,4 @@ public class CityCopilotCoreApplicationTests {
         }
     }
 
-    @Test
-    void testSaveShopWithLogicalExpire() {
-        //预热店铺数据到Redis（逻辑过期）
-        Shop shop = shopService.getById(1L);
-
-        cacheClient.setWithLogicalExpire(CACHE_SHOP_KEY + 1, shop, 10L, TimeUnit.SECONDS);
-
-    }
 }
