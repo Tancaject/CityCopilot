@@ -1,5 +1,6 @@
 package com.citycopilot.core.service;
 
+import com.citycopilot.contract.commerce.CommerceContracts.ConsistencyRepairResult;
 import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.contract.tool.ToolApprovalPolicy;
 import com.citycopilot.contract.tool.ToolAudience;
@@ -15,16 +16,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Core-side tool facade for consistency operations owned by Commerce Service.
+ * 秒杀一致性运维工具门面，把证据采集、修复预览、执行和复核转交 Commerce 服务。
+ *
+ * <p>Core 只负责工具权限和参数边界，不直接修改 Commerce 的 Redis 或 MySQL 数据。</p>
  */
 @Service
 public class SeckillConsistencyService {
+
+    /** Commerce 运维接口客户端。 */
     private final CommercePortClient commercePortClient;
 
+    /** @param commercePortClient Commerce 服务客户端 */
     public SeckillConsistencyService(CommercePortClient commercePortClient) {
         this.commercePortClient = commercePortClient;
     }
 
+    /**
+     * 采集单张秒杀券在 MySQL、Redis、Reservation、订单和 Outbox 中的有界证据。
+     *
+     * @param voucherId 秒杀券主键
+     * @return 一致性快照及证据哈希
+     */
     @AgentTool(
             name = "get_seckill_consistency_snapshot",
             description = "Collect bounded MySQL, Redis, Reservation, order, and Outbox evidence for one voucher",
@@ -38,6 +50,12 @@ public class SeckillConsistencyService {
         return commercePortClient.consistency(voucherId);
     }
 
+    /**
+     * 基于最新快照生成只读修复预览。
+     *
+     * @param voucherId 秒杀券主键
+     * @return 当前库存、目标库存、阻断原因和短期有效的证据哈希
+     */
     @AgentTool(
             name = "preview_seckill_stock_repair",
             description = "Preview a bounded Redis stock repair from fresh consistency evidence without writing",
@@ -64,6 +82,13 @@ public class SeckillConsistencyService {
         return preview;
     }
 
+    /**
+     * 在证据哈希仍匹配且没有在途冲突时修复 Redis 库存。
+     *
+     * @param voucherId 秒杀券主键
+     * @param expectedEvidenceHash 操作者预览时获得的证据哈希，防止基于陈旧证据写入
+     * @return Commerce 的修复结果
+     */
     @AgentTool(
             name = "repair_seckill_stock",
             description = "Repair one Redis stock key only when fresh evidence hash still matches and no Reservation conflict exists",
@@ -75,11 +100,17 @@ public class SeckillConsistencyService {
             scope = "ops:seckill-consistency",
             rateLimitPerMinute = 10
     )
-    public Map<String, Object> repairStock(Long voucherId, String expectedEvidenceHash) {
+    public ConsistencyRepairResult repairStock(Long voucherId, String expectedEvidenceHash) {
         requireVoucherId(voucherId);
         return commercePortClient.repairConsistency(voucherId, expectedEvidenceHash);
     }
 
+    /**
+     * 重新独立采集证据并验证修复后置条件。
+     *
+     * @param voucherId 秒杀券主键
+     * @return 最新一致性结论
+     */
     @AgentTool(
             name = "verify_seckill_consistency",
             description = "Independently recollect consistency evidence and evaluate the repair postcondition",
@@ -93,6 +124,11 @@ public class SeckillConsistencyService {
         return commercePortClient.verifyConsistency(voucherId);
     }
 
+    /**
+     * 拒绝空值和非正券主键，避免向远端发出无意义运维请求。
+     *
+     * @param voucherId 待校验券主键
+     */
     private void requireVoucherId(Long voucherId) {
         if (voucherId == null || voucherId <= 0) {
             throw new IllegalArgumentException("voucherId must be positive");

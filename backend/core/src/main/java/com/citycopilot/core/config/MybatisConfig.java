@@ -6,8 +6,10 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/** 配置 MyBatis-Plus 的 MySQL 分页拦截器，统一处理 Page 查询的 limit/offset。 */
 @Configuration
 public class MybatisConfig {
+    /** @return 已安装 MySQL 分页插件的 MyBatis-Plus 拦截器 */
     @Bean
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();

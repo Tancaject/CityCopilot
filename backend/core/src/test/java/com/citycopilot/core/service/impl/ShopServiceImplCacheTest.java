@@ -1,6 +1,7 @@
 package com.citycopilot.core.service.impl;
 
 import com.citycopilot.core.dto.Result;
+import com.citycopilot.core.dto.ShopViewDTO;
 import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.utils.CacheClient;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,7 +49,9 @@ class ShopServiceImplCacheTest {
         Result result = service.queryShopById(21L);
 
         assertThat(result.getSuccess()).isTrue();
-        assertThat(result.getData()).isSameAs(shop);
+        assertThat(result.getData()).isInstanceOf(ShopViewDTO.class);
+        assertThat(((ShopViewDTO) result.getData()).id()).isEqualTo(shop.getId());
+        assertThat(((ShopViewDTO) result.getData()).name()).isEqualTo(shop.getName());
         verify(cacheClient).queryWithMutex(
                 eq(CACHE_SHOP_KEY),
                 eq(21L),

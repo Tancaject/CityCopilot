@@ -5,8 +5,6 @@ import cn.hutool.core.bean.BeanUtil;
 import com.citycopilot.core.dto.LoginFormDTO;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.UserDTO;
-import com.citycopilot.core.entity.User;
-import com.citycopilot.core.entity.UserInfo;
 import com.citycopilot.core.security.PermissionPolicy;
 import com.citycopilot.core.service.IUserInfoService;
 import com.citycopilot.core.service.IUserService;
@@ -23,28 +21,36 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import java.time.LocalDate;
 
 /**
- * <p>
- * 前端控制器
- * </p>
+ * 用户认证、资料与签到控制器。
  *
+ * <p>对外只返回 {@link UserDTO} 等安全视图；验证码、令牌、签到位图等状态由用户服务
+ * 和 Redis 维护，控制器负责协议参数与响应适配。</p>
  */
 @Slf4j
 @RestController
 @RequestMapping("/user")
 public class UserController {
 
+    /** 用户领域服务，处理验证码、登录令牌、登出和签到。 */
     @Resource
     private IUserService userService;
 
+    /** 用户扩展资料服务。 */
     @Resource
     private IUserInfoService userInfoService;
+    /** Redis 客户端，用于读取按日期统计的 HyperLogLog UV。 */
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+    /** 角色权限策略，用于刷新会话响应中的权限集合。 */
     @Resource
     private PermissionPolicy permissionPolicy;
 
     /**
-     * 发送手机验证码
+     * 向指定手机号发送登录验证码。
+     *
+     * @param phone 接收验证码的手机号
+     * @param session 兼容会话参数；验证码状态的实际保存由用户服务决定
+     * @return 发送成功或手机号校验、频率限制等失败结果
      */
     @PostMapping("code")
     public Result sendCode(@RequestParam("phone") String phone, HttpSession session) {
@@ -52,8 +58,11 @@ public class UserController {
     }
 
     /**
-     * 登录功能
-     * @param loginForm 登录参数，包含手机号、验证码；或者手机号、密码
+     * 使用验证码或密码登录，并创建后续请求使用的认证状态。
+     *
+     * @param loginForm 手机号及验证码或密码
+     * @param session 兼容会话参数
+     * @return 登录令牌或认证失败结果
      */
     @PostMapping("/login")
     public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session){
@@ -61,14 +70,23 @@ public class UserController {
     }
 
     /**
-     * 登出功能
-     * @return 无
+     * 注销当前请求对应的登录令牌。
+     *
+     * @param request 携带当前认证令牌的 HTTP 请求
+     * @return 登出处理结果
      */
     @PostMapping("/logout")
     public Result logout(HttpServletRequest request){
         return userService.logout(request);
     }
 
+    /**
+     * 查询当前登录用户的安全会话视图。
+     *
+     * <p>权限按当前角色配置重新计算，避免直接信任令牌缓存中的旧权限集合。</p>
+     *
+     * @return 当前用户 DTO；未登录时返回空数据
+     */
     @GetMapping("/me")
     public Result me(){
         UserDTO user= UserHolder.getUser();
@@ -80,41 +98,63 @@ public class UserController {
         return Result.ok(response);
     }
 
+    /**
+     * 查询指定用户的扩展资料，并隐藏内部维护时间。
+     *
+     * @param userId 用户主键
+     * @return 扩展资料；尚未创建时返回空数据
+     */
     @GetMapping("/info/{id}")
     public Result info(@PathVariable("id") Long userId){
-        // 查询详情
-        UserInfo info = userInfoService.getById(userId);
-        if (info == null) {
-            // 没有详情，应该是第一次查看详情
-            return Result.ok();
-        }
-        info.setCreateTime(null);
-        info.setUpdateTime(null);
-        return Result.ok(info);
+        return Result.ok(userInfoService.profile(userId));
     }
 
+    /**
+     * 查询指定用户的公开基础信息。
+     *
+     * @param userId 用户主键
+     * @return 经过 {@link UserDTO} 过滤的用户信息；不存在时返回空数据
+     */
     @GetMapping("/{id}")
     public Result queryUserById(@PathVariable("id")Long userId){
-        User user=userService.getById(userId);
-        if (user==null){
-            return Result.ok();
-        }
-        UserDTO userDTO= BeanUtil.copyProperties(user,UserDTO.class);
-        return Result.ok(userDTO);
+        return Result.ok(userService.findUserProfile(userId));
     }
+    /**
+     * 为当前登录用户记录今日签到。
+     *
+     * @return Redis 位图签到的处理结果
+     */
     @PostMapping("/sign")
-    public Result sign(){//签到功能
+    public Result sign(){
         return userService.sign();
     }
+    /**
+     * 统计当前用户截至今天的连续签到天数。
+     *
+     * @return 连续签到天数
+     */
     @GetMapping("/sign/count")
     public Result signCount(){
         return userService.signCount();
     }
+    /**
+     * 查询当前用户今天是否已经签到。
+     *
+     * @return 今日签到状态
+     */
     @GetMapping("/sign/today")
     public Result isSignedToday(){
         return userService.isSignedToday();
     }
 
+    /**
+     * 查询指定日期的近似独立访客数。
+     *
+     * <p>数据来自按日分片的 Redis HyperLogLog，适合低内存基数估算，不代表精确人数。</p>
+     *
+     * @param daysAgo 距今天的天数，{@code 0} 表示今天
+     * @return 目标日期的 UV 估算值
+     */
     @GetMapping("/uv")
     public Result queryUV(@RequestParam(defaultValue = "0") Integer daysAgo) {
         String key = RedisConstants.UV_KEY +

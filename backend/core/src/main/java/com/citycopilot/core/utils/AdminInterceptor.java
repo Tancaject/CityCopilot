@@ -14,14 +14,26 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.nio.charset.StandardCharsets;
 
+/**
+ * 管理端 MVC 权限拦截器。
+ *
+ * <p>优先读取方法上的 {@link RequirePermission}，再读取类级声明；没有声明时要求基础管理权限。</p>
+ */
 public class AdminInterceptor implements HandlerInterceptor {
 
+    /** 将角色映射为权限并执行组合判断的策略。 */
     private final PermissionPolicy permissionPolicy;
 
+    /** @param permissionPolicy 角色权限策略 */
     public AdminInterceptor(PermissionPolicy permissionPolicy) {
         this.permissionPolicy = permissionPolicy;
     }
 
+    /**
+     * 在控制器执行前校验登录态与所需权限。
+     *
+     * @return 允许执行时为 {@code true}；拒绝时已写入统一 JSON 响应
+     */
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         UserDTO user = UserHolder.getUser();
@@ -40,6 +52,7 @@ public class AdminInterceptor implements HandlerInterceptor {
         return true;
     }
 
+    /** @return 方法级权限声明、类级声明或 {@code null} */
     private RequirePermission resolvePermission(Object handler) {
         if (!(handler instanceof HandlerMethod handlerMethod)) {
             return null;
@@ -57,6 +70,7 @@ public class AdminInterceptor implements HandlerInterceptor {
         );
     }
 
+    /** 写入统一的 UTF-8 权限错误响应。 */
     private void writeError(HttpServletResponse response, int status, String code, String message) throws java.io.IOException {
         response.setStatus(status);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());

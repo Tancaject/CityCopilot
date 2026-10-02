@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { Activity, RefreshCw } from '@lucide/vue';
 import { fetchAgentTrace, fetchAgentTraces } from '../api/citycopilot';
+import { getErrorMessage } from '../utils/errors';
 import type { AgentTrace } from '../types';
 
 const traces = ref<AgentTrace[]>([]);
@@ -18,7 +19,7 @@ async function loadTraces() {
       selected.value = traces.value[0];
     }
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Failed to load traces';
+    errorMessage.value = getErrorMessage(error, 'Failed to load traces');
   } finally {
     loading.value = false;
   }

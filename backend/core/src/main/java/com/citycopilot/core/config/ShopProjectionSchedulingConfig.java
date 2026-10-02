@@ -4,6 +4,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
+/** 仅在当前 Core 实例承担 projector 角色时启用投影消费调度。 */
 @Configuration(proxyBeanMethods = false)
 @EnableScheduling
 @ConditionalOnProperty(

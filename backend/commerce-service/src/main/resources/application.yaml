@@ -6,14 +6,17 @@ spring:
     import: optional:file:./.env[.properties]
   application:
     name: citycopilot-commerce-service
+  jackson:
+    use-jackson2-defaults: true
   datasource:
     url: ${CITYCOPILOT_COMMERCE_DB_URL:jdbc:mysql://127.0.0.1:3309/citycopilot_commerce?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
     username: ${CITYCOPILOT_COMMERCE_DB_USERNAME:citycopilot_commerce}
     password: ${CITYCOPILOT_COMMERCE_DB_PASSWORD:}
   sql:
     init:
-      mode: always
-      schema-locations: classpath:schema.sql
+      mode: never
+  flyway:
+    enabled: false
   data:
     redis:
       host: ${CITYCOPILOT_REDIS_HOST:127.0.0.1}
@@ -22,8 +25,21 @@ spring:
       password: ${CITYCOPILOT_COMMERCE_REDIS_PASSWORD:${CITYCOPILOT_REDIS_PASSWORD:}}
 
 citycopilot:
+  booking:
+    checkin-secret: ${CITYCOPILOT_BOOKING_CHECKIN_SECRET:${citycopilot.commerce.service-token:}}
+    quote-cleanup:
+      enabled: ${CITYCOPILOT_BOOKING_QUOTE_CLEANUP_ENABLED:false}
+      retention-days: ${CITYCOPILOT_BOOKING_QUOTE_RETENTION_DAYS:-1}
+      batch-size: ${CITYCOPILOT_BOOKING_QUOTE_CLEANUP_BATCH_SIZE:100}
+      interval-ms: ${CITYCOPILOT_BOOKING_QUOTE_CLEANUP_INTERVAL_MS:60000}
   commerce:
+    outbox-archive:
+      enabled: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_ENABLED:false}
+      retention-days: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_RETENTION_DAYS:-1}
+      batch-size: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_BATCH_SIZE:100}
+      interval-ms: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_INTERVAL_MS:60000}
     service-token: ${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:}
+    previous-service-token: ${CITYCOPILOT_INTERNAL_COMMERCE_PREVIOUS_TOKEN:}
     stream-enabled: ${CITYCOPILOT_COMMERCE_STREAM_ENABLED:true}
     api-enabled: ${CITYCOPILOT_COMMERCE_API_ENABLED:true}
     stream-worker-enabled: ${CITYCOPILOT_COMMERCE_STREAM_WORKER_ENABLED:${CITYCOPILOT_COMMERCE_STREAM_ENABLED:true}}

@@ -13,6 +13,8 @@ spring:
         name: citycopilot-mcp
         version: 0.2.1
         type: SYNC
+        # ponytail: keep existing SSE clients; migrate protocol with their configured endpoints.
+        protocol: SSE
         stdio: false
         instructions: CityCopilot local-life tools exposed through the Core internal Tool API.
         sse-endpoint: /mcp/sse
@@ -29,6 +31,8 @@ citycopilot:
     service-token: ${CITYCOPILOT_INTERNAL_MCP_TOKEN:${CITYCOPILOT_INTERNAL_SERVICE_TOKEN:}}
     connect-timeout: ${CITYCOPILOT_CORE_CONNECT_TIMEOUT:2s}
     read-timeout: ${CITYCOPILOT_CORE_READ_TIMEOUT:4s}
+    request-timeout: ${CITYCOPILOT_MCP_REQUEST_TIMEOUT:8s}
+    max-concurrent: ${CITYCOPILOT_MCP_MAX_CONCURRENT:16}
 
 management:
   endpoints:

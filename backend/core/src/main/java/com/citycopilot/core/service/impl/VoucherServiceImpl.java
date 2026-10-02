@@ -10,12 +10,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Compatibility facade for voucher APIs owned by Commerce Service.
+ * Core 优惠券 API 的兼容门面，把券查询和写入统一转交 Commerce 服务。
  */
 @Service
 public class VoucherServiceImpl implements IVoucherService {
+
+    /** Commerce 服务客户端，保证券与订单共享同一业务所有权边界。 */
     private final CommercePortClient commercePortClient;
 
+    /** @param commercePortClient Commerce 服务客户端 */
     public VoucherServiceImpl(CommercePortClient commercePortClient) {
         this.commercePortClient = commercePortClient;
     }
@@ -66,6 +69,12 @@ public class VoucherServiceImpl implements IVoucherService {
         }
     }
 
+    /**
+     * 将 Core DTO 转成 Commerce 接口接受的稀疏字段映射。
+     *
+     * @param voucher Core 券请求
+     * @return 仅包含非空字段的请求体，避免更新时用空值覆盖远端数据
+     */
     private Map<String, Object> voucherPayload(VoucherRequest voucher) {
         Map<String, Object> payload = new LinkedHashMap<>();
         putIfPresent(payload, "id", voucher.getId());
@@ -83,6 +92,13 @@ public class VoucherServiceImpl implements IVoucherService {
         return payload;
     }
 
+    /**
+     * 仅在字段有值时加入请求体。
+     *
+     * @param payload 待构造的请求体
+     * @param key Commerce 字段名
+     * @param value 字段值
+     */
     private void putIfPresent(Map<String, Object> payload, String key, Object value) {
         if (value != null) {
             payload.put(key, value);

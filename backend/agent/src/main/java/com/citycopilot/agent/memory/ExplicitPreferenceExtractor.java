@@ -14,40 +14,57 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * 从中文用户消息中提取“明确且可长期保存”的推荐偏好。
+ *
+ * <p>只有“记住、以后、默认、我喜欢”等持久化信号才触发写入；普通查询不会污染长期记忆。输出限定在受控词表和数值范围，不把自由指令存入模型上下文。</p>
+ */
 @Component
 public final class ExplicitPreferenceExtractor {
+    /** 表明用户希望长期记忆的措辞。 */
     private static final Pattern DURABLE_CUE = Pattern.compile(
             "请?记住|帮我记住|以后|今后|默认|长期偏好|我的偏好|我的预算|我(?:平时|通常|一般)"
     );
+    /** 可直接视为持久偏好的第一人称喜好表达。 */
     private static final Pattern DIRECT_LIKE_CUE = Pattern.compile("我(?:更|比较)?(?:喜欢|偏好|爱吃)");
+    /** 清除全部长期偏好的明确指令。 */
     private static final Pattern CLEAR_ALL = Pattern.compile(
             "(?:忘记|清除|删除|重置).{0,8}(?:所有|全部|我的)?(?:长期)?偏好|不再记住.{0,8}偏好"
     );
+    /** 人均预算上限及其数值捕获组。 */
     private static final Pattern PRICE = Pattern.compile(
             "(?:人均|每人预算|预算)\\s*(?:不超过|最多|控制在|为|是|大约|约)?\\s*(\\d{1,5})\\s*元?\\s*(?:以内|以下|左右|封顶)?"
     );
+    /** 最低评分表达式。 */
     private static final Pattern SCORE = Pattern.compile(
             "评分\\s*(\\d(?:\\.\\d)?)\\s*(?:以上|起|至少)"
     );
+    /** 距离上限，兼容米与公里单位。 */
     private static final Pattern DISTANCE = Pattern.compile(
             "(\\d+(?:\\.\\d+)?)\\s*(公里|千米|km|米|m)\\s*(?:以内|内|之内|最多)"
     );
+    /** 明确偏好优惠券的表达式。 */
     private static final Pattern VOUCHER_TRUE = Pattern.compile(
             "有券优先|优惠券优先|优先.{0,6}(?:有券|优惠券)|默认.{0,6}(?:有券|优惠券)"
     );
+    /** 明确取消优惠券优先的表达式。 */
     private static final Pattern VOUCHER_FALSE = Pattern.compile(
             "不用考虑优惠券|不需要优惠券|不优先.{0,4}(?:有券|优惠券)"
     );
+    /** 类别或环境词前必须出现的偏好上下文。 */
     private static final Pattern PREFERENCE_PREFIX = Pattern.compile(
             ".*(?:记住[，,]?|喜欢|偏好|爱吃|默认|优先)[^，。！？,!?；;]{0,8}$"
     );
+    /** 允许删除旧偏好的纠正上下文。 */
     private static final Pattern CORRECTION_PREFIX = Pattern.compile(
             ".*(?:后来|现在|改为|改成|以后)[^，。！？,!?；;]{0,4}$"
     );
+    /** 同时出现这些词时，记忆更新后仍需继续执行查询或动作。 */
     private static final Set<String> QUERY_CUES = Set.of(
             "帮我找", "推荐", "查一下", "查找", "看看", "附近", "有没有", "下单", "支付", "退款", "取消订单", "订单"
     );
 
+    /** 可持久化环境偏好的受控别名到规范值映射。 */
     private static final Map<String, String> AMBIENCE_ALIASES = aliases(
             "适合一个人", "适合一个人",
             "适合约会", "适合约会",
@@ -57,6 +74,12 @@ public final class ExplicitPreferenceExtractor {
             "安静", "安静"
     );
 
+    /**
+     * 提取单条消息中的新增、删除或清空偏好意图。
+     *
+     * @param message 当前用户原始输入
+     * @return 归一化且去重的变更集合；未出现持久化信号时返回空提取结果
+     */
     public Extraction extract(String message) {
         String text = normalize(message);
         if (text.isEmpty()) {
@@ -66,6 +89,7 @@ public final class ExplicitPreferenceExtractor {
             return new Extraction(List.of(), List.of(), true, isMemoryOnly(text));
         }
 
+        // 普通“帮我找火锅”等查询不进入长期记忆，必须先通过持久化信号门槛。
         boolean durableCue = DURABLE_CUE.matcher(text).find();
         boolean directLikeCue = DIRECT_LIKE_CUE.matcher(text).find();
         boolean durable = durableCue || directLikeCue;
@@ -95,6 +119,7 @@ public final class ExplicitPreferenceExtractor {
         );
     }
 
+    /** 分别提取明确喜欢的分类与带删除语义的排除分类。 */
     private void extractPreferredCategories(
             String text,
             Map<String, ExplicitPreference> target,
@@ -198,6 +223,7 @@ public final class ExplicitPreferenceExtractor {
         return CORRECTION_PREFIX.matcher(prefix).matches();
     }
 
+    /** 提取受上下界约束的整数偏好，越界值直接忽略。 */
     private void addNumeric(
             String text,
             Pattern pattern,
@@ -228,6 +254,7 @@ public final class ExplicitPreferenceExtractor {
         }
     }
 
+    /** 将米/公里统一换算为整数米并应用合理范围。 */
     private void addDistance(String text, Map<String, ExplicitPreference> target) {
         Matcher matcher = DISTANCE.matcher(text);
         if (!matcher.find()) {
@@ -251,10 +278,12 @@ public final class ExplicitPreferenceExtractor {
         target.put(preference.type().name() + ":" + preference.key(), preference);
     }
 
+    /** @return 本轮只要求管理记忆、不包含需要继续执行的查询或动作时为 true */
     private boolean isMemoryOnly(String text) {
         return QUERY_CUES.stream().noneMatch(text::contains);
     }
 
+    /** 清理控制字符并限制扫描长度，控制正则成本和持久化输入范围。 */
     private String normalize(String value) {
         if (value == null) {
             return "";
@@ -271,6 +300,14 @@ public final class ExplicitPreferenceExtractor {
         return aliases;
     }
 
+    /**
+     * 一次显式偏好解析结果。
+     *
+     * @param preferences 待插入或更新的偏好
+     * @param removals 待按规范键删除的偏好
+     * @param clearAll 是否清除当前用户全部偏好
+     * @param memoryOnly 是否可在写入后直接回答而无需调用 Agent
+     */
     public record Extraction(
             List<ExplicitPreference> preferences,
             List<PreferenceRemoval> removals,
@@ -286,11 +323,18 @@ public final class ExplicitPreferenceExtractor {
             return new Extraction(List.of(), List.of(), false, false);
         }
 
+        /** @return 至少包含一种持久化变更意图时为 true */
         public boolean hasMutation() {
             return clearAll || !preferences.isEmpty() || !removals.isEmpty();
         }
     }
 
+    /**
+     * 按类型和规范键定位的偏好删除请求。
+     *
+     * @param type 偏好类型
+     * @param key 与保存时一致的去重键
+     */
     public record PreferenceRemoval(PreferenceType type, String key) {
     }
 }

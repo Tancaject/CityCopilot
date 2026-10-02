@@ -18,11 +18,8 @@ services:
       - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_MYSQL_PORT:-3307}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./citycopilot-v2.sql:/docker-entrypoint-initdb.d/001-citycopilot.sql:ro
-      - ./tools/migrations/2026-08-04-shop-projection-outbox.sql:/docker-entrypoint-initdb.d/003-shop-projection-outbox.sql:ro
-      - ./tools/migrations:/opt/citycopilot/migrations:ro
     healthcheck:
-      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot -e 'SELECT 1 FROM user_account LIMIT 1' >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot -e 'SELECT 1' >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -47,10 +44,8 @@ services:
       - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_AGENT_MYSQL_PORT:-3308}:3306"
     volumes:
       - agent-mysql-data:/var/lib/mysql
-      - ./deploy/mysql/agent/001-agent-schema.sql:/docker-entrypoint-initdb.d/001-agent-schema.sql:ro
-      - ./backend/agent/src/main/resources/db/002-user-preference-memory.sql:/docker-entrypoint-initdb.d/002-user-preference-memory.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot_agent -e 'SELECT 1 FROM ops_case LIMIT 1' >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot_agent -e 'SELECT 1' >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -75,16 +70,72 @@ services:
       - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_COMMERCE_MYSQL_PORT:-3309}:3306"
     volumes:
       - commerce-mysql-data:/var/lib/mysql
-      - ./deploy/mysql/commerce/001-commerce-schema.sql:/docker-entrypoint-initdb.d/001-commerce-schema.sql:ro
-      - ./tools/migrations/2026-08-04-commerce-outbox-claim-index.sql:/docker-entrypoint-initdb.d/002-commerce-outbox-claim-index.sql:ro
-      - ./tools/migrations:/opt/citycopilot/migrations:ro
-      - ./deploy/mysql/commerce:/opt/citycopilot/commerce-schema:ro
     healthcheck:
-      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot_commerce -e 'SELECT 1 FROM commerce_order LIMIT 1' >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u\"$${MYSQL_USER}\" -D citycopilot_commerce -e 'SELECT 1' >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 30
       start_period: 20s
+    networks:
+      - citycopilot
+
+  core-migrate:
+    image: flyway/flyway:10.20.1
+    restart: "no"
+    command: migrate
+    environment:
+      FLYWAY_URL: jdbc:mysql://mysql:3306/citycopilot?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      FLYWAY_USER: ${CITYCOPILOT_DB_USERNAME:-citycopilot}
+      FLYWAY_PASSWORD: ${CITYCOPILOT_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      FLYWAY_LOCATIONS: filesystem:/flyway/sql
+      FLYWAY_CLEAN_DISABLED: "true"
+      FLYWAY_BASELINE_ON_MIGRATE: "false"
+      FLYWAY_BASELINE_VERSION: "1"
+    volumes:
+      - ./deploy/mysql/core:/flyway/sql:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - citycopilot
+
+  commerce-migrate:
+    image: flyway/flyway:10.20.1
+    restart: "no"
+    command: migrate
+    environment:
+      FLYWAY_URL: jdbc:mysql://commerce-mysql:3306/citycopilot_commerce?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      FLYWAY_USER: ${CITYCOPILOT_COMMERCE_DB_USERNAME:-citycopilot_commerce}
+      FLYWAY_PASSWORD: ${CITYCOPILOT_COMMERCE_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      FLYWAY_LOCATIONS: filesystem:/flyway/sql
+      FLYWAY_CLEAN_DISABLED: "true"
+      FLYWAY_BASELINE_ON_MIGRATE: "false"
+      FLYWAY_BASELINE_VERSION: "1"
+    volumes:
+      - ./deploy/mysql/commerce:/flyway/sql:ro
+    depends_on:
+      commerce-mysql:
+        condition: service_healthy
+    networks:
+      - citycopilot
+
+  agent-migrate:
+    image: flyway/flyway:10.20.1
+    restart: "no"
+    command: migrate
+    environment:
+      FLYWAY_URL: jdbc:mysql://agent-mysql:3306/citycopilot_agent?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      FLYWAY_USER: ${CITYCOPILOT_AGENT_DB_USERNAME:-citycopilot_agent}
+      FLYWAY_PASSWORD: ${CITYCOPILOT_AGENT_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
+      FLYWAY_LOCATIONS: filesystem:/flyway/sql
+      FLYWAY_CLEAN_DISABLED: "true"
+      FLYWAY_BASELINE_ON_MIGRATE: "false"
+      FLYWAY_BASELINE_VERSION: "1"
+    volumes:
+      - ./deploy/mysql/agent:/flyway/sql:ro
+    depends_on:
+      agent-mysql:
+        condition: service_healthy
     networks:
       - citycopilot
 
@@ -132,7 +183,7 @@ services:
       - citycopilot
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:${CITYCOPILOT_ELASTICSEARCH_VERSION:-8.10.4}
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.9
     profiles: ["search"]
     restart: unless-stopped
     mem_limit: ${CITYCOPILOT_ELASTICSEARCH_MEMORY_LIMIT:-1g}
@@ -144,7 +195,7 @@ services:
     ports:
       - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_ELASTICSEARCH_PORT:-9200}:9200"
     volumes:
-      - elasticsearch-data:/usr/share/elasticsearch/data
+      - elasticsearch-v9-data:/usr/share/elasticsearch/data
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent 'http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null"]
       interval: 10s
@@ -241,7 +292,10 @@ services:
     environment:
       NAMESRV_ADDR: rocketmq-namesrv:9876
       JAVA_OPT_EXT: "-Xms384m -Xmx384m -Xmn128m -XX:MaxDirectMemorySize=128m"
-    command: sh mqproxy
+    command: sh mqproxy -pc /home/rocketmq/rmq-proxy.json
+    volumes:
+      # Route replies must retain the port used by host and container clients.
+      - ./deploy/rocketmq/rmq-proxy.json:/home/rocketmq/rmq-proxy.json:ro
     ports:
       - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_ROCKETMQ_PROXY_GRPC_PORT:-18081}:8081"
       - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_ROCKETMQ_PROXY_REMOTING_PORT:-18080}:8080"
@@ -305,6 +359,12 @@ services:
       CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN:-}
       CITYCOPILOT_INTERNAL_MCP_TOKEN: ${CITYCOPILOT_INTERNAL_MCP_TOKEN:-}
       CITYCOPILOT_INTERNAL_COMMERCE_TOKEN: ${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:?Run tools/citycopilot.ps1 start first}
+      CITYCOPILOT_INTERNAL_AGENT_PREVIOUS_TOKEN: ${CITYCOPILOT_INTERNAL_AGENT_PREVIOUS_TOKEN:-}
+      CITYCOPILOT_INTERNAL_OPS_PREVIOUS_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_PREVIOUS_TOKEN:-}
+      CITYCOPILOT_INTERNAL_OPS_READER_PREVIOUS_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_READER_PREVIOUS_TOKEN:-}
+      CITYCOPILOT_INTERNAL_OPS_EXECUTOR_PREVIOUS_TOKEN: ${CITYCOPILOT_INTERNAL_OPS_EXECUTOR_PREVIOUS_TOKEN:-}
+      CITYCOPILOT_INTERNAL_MCP_PREVIOUS_TOKEN: ${CITYCOPILOT_INTERNAL_MCP_PREVIOUS_TOKEN:-}
+      CITYCOPILOT_INTERNAL_COMMERCE_PREVIOUS_TOKEN: ${CITYCOPILOT_INTERNAL_COMMERCE_PREVIOUS_TOKEN:-}
       CITYCOPILOT_COMMERCE_BASE_URL: http://commerce:8083
       CITYCOPILOT_UPLOAD_ROOT: /app/uploads
       CITYCOPILOT_AI_ENABLED: "false"
@@ -320,6 +380,11 @@ services:
       CITYCOPILOT_SEARCH_INDEX_ALIAS: ${CITYCOPILOT_SEARCH_INDEX_ALIAS:-citycopilot-shop-search}
       CITYCOPILOT_SEARCH_MAX_PAGE_SIZE: ${CITYCOPILOT_SEARCH_MAX_PAGE_SIZE:-500}
       CITYCOPILOT_SEARCH_RECONCILE_INTERVAL_MS: ${CITYCOPILOT_SEARCH_RECONCILE_INTERVAL_MS:-60000}
+      CITYCOPILOT_PROJECTION_CLEANUP_ENABLED: ${CITYCOPILOT_PROJECTION_CLEANUP_ENABLED:-false}
+      CITYCOPILOT_PROJECTION_CLEANUP_RETENTION: ${CITYCOPILOT_PROJECTION_CLEANUP_RETENTION:-0s}
+      CITYCOPILOT_PROJECTION_CLEANUP_READER_GRACE: ${CITYCOPILOT_PROJECTION_CLEANUP_READER_GRACE:-0s}
+      CITYCOPILOT_PROJECTION_CLEANUP_GENERATION_BATCH_SIZE: ${CITYCOPILOT_PROJECTION_CLEANUP_GENERATION_BATCH_SIZE:-10}
+      CITYCOPILOT_PROJECTION_CLEANUP_KEY_BATCH_SIZE: ${CITYCOPILOT_PROJECTION_CLEANUP_KEY_BATCH_SIZE:-500}
       CITYCOPILOT_ROCKETMQ_ENABLED: ${CITYCOPILOT_ROCKETMQ_ENABLED:-true}
       CITYCOPILOT_ROCKETMQ_ENDPOINTS: rocketmq-proxy:8081
     ports:
@@ -329,6 +394,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      core-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       redis-init:
@@ -360,6 +427,14 @@ services:
     environment:
       TZ: ${CITYCOPILOT_TIMEZONE:-Asia/Singapore}
       CITYCOPILOT_COMMERCE_PORT: 8083
+      CITYCOPILOT_BOOKING_QUOTE_CLEANUP_ENABLED: ${CITYCOPILOT_BOOKING_QUOTE_CLEANUP_ENABLED:-false}
+      CITYCOPILOT_BOOKING_QUOTE_RETENTION_DAYS: ${CITYCOPILOT_BOOKING_QUOTE_RETENTION_DAYS:--1}
+      CITYCOPILOT_BOOKING_QUOTE_CLEANUP_BATCH_SIZE: ${CITYCOPILOT_BOOKING_QUOTE_CLEANUP_BATCH_SIZE:-100}
+      CITYCOPILOT_BOOKING_QUOTE_CLEANUP_INTERVAL_MS: ${CITYCOPILOT_BOOKING_QUOTE_CLEANUP_INTERVAL_MS:-60000}
+      CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_ENABLED: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_ENABLED:-false}
+      CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_RETENTION_DAYS: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_RETENTION_DAYS:--1}
+      CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_BATCH_SIZE: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_BATCH_SIZE:-100}
+      CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_INTERVAL_MS: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_INTERVAL_MS:-60000}
       CITYCOPILOT_COMMERCE_DB_URL: jdbc:mysql://commerce-mysql:3306/citycopilot_commerce?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
       CITYCOPILOT_COMMERCE_DB_USERNAME: ${CITYCOPILOT_COMMERCE_DB_USERNAME:-citycopilot_commerce}
       CITYCOPILOT_COMMERCE_DB_PASSWORD: ${CITYCOPILOT_COMMERCE_DB_PASSWORD:?Run tools/citycopilot.ps1 start first}
@@ -369,6 +444,8 @@ services:
       CITYCOPILOT_REDIS_PASSWORD: ${CITYCOPILOT_COMMERCE_REDIS_PASSWORD:?Run tools/citycopilot.ps1 start first}
       CITYCOPILOT_INTERNAL_COMMERCE_TOKEN: ${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:?Run tools/citycopilot.ps1 start first}
       CITYCOPILOT_PLACE_BASE_URL: http://core:8081
+      CITYCOPILOT_INTERNAL_COMMERCE_PREVIOUS_TOKEN: ${CITYCOPILOT_INTERNAL_COMMERCE_PREVIOUS_TOKEN:-}
+      CITYCOPILOT_BOOKING_CHECKIN_SECRET: ${CITYCOPILOT_BOOKING_CHECKIN_SECRET:-${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN}}
       CITYCOPILOT_ROCKETMQ_ENABLED: ${CITYCOPILOT_ROCKETMQ_ENABLED:-true}
       CITYCOPILOT_ROCKETMQ_ENDPOINTS: rocketmq-proxy:8081
     ports:
@@ -376,6 +453,8 @@ services:
     depends_on:
       commerce-mysql:
         condition: service_healthy
+      commerce-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       redis-init:
@@ -425,11 +504,16 @@ services:
       CITYCOPILOT_ROCKETMQ_ENABLED: ${CITYCOPILOT_ROCKETMQ_ENABLED:-true}
       CITYCOPILOT_ROCKETMQ_ENDPOINTS: rocketmq-proxy:8081
       OPS_AGENT_V2_ENABLED: ${OPS_AGENT_V2_ENABLED:-true}
+      CITYCOPILOT_OPS_EVIDENCE_ARCHIVE_ENABLED: ${CITYCOPILOT_OPS_EVIDENCE_ARCHIVE_ENABLED:-false}
+      CITYCOPILOT_OPS_EVIDENCE_ARCHIVE_RETENTION_DAYS: ${CITYCOPILOT_OPS_EVIDENCE_ARCHIVE_RETENTION_DAYS:--1}
+      CITYCOPILOT_OPS_EVIDENCE_ARCHIVE_BATCH_SIZE: ${CITYCOPILOT_OPS_EVIDENCE_ARCHIVE_BATCH_SIZE:-100}
     ports:
       - "${CITYCOPILOT_BIND_ADDRESS:-127.0.0.1}:${CITYCOPILOT_AGENT_PORT:-8082}:8082"
     depends_on:
       agent-mysql:
         condition: service_healthy
+      agent-migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       core:
@@ -519,4 +603,4 @@ volumes:
   rocketmq-namesrv-logs:
   rocketmq-broker-store:
   rocketmq-broker-logs:
-  elasticsearch-data:
+  elasticsearch-v9-data:

@@ -4,8 +4,12 @@ import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
 
 import java.io.StringReader;
 
+/** 集中保存店铺索引的 analyzer、字段 mapping 与索引创建逻辑。 */
 final class ShopSearchIndexDefinition {
 
+    /**
+     * 新索引使用的完整 JSON 定义；严格 mapping 可尽早暴露投影字段漂移。
+     */
     static final String INDEX_BODY = """
             {
               "settings": {
@@ -80,6 +84,10 @@ final class ShopSearchIndexDefinition {
     private ShopSearchIndexDefinition() {
     }
 
+    /**
+     * @param index 待创建的物理索引名
+     * @return 包含统一 mapping 的官方客户端建索引请求
+     */
     static CreateIndexRequest create(String index) {
         return new CreateIndexRequest.Builder()
                 .index(index)

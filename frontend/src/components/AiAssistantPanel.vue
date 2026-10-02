@@ -4,9 +4,11 @@ import { useRoute, useRouter } from 'vue-router';
 import { Bot, ChevronRight, CircleAlert, CircleCheck, ExternalLink, Loader2, MapPin, Send, Sparkles, Store, Trash2, X } from '@lucide/vue';
 import { cancelAgentAction, confirmAgentAction, retryGeoBatchJob, startGeoBatchGeocode, streamAgentChat, syncShopGeoIndex } from '../api/citycopilot';
 import ConfirmDialog from './ConfirmDialog.vue';
+import AgentBookingCards from './AgentBookingCards.vue';
 import { authState } from '../composables/auth';
 import { locationState } from '../composables/location';
 import { formatDistance, formatPrice, formatScore } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
 import { hasPermission } from '../utils/permissions';
 import type { AgentToolEvent, AiAssistantAction, AiAssistantShop, AiChatRequest, GeoBatchJob } from '../types';
 
@@ -28,6 +30,12 @@ interface AgentConfirmation {
   args?: Record<string, unknown>;
   expiresAt?: string;
   state: 'pending' | 'confirming' | 'executed' | 'cancelled' | 'failed';
+}
+
+interface StoredConversation {
+  ownerId?: unknown;
+  conversationId?: unknown;
+  messages?: unknown;
 }
 
 const route = useRoute();
@@ -54,6 +62,19 @@ interface ToolStep {
   observation?: unknown;
 }
 
+const toolStepStatusLabels: Record<ToolStep['status'], string> = {
+  running: '调用中',
+  done: '已返回',
+  error: '失败',
+};
+const confirmationStateLabels: Record<AgentConfirmation['state'], string> = {
+  pending: '待确认',
+  confirming: '执行中',
+  executed: '已执行',
+  cancelled: '已取消',
+  failed: '执行失败',
+};
+
 function isStreaming(message: ChatMessage) {
   return streamingMessageId.value === message.id;
 }
@@ -75,8 +96,8 @@ function groupToolSteps(message: ChatMessage): ToolStep[] {
       existing.args = event.args;
     } else if (event.phase === 'result') {
       existing.observation = event.observation;
-      const obs = event.observation as { errorCode?: unknown } | null | undefined;
-      existing.status = obs && typeof obs === 'object' && 'errorCode' in obs && obs.errorCode ? 'error' : 'done';
+      const obs = event.observation as { ok?: boolean; errorCode?: unknown } | null | undefined;
+      existing.status = obs && (obs.ok === false || obs.errorCode) ? 'error' : 'done';
     }
     byIndex.set(idx, existing);
   });
@@ -114,19 +135,28 @@ function shortTrace(trace?: string) {
   return trace.length > 8 ? `${trace.slice(0, 4)}…${trace.slice(-4)}` : trace;
 }
 
+function toolStepStatusLabel(status: ToolStep['status']) {
+  return toolStepStatusLabels[status];
+}
+
+function confirmationStateLabel(state: AgentConfirmation['state']) {
+  return confirmationStateLabels[state] ?? '执行失败';
+}
+
 const welcomeMessage: ChatMessage = {
   id: ++messageId,
   role: 'assistant',
-  text: '你可以问我附近推荐、预算筛选、有券店铺，也可以在校准台里问缺坐标和批量失败原因。',
+  text: '你可以告诉我活动日期、时间、人数和预算，查询可预约场馆或餐厅；也可以问附近推荐、有券店铺。预约操作会先出确认卡，批准后才执行。',
   actions: [
     { label: '附近有券店铺', type: 'prompt', query: { prompt: '附近有没有人均 100 以内、有优惠券的店？' } },
     { label: '高分美食', type: 'prompt', query: { prompt: '推荐几家评分高的美食店' } },
   ],
 };
 
-const conversationId = ref(loadConversationId());
-const messages = ref<ChatMessage[]>(loadMessages());
-const conversationOwnerId = ref(loadConversationOwnerId());
+const storedConversation = readStoredConversation();
+const conversationId = ref(loadConversationId(storedConversation));
+const messages = ref<ChatMessage[]>(loadMessages(storedConversation));
+const conversationOwnerId = ref(loadConversationOwnerId(storedConversation));
 
 const canReadGeo = computed(() => hasPermission(authState.user, 'geo:read'));
 const canWriteGeo = computed(() => hasPermission(authState.user, 'geo:write'));
@@ -197,41 +227,36 @@ watch(
   { immediate: true },
 );
 
-function loadMessages() {
+function readStoredConversation(): StoredConversation {
   try {
-    const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}');
-    if (Array.isArray(saved.messages) && saved.messages.length) {
-      const restored = (saved.messages as unknown[]).slice(-20).filter(isChatMessage);
-      if (restored.length) {
-        messageId = Math.max(messageId, ...restored.map((message) => message.id));
-        return restored;
-      }
-    }
+    const saved: unknown = JSON.parse(sessionStorage.getItem(storageKey) || '{}');
+    return isRecord(saved) ? saved : {};
   } catch {
     // 忽略损坏的本地会话缓存，重新开始一轮对话。
+    return {};
+  }
+}
+
+function loadMessages(saved: StoredConversation) {
+  if (Array.isArray(saved.messages) && saved.messages.length) {
+    const restored = saved.messages.slice(-20).filter(isChatMessage);
+    if (restored.length) {
+      messageId = Math.max(messageId, ...restored.map((message) => message.id));
+      return restored;
+    }
   }
   return [welcomeMessage];
 }
 
-function loadConversationId() {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}');
-    if (typeof saved.conversationId === 'string' && saved.conversationId) {
-      return saved.conversationId;
-    }
-  } catch {
-    // ignore
+function loadConversationId(saved: StoredConversation) {
+  if (typeof saved.conversationId === 'string' && saved.conversationId) {
+    return saved.conversationId;
   }
   return createConversationId();
 }
 
-function loadConversationOwnerId() {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}');
-    return typeof saved.ownerId === 'string' && saved.ownerId ? saved.ownerId : null;
-  } catch {
-    return null;
-  }
+function loadConversationOwnerId(saved: StoredConversation) {
+  return typeof saved.ownerId === 'string' && saved.ownerId ? saved.ownerId : null;
 }
 
 function persistConversation() {
@@ -307,7 +332,7 @@ async function sendPrompt(prompt = input.value) {
     };
     await streamAgentChat(payload, (event) => handleAgentEvent(event.event, event.data, assistantMessage));
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'AI assistant is unavailable';
+    errorMessage.value = getErrorMessage(error, 'AI assistant is unavailable');
     assistantMessage.text = 'AI assistant is unavailable.';
   } finally {
     loading.value = false;
@@ -369,7 +394,7 @@ async function confirmPending(message: ChatMessage) {
     message.text = result.ok === true ? '操作已确认并执行成功。' : '操作已确认，但执行失败。';
   } catch (error) {
     confirmation.state = 'failed';
-    errorMessage.value = error instanceof Error ? error.message : '确认失败';
+    errorMessage.value = getErrorMessage(error, '确认失败');
   }
 }
 
@@ -381,7 +406,7 @@ async function cancelPending(message: ChatMessage) {
     confirmation.state = 'cancelled';
     message.text = '已取消本次高风险操作。';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '取消失败';
+    errorMessage.value = getErrorMessage(error, '取消失败');
   }
 }
 
@@ -470,7 +495,7 @@ async function handleGeoBatchStart(action: AiAssistantAction) {
     });
     notifyGeoBatch(job);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '批量任务创建失败';
+    errorMessage.value = getErrorMessage(error, '批量任务创建失败');
   } finally {
     actionLoading.value = '';
     await nextTick(scrollToBottom);
@@ -493,7 +518,7 @@ async function handleGeoIndexSync(action: AiAssistantAction) {
     });
     notifyGeoIndex(count || 0);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'GEO 索引重建失败';
+    errorMessage.value = getErrorMessage(error, 'GEO 索引重建失败');
   } finally {
     actionLoading.value = '';
     await nextTick(scrollToBottom);
@@ -521,7 +546,7 @@ async function handleGeoBatchRetry(action: AiAssistantAction) {
     });
     notifyGeoBatch(job);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '批量失败重试失败';
+    errorMessage.value = getErrorMessage(error, '批量失败重试失败');
   } finally {
     actionLoading.value = '';
     await nextTick(scrollToBottom);
@@ -644,7 +669,7 @@ function notifyGeoIndex(count: number) {
                     </span>
                     <span class="ai-tool-meta">
                       <strong class="mono">{{ step.toolName }}</strong>
-                      <small>{{ step.status === 'running' ? '调用中' : step.status === 'error' ? '失败' : '已返回' }}</small>
+                      <small>{{ toolStepStatusLabel(step.status) }}</small>
                     </span>
                     <ChevronRight class="ai-tool-chev" :size="14" aria-hidden="true" />
                   </button>
@@ -690,6 +715,7 @@ function notifyGeoIndex(count: number) {
               </button>
             </div>
 
+            <AgentBookingCards v-if="message.toolEvents?.length" :events="message.toolEvents" />
             <section v-if="message.confirmation" class="ai-confirmation" :data-state="message.confirmation.state">
               <div>
                 <small>高风险操作确认</small>
@@ -704,7 +730,7 @@ function notifyGeoIndex(count: number) {
                   确认执行
                 </button>
               </div>
-              <small v-else>{{ message.confirmation.state === 'executed' ? '已执行' : message.confirmation.state === 'cancelled' ? '已取消' : '执行失败' }}</small>
+              <small v-else>{{ confirmationStateLabel(message.confirmation.state) }}</small>
             </section>
           </div>
         </article>

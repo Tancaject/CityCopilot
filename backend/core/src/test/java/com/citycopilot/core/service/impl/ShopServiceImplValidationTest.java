@@ -3,7 +3,7 @@ package com.citycopilot.core.service.impl;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.ShopGeoUpdateDTO;
 import com.citycopilot.core.entity.Shop;
-import com.citycopilot.core.entity.ShopType;
+import com.citycopilot.core.dto.ShopTypeDTO;
 import com.citycopilot.core.service.IShopTypeService;
 import com.citycopilot.core.service.OperationLogService;
 import org.junit.jupiter.api.Test;
@@ -20,7 +20,7 @@ class ShopServiceImplValidationTest {
     void verifiedCreateRequiresValidCoordinatesBeforeDatabaseWrite() {
         ShopServiceImpl service = new ShopServiceImpl();
         IShopTypeService shopTypeService = mock(IShopTypeService.class);
-        when(shopTypeService.getById(7L)).thenReturn(new ShopType().setId(7L));
+        when(shopTypeService.findShopType(7L)).thenReturn(new ShopTypeDTO(7L, null, null, null));
         ReflectionTestUtils.setField(service, "shopTypeService", shopTypeService);
         Shop request = new Shop()
                 .setName("Verified without point")

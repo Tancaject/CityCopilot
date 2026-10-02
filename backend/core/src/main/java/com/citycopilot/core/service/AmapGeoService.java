@@ -10,9 +10,10 @@ import com.citycopilot.core.dto.AmapPoiDTO;
 import com.citycopilot.core.dto.GeoPointDTO;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.core.utils.RedisGeoCoordinates;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -38,30 +39,48 @@ import static com.citycopilot.core.utils.RedisConstants.AMAP_RATE_LIMIT_KEY;
 import static com.citycopilot.core.utils.RedisConstants.CACHE_AMAP_GEOCODE_KEY;
 import static com.citycopilot.core.utils.RedisConstants.CACHE_AMAP_POI_KEY;
 
+/**
+ * 高德地图 Web Service 适配服务，提供地址解析、POI 文本检索和周边检索。
+ *
+ * <p>所有远端调用统一经过 Redis 缓存、分钟限流、连续失败熔断和指标记录，外部响应再转换为 Core DTO。</p>
+ */
 @Slf4j
 @Service
 public class AmapGeoService {
 
+    /** 高德分钟限流计数器使用的时间桶格式。 */
     private static final DateTimeFormatter RATE_LIMIT_BUCKET = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
 
+    /** 配置连接和读取超时的高德 HTTP 客户端。 */
     private final RestTemplate restTemplate;
 
+    /** 高德 URL、Web Service Key、缓存和熔断参数。 */
     @Resource
     private AmapProperties amapProperties;
 
+    /** 默认城市、城市限制、附近半径等业务配置。 */
     @Resource
     private GeoProperties geoProperties;
 
+    /** Redis 客户端，承载响应缓存、限流桶、熔断状态和指标。 */
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    /** @param builder Spring HTTP 客户端构建器 */
     public AmapGeoService(RestTemplateBuilder builder) {
         this.restTemplate = builder
-                .setConnectTimeout(Duration.ofSeconds(3))
-                .setReadTimeout(Duration.ofSeconds(5))
+                .connectTimeout(Duration.ofSeconds(3))
+                .readTimeout(Duration.ofSeconds(5))
                 .build();
     }
 
+    /**
+     * 将文本地址解析为经纬度和行政区信息。
+     *
+     * @param address 待解析详细地址
+     * @param city 可选城市范围；空值使用 GEO 默认城市
+     * @return 地理点或稳定业务错误
+     */
     @AgentTool(
             name = "geocode_address",
             description = "Geocode an address into coordinates",
@@ -90,7 +109,7 @@ public class AmapGeoService {
             return gate;
         }
 
-        URI uri = UriComponentsBuilder.fromHttpUrl(amapProperties.getGeocodeUrl())
+        URI uri = UriComponentsBuilder.fromUriString(amapProperties.getGeocodeUrl())
                 .queryParam("key", amapProperties.getWebServiceKey())
                 .queryParam("address", address)
                 .queryParamIfPresent("city", StrUtil.isBlank(scopeCity) ? Optional.empty() : Optional.of(scopeCity))
@@ -99,6 +118,7 @@ public class AmapGeoService {
                 .toUri();
 
         try {
+            // 只有高德明确返回成功才缓存，避免把临时配额或服务错误固化到缓存。
             Map<?, ?> response = restTemplate.getForObject(uri, Map.class);
             Result result = parseGeocodeResponse(response);
             recordRemoteResult(operation, response);
@@ -113,6 +133,14 @@ public class AmapGeoService {
         }
     }
 
+    /**
+     * 按关键词与城市查询高德 POI 候选。
+     *
+     * @param keywords POI 名称或类别关键词
+     * @param city 可选城市名称
+     * @param adcode 可选行政区编码，优先于城市名称
+     * @return 标准化 POI DTO 列表或稳定业务错误
+     */
     @AgentTool(
             name = "search_geo_poi",
             description = "Search map POI candidates by keyword and city",
@@ -141,7 +169,7 @@ public class AmapGeoService {
             return gate;
         }
 
-        URI uri = UriComponentsBuilder.fromHttpUrl(amapProperties.getPoiTextUrl())
+        URI uri = UriComponentsBuilder.fromUriString(amapProperties.getPoiTextUrl())
                 .queryParam("key", amapProperties.getWebServiceKey())
                 .queryParam("keywords", keywords)
                 .queryParamIfPresent("city", StrUtil.isBlank(searchCity) ? Optional.empty() : Optional.of(searchCity))
@@ -168,13 +196,34 @@ public class AmapGeoService {
         }
     }
 
+    /**
+     * 使用默认类型范围执行周边 POI 查询。
+     *
+     * @param x 中心经度
+     * @param y 中心纬度
+     * @param keywords 可选关键词
+     * @param current 页码
+     * @param size 每页条数
+     * @return 周边 POI 候选
+     */
     public Result searchAroundPoi(Double x, Double y, String keywords, Integer current, Integer size) {
         return searchAroundPoi(x, y, keywords, null, current, size);
     }
 
+    /**
+     * 按中心点、关键词和高德类型编码查询周边 POI。
+     *
+     * @param x 中心经度
+     * @param y 中心纬度
+     * @param keywords 可选关键词
+     * @param types 可选高德 POI 类型编码串
+     * @param current 页码
+     * @param size 每页条数，高德单页上限在此收紧
+     * @return 按距离排序的 POI 候选
+     */
     public Result searchAroundPoi(Double x, Double y, String keywords, String types, Integer current, Integer size) {
         String operation = "poi_around";
-        if (!isValidCoordinate(x, y)) {
+        if (!RedisGeoCoordinates.isValid(x, y)) {
             return Result.fail("SHOP_GEO_INVALID", "坐标参数不合法");
         }
         if (StrUtil.isBlank(amapProperties.getWebServiceKey())) {
@@ -201,7 +250,7 @@ public class AmapGeoService {
             return gate;
         }
 
-        URI uri = UriComponentsBuilder.fromHttpUrl(amapProperties.getPoiAroundUrl())
+        URI uri = UriComponentsBuilder.fromUriString(amapProperties.getPoiAroundUrl())
                 .queryParam("key", amapProperties.getWebServiceKey())
                 .queryParam("location", x + "," + y)
                 .queryParam("radius", Math.round(nearbyRadiusMeters()))
@@ -230,6 +279,11 @@ public class AmapGeoService {
         }
     }
 
+    /**
+     * 汇总高德适配层的当日指标、限流和熔断状态。
+     *
+     * @return 运维状态映射
+     */
     @AgentTool(
             name = "get_geo_provider_status",
             description = "Get Amap provider health, rate-limit, and circuit status",
@@ -249,6 +303,12 @@ public class AmapGeoService {
         return status;
     }
 
+    /**
+     * 校验并解析高德地理编码响应。
+     *
+     * @param response 高德原始 JSON 映射
+     * @return 首个匹配地址的地理点
+     */
     private Result parseGeocodeResponse(Map<?, ?> response) {
         if (response == null || !"1".equals(String.valueOf(response.get("status")))) {
             return amapFail("geocode", response, "AMAP_GEOCODE_FAILED", "地址解析失败");
@@ -283,6 +343,12 @@ public class AmapGeoService {
         return Result.ok(point);
     }
 
+    /**
+     * 解析高德 POI 列表，跳过结构或坐标损坏的单项。
+     *
+     * @param response 高德原始 JSON 映射
+     * @return 标准化 POI 列表
+     */
     private Result parsePoiSearchResponse(Map<?, ?> response) {
         if (response == null || !"1".equals(String.valueOf(response.get("status")))) {
             return amapFail("poi", response, "AMAP_POI_FAILED", "POI 搜索失败");
@@ -305,6 +371,12 @@ public class AmapGeoService {
         return Result.ok(candidates);
     }
 
+    /**
+     * 将一条高德 POI 映射为 Core DTO，并兼容不同接口的扩展字段结构。
+     *
+     * @param poi 高德 POI 字段映射
+     * @return DTO；位置无效时返回 {@code null}
+     */
     private AmapPoiDTO toPoiDTO(Map<?, ?> poi) {
         String location = valueOf(poi.get("location"));
         String[] parts = location.split(",");
@@ -343,6 +415,14 @@ public class AmapGeoService {
                 )));
     }
 
+    /**
+     * 从嵌套高德对象中安全读取文本字段。
+     *
+     * @param source 外层 POI
+     * @param objectKey 嵌套对象字段名
+     * @param valueKey 目标字段名
+     * @return 标准化文本或 {@code null}
+     */
     private String nestedValue(Map<?, ?> source, String objectKey, String valueKey) {
         Object nested = source.get(objectKey);
         if (!(nested instanceof Map<?, ?> nestedMap)) {
@@ -351,6 +431,10 @@ public class AmapGeoService {
         return valueOf(nestedMap.get(valueKey));
     }
 
+    /**
+     * @param values 候选文本
+     * @return 第一个非空文本
+     */
     private String firstNonBlank(String... values) {
         for (String value : values) {
             if (StrUtil.isNotBlank(value)) {
@@ -360,6 +444,12 @@ public class AmapGeoService {
         return null;
     }
 
+    /**
+     * 从高德 photos 字段的列表或单对象形态中取得第一张图片。
+     *
+     * @param photosValue 原始 photos 字段
+     * @return 首个有效 URL
+     */
     private String firstPhotoUrl(Object photosValue) {
         if (photosValue instanceof List<?> photos) {
             for (Object photo : photos) {
@@ -380,6 +470,12 @@ public class AmapGeoService {
         return valueOf(photoMap.get("url"));
     }
 
+    /**
+     * 把高德人均消费金额转为项目使用的整数值。
+     *
+     * @param value 原始金额文本
+     * @return 四舍五入后的正数金额
+     */
     private Long parseAveragePrice(String value) {
         Double amount = parseCoordinate(value);
         if (amount == null || amount <= 0D) {
@@ -388,6 +484,12 @@ public class AmapGeoService {
         return Math.round(amount);
     }
 
+    /**
+     * 将高德五分制评分转换为项目的十分倍整数表示。
+     *
+     * @param value 原始评分文本
+     * @return 评分乘十后的整数
+     */
     private Integer parsePoiScore(String value) {
         Double rating = parseCoordinate(value);
         if (rating == null || rating <= 0D) {
@@ -396,6 +498,12 @@ public class AmapGeoService {
         return (int) Math.round(rating * 10D);
     }
 
+    /**
+     * 将高德可能返回的标量、数组或列表统一为第一个有效字符串。
+     *
+     * @param value 原始字段值
+     * @return 有效文本或 {@code null}
+     */
     private String valueOf(Object value) {
         if (value == null) {
             return null;
@@ -434,6 +542,13 @@ public class AmapGeoService {
         }
     }
 
+    /**
+     * 生成不暴露原始地址或关键词的稳定缓存键摘要。
+     *
+     * @param value 主查询值
+     * @param scope 城市、半径等作用域
+     * @return MD5 缓存键片段
+     */
     private String cacheKey(String value, String scope) {
         return DigestUtil.md5Hex(normalize(scope) + "|" + normalize(value));
     }
@@ -450,22 +565,17 @@ public class AmapGeoService {
         return geoProperties == null || geoProperties.isCityLimitEnabled();
     }
 
-    private boolean isValidCoordinate(Double x, Double y) {
-        return x != null
-                && y != null
-                && Double.isFinite(x)
-                && Double.isFinite(y)
-                && x >= -180D
-                && x <= 180D
-                && y >= -85.05112878D
-                && y <= 85.05112878D;
-    }
-
     private double nearbyRadiusMeters() {
         Double radius = geoProperties == null ? null : geoProperties.getNearbyRadiusMeters();
         return radius == null || radius <= 0D ? 5000D : radius;
     }
 
+    /**
+     * 尽力读取并反序列化高德原始响应缓存；缓存故障不阻断远端主流程。
+     *
+     * @param key Redis 缓存键
+     * @return 缓存响应，未命中或损坏时为空
+     */
     private Map<?, ?> readCachedResponse(String key) {
         try {
             String json = stringRedisTemplate.opsForValue().get(key);
@@ -479,6 +589,12 @@ public class AmapGeoService {
         }
     }
 
+    /**
+     * 按配置 TTL 尽力缓存成功的高德原始响应。
+     *
+     * @param key Redis 缓存键
+     * @param response 高德成功响应
+     */
     private void cacheResponse(String key, Map<?, ?> response) {
         if (response == null) {
             return;
@@ -495,6 +611,13 @@ public class AmapGeoService {
         }
     }
 
+    /**
+     * 使用 Redis 按分钟计数器判断整个服务集群是否超过高德调用上限。
+     *
+     * <p>Redis 故障时放行，由高德自身配额继续兜底。</p>
+     *
+     * @return 是否应在本地拒绝本次远端调用
+     */
     private boolean isAmapRateLimited() {
         Integer limit = amapProperties.getRateLimitPerMinute();
         if (limit == null || limit <= 0) {
@@ -513,6 +636,15 @@ public class AmapGeoService {
         }
     }
 
+    /**
+     * 将高德 status=0 响应转成稳定 Core 错误，并保留 info 便于诊断。
+     *
+     * @param operation 操作名
+     * @param response 高德原始响应
+     * @param code 稳定错误码
+     * @param fallback 默认错误信息
+     * @return 失败结果
+     */
     private Result amapFail(String operation, Map<?, ?> response, String code, String fallback) {
         if (response == null) {
             return Result.fail(code, fallback);
@@ -526,6 +658,12 @@ public class AmapGeoService {
         return Result.fail(code, fallback + "：" + info);
     }
 
+    /**
+     * 在发出远端请求前依次检查熔断和分钟限流，并记录调用指标。
+     *
+     * @param operation 操作名
+     * @return 被门禁拒绝时的失败结果；允许调用时为空
+     */
     private Result checkRemoteGate(String operation) {
         if (isAmapCircuitOpen()) {
             recordMetric(operation, "circuit_open");
@@ -539,6 +677,12 @@ public class AmapGeoService {
         return null;
     }
 
+    /**
+     * 根据高德业务 status 更新成功或失败连续计数。
+     *
+     * @param operation 操作名
+     * @param response 高德响应
+     */
     private void recordRemoteResult(String operation, Map<?, ?> response) {
         if (response != null && "1".equals(String.valueOf(response.get("status")))) {
             recordRemoteSuccess(operation);
@@ -547,6 +691,11 @@ public class AmapGeoService {
         recordRemoteFailure(operation);
     }
 
+    /**
+     * 记录远端成功并清除连续失败计数。
+     *
+     * @param operation 操作名
+     */
     private void recordRemoteSuccess(String operation) {
         recordMetric(operation, "success");
         try {
@@ -556,6 +705,11 @@ public class AmapGeoService {
         }
     }
 
+    /**
+     * 递增连续失败计数，达到阈值后创建带 TTL 的共享熔断键。
+     *
+     * @param operation 操作名
+     */
     private void recordRemoteFailure(String operation) {
         recordMetric(operation, "failure");
         try {
@@ -571,6 +725,7 @@ public class AmapGeoService {
         }
     }
 
+    /** @return 共享高德熔断键当前是否存在 */
     private boolean isAmapCircuitOpen() {
         try {
             return Boolean.TRUE.equals(stringRedisTemplate.hasKey(AMAP_CIRCUIT_KEY));
@@ -580,6 +735,12 @@ public class AmapGeoService {
         }
     }
 
+    /**
+     * 按天在 Redis Hash 中累加操作和全局指标。
+     *
+     * @param operation 操作名
+     * @param event 指标事件名
+     */
     private void recordMetric(String operation, String event) {
         try {
             String key = AMAP_METRIC_KEY + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
@@ -591,6 +752,7 @@ public class AmapGeoService {
         }
     }
 
+    /** @return 今天的高德操作指标；Redis 不可用时返回空映射 */
     private Map<String, Long> readTodayMetrics() {
         Map<String, Long> metrics = new LinkedHashMap<>();
         try {

@@ -73,4 +73,18 @@ class ShopSearchRequestFactoryTest {
         assertThat(request.sort()).singleElement()
                 .satisfies(sort -> assertThat(sort.score().order()).isEqualTo(SortOrder.Desc));
     }
+
+    @Test
+    void integerRangeBoundsKeepLongPrecisionWithElasticsearchNine() {
+        long minimum = 9_007_199_254_740_993L;
+        var request = factory.create("shops", ShopSearchRequest.builder()
+                .minAvgPrice(minimum).maxAvgPrice(minimum + 2).minScore(40).build(), 100);
+
+        var filters = request.query().bool().filter();
+        assertThat(filters.get(0).range().longNumber().field()).isEqualTo("avgPrice");
+        assertThat(filters.get(0).range().longNumber().gte()).isEqualTo(minimum);
+        assertThat(filters.get(0).range().longNumber().lte()).isEqualTo(minimum + 2);
+        assertThat(filters.get(1).range().longNumber().field()).isEqualTo("score");
+        assertThat(filters.get(1).range().longNumber().gte()).isEqualTo(40L);
+    }
 }

@@ -1,8 +1,8 @@
 package com.citycopilot.commerce;
 
+import com.citycopilot.contract.commerce.CommerceContracts.AdmissionRepairRequeued;
 import org.junit.jupiter.api.Test;
 
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -34,17 +34,17 @@ class CommerceControllerOperationsTest {
         CommerceOperationsService operations = mock(CommerceOperationsService.class);
         CommerceController controller = controller(operations);
         when(operations.requeueAdmissionRepair(300L, "operator:7"))
-                .thenReturn(Map.of("status", "requeued", "orderId", "300"));
+                .thenReturn(new AdmissionRepairRequeued("requeued", "300"));
 
         assertThat(controller.requeueAdmissionRepair(300L, true, "operator:7"))
-                .containsEntry("status", "requeued")
-                .containsEntry("orderId", "300");
+                .isEqualTo(new AdmissionRepairRequeued("requeued", "300"));
         verify(operations).requeueAdmissionRepair(300L, "operator:7");
     }
 
     private CommerceController controller(CommerceOperationsService operations) {
         return new CommerceController(
                 mock(CommerceOrderService.class),
+                mock(CommerceOrderAdmissionService.class),
                 mock(CommerceVoucherService.class),
                 mock(CommerceConsistencyService.class),
                 operations,

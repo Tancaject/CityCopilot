@@ -9,6 +9,7 @@ WORKDIR /workspace
 
 COPY pom.xml ./pom.xml
 COPY backend/contracts/pom.xml backend/contracts/pom.xml
+COPY backend/http-support/pom.xml backend/http-support/pom.xml
 COPY backend/search/pom.xml backend/search/pom.xml
 COPY backend/commerce-service/pom.xml backend/commerce-service/pom.xml
 COPY backend/core/pom.xml backend/core/pom.xml

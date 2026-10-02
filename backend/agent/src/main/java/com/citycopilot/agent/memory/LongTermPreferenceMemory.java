@@ -16,14 +16,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 用户显式长期推荐偏好的领域服务。
+ *
+ * <p>把受控提取结果事务性写入数据库，并生成仅用于推荐默认值的模型上下文；当前请求始终覆盖记忆，读取失败按无偏好降级，写入失败则明确报错。</p>
+ */
 @Service
 public class LongTermPreferenceMemory {
     private static final Logger log = LoggerFactory.getLogger(LongTermPreferenceMemory.class);
+    /** 放入模型提示的最近偏好上限，控制上下文体积。 */
     private static final int PROMPT_PREFERENCE_LIMIT = 20;
+    /** 用户管理接口一次最多返回的偏好数。 */
     private static final int API_PREFERENCE_LIMIT = 50;
 
+    /** 长期偏好持久化端口。 */
     private final UserPreferenceStore store;
+    /** 只识别明确长期表达的受控提取器。 */
     private final ExplicitPreferenceExtractor extractor;
+    /** 可选的偏好读写结果指标注册器。 */
     private final MeterRegistry meterRegistry;
 
     @Autowired
@@ -45,6 +55,14 @@ public class LongTermPreferenceMemory {
         this.meterRegistry = meterRegistry;
     }
 
+    /**
+     * 解析并原子应用一条用户消息中的全部偏好变更。
+     *
+     * @param userId 当前登录用户 id
+     * @param message 当前用户消息
+     * @return 保存、删除及是否纯记忆操作的统计
+     * @throws PreferenceMemoryWriteException 任一数据库写失败时回滚并明确报告未保存
+     */
     @Transactional
     public Mutation applyExplicitMessage(Long userId, String message) {
         if (userId == null || userId <= 0) {
@@ -81,6 +99,11 @@ public class LongTermPreferenceMemory {
         }
     }
 
+    /**
+     * 构建可放入 Agent hints 的受限偏好投影。
+     *
+     * @return 包含推荐作用域、当前请求优先标志和类型化值的 Map；读取失败时为空
+     */
     public Map<String, Object> promptContext(Long userId) {
         if (userId == null || userId <= 0) {
             return Map.of();
@@ -105,6 +128,7 @@ public class LongTermPreferenceMemory {
         }
     }
 
+    /** @return 当前用户最近更新的偏好，非法用户 id 返回空列表 */
     public List<UserPreference> list(Long userId) {
         if (userId == null || userId <= 0) {
             return List.of();
@@ -112,6 +136,7 @@ public class LongTermPreferenceMemory {
         return store.list(userId, API_PREFERENCE_LIMIT);
     }
 
+    /** @return 指定偏好属于当前用户并成功删除时为 true */
     public boolean forget(Long userId, long preferenceId) {
         if (userId == null || userId <= 0 || preferenceId <= 0) {
             return false;
@@ -119,6 +144,7 @@ public class LongTermPreferenceMemory {
         return store.delete(userId, preferenceId);
     }
 
+    /** @return 清除当前用户全部偏好的记录数 */
     public int forgetAll(Long userId) {
         if (userId == null || userId <= 0) {
             return 0;
@@ -126,6 +152,7 @@ public class LongTermPreferenceMemory {
         return store.deleteAll(userId);
     }
 
+    /** 将多值偏好聚合为列表，并让最新单值偏好优先。 */
     private Map<String, Object> promptValues(List<UserPreference> preferences) {
         Map<String, Object> values = new LinkedHashMap<>();
         Map<PreferenceType, Set<String>> multiple = new LinkedHashMap<>();
@@ -141,6 +168,7 @@ public class LongTermPreferenceMemory {
         return values;
     }
 
+    /** 把数据库字符串恢复为模型可直接使用的数字或布尔值。 */
     private Object typedValue(UserPreference preference) {
         return switch (preference.type()) {
             case MAX_AVG_PRICE, MAX_DISTANCE_METERS -> Integer.valueOf(preference.value());
@@ -162,6 +190,15 @@ public class LongTermPreferenceMemory {
                 .increment();
     }
 
+    /**
+     * 一次长期记忆更新的业务结果。
+     *
+     * @param savedCount 新增或更新数量
+     * @param deletedCount 实际删除数量
+     * @param memoryOnly 是否无需继续调用 Agent
+     * @param changed 是否存在有效变更意图
+     * @param removalRequested 用户是否请求删除特定偏好
+     */
     public record Mutation(
             int savedCount,
             int deletedCount,
@@ -187,6 +224,7 @@ public class LongTermPreferenceMemory {
             return new Mutation(0, count, memoryOnly, true, false);
         }
 
+        /** @return 面向用户且不夸大实际保存/删除结果的中文反馈 */
         public String responseMessage() {
             if (savedCount > 0 && deletedCount > 0) {
                 return "已更新长期偏好：记住 " + savedCount + " 项，移除 " + deletedCount + " 项。";

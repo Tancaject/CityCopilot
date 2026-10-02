@@ -11,12 +11,7 @@ import lombok.experimental.Accessors;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
-/**
- * <p>
- * 
- * </p>
- *
- */
+/** 对应 {@code shop_type} 表的店铺分类实体，按 sort 值控制展示顺序。 */
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
@@ -42,7 +37,7 @@ public class ShopType implements Serializable {
     private String icon;
 
     /**
-     * 顺序
+     * 展示顺序，值越小越靠前
      */
     private Integer sort;
 

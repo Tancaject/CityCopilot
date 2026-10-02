@@ -1,6 +1,10 @@
 package com.citycopilot.agent.http;
 
 import com.citycopilot.agent.confirmation.InMemoryPendingActionStore;
+import com.citycopilot.agent.budget.AgentBudgetProperties;
+import com.citycopilot.agent.budget.AgentBudgetException;
+import com.citycopilot.agent.budget.AgentExecutionRuntime;
+import com.citycopilot.agent.confirmation.PendingActionStore;
 import com.citycopilot.agent.confirmation.PendingAction;
 import com.citycopilot.agent.executor.PlanExecuteExecutor;
 import com.citycopilot.agent.gateway.ToolCallContext;
@@ -28,8 +32,48 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class AgentControllerConfirmationTest {
+
+    @Test
+    void overloadedConfirmationNeverConsumesPendingAction() throws Exception {
+        AgentBudgetProperties limits = new AgentBudgetProperties();
+        limits.setConcurrency(1); limits.setQueueCapacity(1);
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        PendingActionStore pending = mock(PendingActionStore.class);
+        AgentController controller = new AgentController(null, null, null, null, pending, null, null, null);
+        try (AgentExecutionRuntime runtime = new AgentExecutionRuntime(limits)) {
+            controller.configureRuntime(runtime);
+            runtime.submit(runtime.newBudget(), () -> { started.countDown(); release.await(); return null; });
+            assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS));
+            runtime.submit(runtime.newBudget(), () -> null);
+            AgentRequestContextHolder.set(context(user(1L)));
+            assertEquals("agent_overloaded", assertThrows(AgentBudgetException.class,
+                    () -> controller.confirm("pending")).code());
+            verifyNoInteractions(pending);
+        } finally { release.countDown(); }
+    }
+
+    @Test
+    void confirmationExpiringInQueueNeverConsumesPendingAction() throws Exception {
+        AgentBudgetProperties limits = new AgentBudgetProperties(); limits.setConcurrency(1);
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        PendingActionStore pending = mock(PendingActionStore.class);
+        AgentController controller = new AgentController(null, null, null, null, pending, null, null, null);
+        try (AgentExecutionRuntime runtime = new AgentExecutionRuntime(limits)) {
+            controller.configureRuntime(runtime);
+            runtime.submit(runtime.newBudget(), () -> { started.countDown(); release.await(); return null; });
+            assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS));
+            limits.setDeadline(Duration.ofMillis(80));
+            AgentRequestContextHolder.set(context(user(1L)));
+            assertEquals("agent_deadline_exceeded", assertThrows(AgentBudgetException.class,
+                    () -> controller.confirm("pending")).code());
+            verifyNoInteractions(pending);
+        } finally { release.countDown(); }
+    }
 
     @AfterEach
     void clearUser() {

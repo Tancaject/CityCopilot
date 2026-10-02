@@ -33,22 +33,19 @@ import java.util.TreeSet;
 import java.util.function.Function;
 
 /**
- * Executes a Redis write and {@code WAIT} on one physical Lettuce connection.
+ * 在同一条物理 Lettuce 主节点连接上执行 Redis 写入和 {@code WAIT} 副本确认。
  *
- * <p>Spring Data's Cluster {@code execute(command, key, args)} prepends the key
- * to the Redis command arguments; it cannot route the keyless WAIT command.
- * This component therefore resolves the key slot to its current master and
- * invokes both the write and WAIT on that master's dedicated Lettuce
- * {@link StatefulRedisConnection}. Non-Lettuce factories are rejected because
- * they cannot provide the required connection/node binding. In production
- * require-all mode, the same connection reads {@code CLUSTER REPLICAS} before
- * the write, waits for every configured replica, and verifies the replica
- * identity set again after WAIT. Hidden or changing topology fails closed.</p>
+ * <p>Spring Data Cluster 的通用命令接口会把路由键加入参数，无法路由无键的 WAIT。本组件因此先按
+ * key slot 找到当前主节点，再在其专用连接上连续执行写入和 WAIT；非 Lettuce 工厂无法保证这种
+ * 连接绑定，故直接拒绝。require-all 模式还会在写前读取 {@code CLUSTER REPLICAS}，等待所有已配置
+ * 副本，并在 WAIT 后复核副本身份集合；拓扑不可见或中途变化均失败关闭。</p>
  */
 @Component
 final class CommerceRedisReplicationExecutor {
     private static final Logger log = LoggerFactory.getLogger(CommerceRedisReplicationExecutor.class);
+    /** Redis 写入副本确认结果与耗时的指标名。 */
     private static final String METRIC = "citycopilot.commerce.redis.replication.confirmation";
+    /** 永久保留全局幂等身份；已存在时用同值写产生可由 WAIT 覆盖的新复制偏移。 */
     private static final byte[] RESERVE_GLOBAL_IDENTITY_SCRIPT = """
             local existing = redis.call('get', KEYS[1])
             if not existing then
@@ -58,6 +55,7 @@ final class CommerceRedisReplicationExecutor {
             redis.call('set', KEYS[1], existing)
             return existing
             """.getBytes(StandardCharsets.UTF_8);
+    /** 控制面 SET NX；同值已存在仍执行同值写以便重新确认复制。 */
     private static final byte[] SET_IF_ABSENT_SCRIPT = """
             local existing = redis.call('get', KEYS[1])
             if not existing then
@@ -70,6 +68,7 @@ final class CommerceRedisReplicationExecutor {
             end
             return 0
             """.getBytes(StandardCharsets.UTF_8);
+    /** 控制面比较并更新；目标值已存在时同样重写并确认复制。 */
     private static final byte[] COMPARE_AND_SET_SCRIPT = """
             local current = redis.call('get', KEYS[1])
             if current == ARGV[1] then
@@ -82,6 +81,7 @@ final class CommerceRedisReplicationExecutor {
             end
             return 0
             """.getBytes(StandardCharsets.UTF_8);
+    /** 仅删除预期所有者；键已不存在时用 set/delete 空操作获得复制偏移。 */
     private static final byte[] DELETE_IF_EQUALS_SCRIPT = """
             local current = redis.call('get', KEYS[1])
             if current == ARGV[1] then
@@ -96,10 +96,15 @@ final class CommerceRedisReplicationExecutor {
             return 0
             """.getBytes(StandardCharsets.UTF_8);
 
+    /** 按路由键返回绑定到当前物理主节点的命令连接。 */
     private final NodeBoundConnectionProvider connections;
+    /** 记录副本确认结果、拓扑重试和耗时。 */
     private final MeterRegistry metrics;
+    /** 至少需要确认的副本数。 */
     private final int requiredReplicas;
+    /** WAIT 最长阻塞时间。 */
     private final long waitTimeoutMillis;
+    /** 是否要求确认拓扑中全部已配置副本，而非固定最小数量。 */
     private final boolean requireAllReplicas;
 
     @Autowired
@@ -148,6 +153,7 @@ final class CommerceRedisReplicationExecutor {
         this.requireAllReplicas = requireAllReplicas;
     }
 
+    /** require-all 模式在接收业务前先验证 Redis Cluster 可暴露副本拓扑。 */
     @PostConstruct
     void validateRequiredReplicaTopology() {
         if (!requireAllReplicas) return;
@@ -157,6 +163,13 @@ final class CommerceRedisReplicationExecutor {
         });
     }
 
+    /**
+     * 永久保留用户幂等键对应的订单身份，并确认写入复制。
+     *
+     * @param key 全局幂等身份键
+     * @param candidateIdentity 候选订单/Voucher 身份编码
+     * @return Redis 中最终保留的身份，可能来自并发先行请求
+     */
     String reserveGlobalIdentity(String key, String candidateIdentity) {
         return execute("global_idempotency", key, commands -> {
             ReplicationConfirmationTarget confirmationTarget = confirmationTarget(
@@ -179,9 +192,9 @@ final class CommerceRedisReplicationExecutor {
     }
 
     /**
-     * Creates a control-plane value without overwriting a conflicting owner.
-     * Both the Lua write and WAIT execute on the key's current master
-     * connection, including after a Redis Cluster topology refresh.
+     * 不覆盖冲突所有者地创建控制面值；Lua 写入和 WAIT 始终使用该键当前主节点的同一连接。
+     *
+     * @return CHANGED、ALREADY_APPLIED 或 CONFLICT
      */
     ReplicatedMutation setIfAbsent(String operation, String key, String value) {
         return execute(operation, key, commands -> {
@@ -200,9 +213,7 @@ final class CommerceRedisReplicationExecutor {
     }
 
     /**
-     * Atomically changes one routing control value. Repeating an already
-     * committed transition performs a same-value write and WAIT so a resumed
-     * operator still obtains replica confirmation.
+     * 原子比较并修改控制值；重复已提交转换会同值写入并 WAIT，使恢复后的运维任务重新取得复制证明。
      */
     ReplicatedMutation compareAndSet(
             String operation,
@@ -226,9 +237,7 @@ final class CommerceRedisReplicationExecutor {
     }
 
     /**
-     * Deletes only the expected owner and confirms the final absence on the
-     * same master connection. An already absent key receives an atomic
-     * set/delete no-op so WAIT still covers a fresh replication offset.
+     * 仅删除预期所有者并在同一连接确认最终缺失；键已缺失时执行原子 set/delete 空操作供 WAIT 覆盖。
      */
     ReplicatedMutation deleteIfEquals(
             String operation,
@@ -250,6 +259,16 @@ final class CommerceRedisReplicationExecutor {
         });
     }
 
+    /**
+     * 在路由键主节点执行多键 Lua，并对表示“写入成功/幂等成功”的返回码做副本确认。
+     *
+     * @param operation 指标和错误中的操作名
+     * @param routingKey 用于选择主节点的键
+     * @param script 待执行脚本
+     * @param keys 脚本键，必须全部与 routingKey 同槽
+     * @param arguments ARGV 参数
+     * @return Lua 整数结果
+     */
     Long executeReplicatedScript(
             String operation,
             String routingKey,
@@ -272,6 +291,9 @@ final class CommerceRedisReplicationExecutor {
         });
     }
 
+    /**
+     * 在键所属主节点执行回调；遇 MOVED/ASK 时刷新拓扑并仅重试一次。
+     */
     private <T> T execute(String operation, String routingKey, Function<NodeBoundCommands, T> callback) {
         Timer.Sample sample = Timer.start(metrics);
         String outcome = "failure";
@@ -303,6 +325,7 @@ final class CommerceRedisReplicationExecutor {
         }
     }
 
+    /** 确定本次写入必须等待的副本数量和拓扑指纹。 */
     private ReplicationConfirmationTarget confirmationTarget(
             NodeBoundCommands commands,
             String operation
@@ -329,6 +352,9 @@ final class CommerceRedisReplicationExecutor {
         return target;
     }
 
+    /**
+     * 执行 WAIT，并在 require-all 模式确认写前后副本集合完全相同。
+     */
     private void confirmReplication(
             NodeBoundCommands commands,
             String operation,
@@ -361,6 +387,7 @@ final class CommerceRedisReplicationExecutor {
         }
     }
 
+    /** 在发送 Lua 前本地拒绝跨 slot 键，避免部分逻辑在 Cluster 中不可执行。 */
     private void requireSameSlot(String routingKey, List<String> keys) {
         int expected = SlotHash.getSlot(bytes(routingKey));
         for (String key : keys) {
@@ -415,12 +442,15 @@ final class CommerceRedisReplicationExecutor {
         return new LettuceNodeBoundConnectionProvider(lettuce.getRequiredNativeClient());
     }
 
+    /** 关闭本组件持有的独立 Lettuce 连接。 */
     @PreDestroy
     void close() {
         connections.close();
     }
 
+    /** 按路由键提供主节点绑定命令的抽象，便于兼容单机、Cluster 与测试替身。 */
     interface NodeBoundConnectionProvider {
+        /** 在 routingKey 当前主节点连接上执行回调。 */
         <T> T execute(String routingKey, Function<NodeBoundCommands, T> callback);
 
         default boolean refreshTopology() {
@@ -430,6 +460,7 @@ final class CommerceRedisReplicationExecutor {
         default void close() {}
     }
 
+    /** 本组件所需的最小 Redis 命令集合，保证 eval 与 WAIT 共享物理连接。 */
     interface NodeBoundCommands {
         Long eval(byte[] script, byte[][] keys, byte[][] arguments);
 
@@ -453,10 +484,14 @@ final class CommerceRedisReplicationExecutor {
         }
     }
 
+    /** Lettuce 实现：单机复用连接，Cluster 按 slot 获取具体主节点写连接。 */
     private static final class LettuceNodeBoundConnectionProvider
             implements NodeBoundConnectionProvider {
+        /** Lettuce 单机或 Cluster 客户端实例。 */
         private final AbstractRedisClient client;
+        /** 单机模式复用的二进制命令连接。 */
         private volatile StatefulRedisConnection<byte[], byte[]> standalone;
+        /** Cluster 模式复用的拓扑连接，用于按 slot 取得主节点连接。 */
         private volatile StatefulRedisClusterConnection<byte[], byte[]> cluster;
 
         private LettuceNodeBoundConnectionProvider(AbstractRedisClient client) {
@@ -474,6 +509,7 @@ final class CommerceRedisReplicationExecutor {
             return callback.apply(commands(routingKey));
         }
 
+        /** 根据路由键解析当前主节点；找不到可写主节点时失败关闭。 */
         private NodeBoundCommands commands(String routingKey) {
             if (client instanceof RedisClient redisClient) {
                 return new LettuceNodeBoundCommands(standalone(redisClient).sync(), null);
@@ -526,6 +562,12 @@ final class CommerceRedisReplicationExecutor {
         }
     }
 
+    /**
+     * 绑定某个主节点的同步命令适配器。
+     *
+     * @param delegate Lettuce 同步命令连接
+     * @param masterNodeId Cluster 主节点 ID；单机模式为空
+     */
     private record LettuceNodeBoundCommands(
             RedisCommands<byte[], byte[]> delegate,
             String masterNodeId
@@ -546,6 +588,7 @@ final class CommerceRedisReplicationExecutor {
             return delegate.waitForReplication(replicas, timeoutMillis);
         }
 
+        /** require-all 模式读取并校验当前主节点的全部 replica 身份。 */
         @Override
         public ReplicationConfirmationTarget replicationConfirmationTarget(
                 int minimumRequiredReplicas,
@@ -613,12 +656,14 @@ final class CommerceRedisReplicationExecutor {
         }
     }
 
+    /** WAIT 未达到要求副本数。 */
     static final class RedisReplicationInsufficientException extends RuntimeException {
         RedisReplicationInsufficientException(String message) {
             super(message);
         }
     }
 
+    /** 无法取得稳定且可验证的副本拓扑。 */
     static final class RedisReplicationTopologyUnavailableException extends RuntimeException {
         RedisReplicationTopologyUnavailableException(String message) {
             super(message);
@@ -629,6 +674,12 @@ final class CommerceRedisReplicationExecutor {
         }
     }
 
+    /**
+     * 一次写入的副本确认目标。
+     *
+     * @param replicaCount WAIT 所需副本数
+     * @param topologyFingerprint 写前后比较的拓扑指纹
+     */
     record ReplicationConfirmationTarget(int replicaCount, String topologyFingerprint) {
         ReplicationConfirmationTarget {
             if (replicaCount < 0 || topologyFingerprint == null || topologyFingerprint.isBlank()) {
@@ -637,9 +688,13 @@ final class CommerceRedisReplicationExecutor {
         }
     }
 
+    /** 控制面幂等写的三态结果。 */
     enum ReplicatedMutation {
+        /** 当前值属于其他所有者或不等于预期值。 */
         CONFLICT,
+        /** 本次调用改变了值。 */
         CHANGED,
+        /** 目标状态原本已存在，本次仅重新确认复制。 */
         ALREADY_APPLIED;
 
         private static ReplicatedMutation from(Long result) {

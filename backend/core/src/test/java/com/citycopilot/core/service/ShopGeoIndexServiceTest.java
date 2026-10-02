@@ -21,6 +21,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -33,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -75,18 +77,19 @@ class ShopGeoIndexServiceTest {
         Shop verified = shop(1L, 10L, 120.10, 30.10, "verified");
         Shop pending = shop(2L, 10L, 120.20, 30.20, "pending");
         Shop failed = shop(3L, 11L, 120.30, 30.30, "failed");
-        when(shopMapper.selectList(null)).thenReturn(List.of(verified, pending, failed));
+        when(shopMapper.projectionHighWatermark()).thenReturn(3L);
+        when(shopMapper.projectionPage(0L, 3L)).thenReturn(List.of(verified, pending, failed));
         mockScan(SHOP_GEO_ALL_KEY, SHOP_GEO_KEY + "999",
                 SHOP_GEO_INDEX_READY_KEY, SHOP_GEO_INDEX_META_KEY);
 
         int indexed = service.syncShopGeoIndex();
 
         assertEquals(1, indexed);
-        verify(geoOperations).add(eq(SHOP_GEO_ALL_KEY), any(Point.class), eq("1"));
-        verify(geoOperations).add(eq(SHOP_GEO_KEY + "10"), any(Point.class), eq("1"));
-        verify(geoOperations, times(2)).add(anyString(), any(Point.class), eq("1"));
-        verify(geoOperations, never()).add(anyString(), any(Point.class), eq("2"));
-        verify(geoOperations, never()).add(anyString(), any(Point.class), eq("3"));
+        verify(geoOperations).add(eq(SHOP_GEO_ALL_KEY), eq(Map.of("1", new Point(120.10, 30.10))));
+        verify(geoOperations).add(eq(SHOP_GEO_KEY + "10"), eq(Map.of("1", new Point(120.10, 30.10))));
+        verify(geoOperations, times(2)).add(anyString(), anyMap());
+        verify(geoOperations, never()).add(anyString(), argThat((Map<String, Point> points) -> points.containsKey("2")));
+        verify(geoOperations, never()).add(anyString(), argThat((Map<String, Point> points) -> points.containsKey("3")));
         verify(redisTemplate).delete(argThat((Collection<String> keys) ->
                 keys.contains(SHOP_GEO_ALL_KEY)
                         && keys.contains(SHOP_GEO_KEY + "999")
@@ -103,9 +106,10 @@ class ShopGeoIndexServiceTest {
     @Test
     void rebuildFailureNeverMarksIndexReady() {
         Shop verified = shop(1L, 10L, 120.10, 30.10, "verified");
-        when(shopMapper.selectList(null)).thenReturn(List.of(verified));
+        when(shopMapper.projectionHighWatermark()).thenReturn(1L);
+        when(shopMapper.projectionPage(0L, 1L)).thenReturn(List.of(verified));
         mockScan();
-        when(geoOperations.add(anyString(), any(Point.class), anyString()))
+        when(geoOperations.add(anyString(), anyMap()))
                 .thenThrow(new IllegalStateException("redis unavailable"));
 
         assertThrows(IllegalStateException.class, service::syncShopGeoIndex);
@@ -253,7 +257,8 @@ class ShopGeoIndexServiceTest {
                 new ShopProjectionOutboxRepository.ProjectionChange(12L, 1L, 3L)));
         Shop base = shop(1L, 10L, 120D, 30D, "verified").setProjectionVersion(1L);
         Shop current = shop(1L, 11L, 121D, 31D, "verified").setProjectionVersion(3L);
-        when(shopMapper.selectList(null)).thenReturn(List.of(base));
+        when(shopMapper.projectionHighWatermark()).thenReturn(1L);
+        when(shopMapper.projectionPage(0L, 1L)).thenReturn(List.of(base));
         when(shopMapper.selectBatchIds(any(Collection.class))).thenReturn(List.of(current));
         when(redisTemplate.execute(
                 any(RedisScript.class), any(List.class), any(Object[].class))).thenReturn(1L);

@@ -101,7 +101,7 @@
 代码锚点：
 
 - [Commerce 秒杀 Lua](../../backend/commerce-service/src/main/resources/lua/commerce_seckill.lua)
-- [Commerce 订单与 Redis Stream 消费](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOrderService.java)
+- [Commerce 订单事务](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOrderService.java)、[准入与持久恢复](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOrderAdmissionService.java)、[Redis Stream 消费与补偿](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOrderStreamWorker.java)
 - [Commerce 库存对账](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceReconciliationJob.java)
 - [远程 ToolGateway](../../backend/agent/src/main/java/com/citycopilot/agent/gateway/RemoteToolGateway.java)
 - [Ops Agent 当前实现](../../backend/agent/src/main/java/com/citycopilot/agent/ops/OpsAgentService.java)
@@ -132,7 +132,7 @@
 | B6 | Ops Agent 是固定任务 `switch`，工具成功即认为任务成功 | 缺少证据、诊断、动态计划、审批和业务后置条件复核 | [OpsAgentService](../../backend/agent/src/main/java/com/citycopilot/agent/ops/OpsAgentService.java) |
 | B7 | Ops Stream 缺少 pending reclaim、可靠结果提交与系统化 DLQ | 崩溃、重复投递或 ACK 时序可能丢任务或重复动作 | [OpsAgentService](../../backend/agent/src/main/java/com/citycopilot/agent/ops/OpsAgentService.java) |
 | B8 | Tool 元数据缺少副作用、风险、受众和审批策略 | 模型与不同入口无法共享统一的安全决策 | [ToolDefinition](../../backend/contracts/src/main/java/com/citycopilot/contract/tool/ToolDefinition.java) |
-| B9 | 当前没有 Outbox、Inbox 或专用 MQ | 跨服务事件一致性、广播与积压治理尚未建立 | [数据库基线](../../citycopilot-v2.sql) |
+| B9 | 当前没有 Outbox、Inbox 或专用 MQ | 跨服务事件一致性、广播与积压治理尚未建立 | [数据库迁移来源](../database-migrations.md) |
 | B10 | 秒杀 Worker 使用固定消费者名，业务拒绝可能正常返回后 ACK，当前 pending 恢复不能可靠接管死亡实例 | Redis 已预扣但数据库未落单时可能长期依赖对账，且多实例恢复语义不足 | [VoucherOrderServiceImpl](../../backend/core/src/main/java/com/citycopilot/core/service/impl/VoucherOrderServiceImpl.java) |
 
 B1–B5 是引入更多分布式组件前的 P0 级前置条件；B10 必须在 RocketMQ walking skeleton 之前解决。
@@ -171,7 +171,7 @@ B1–B5 是引入更多分布式组件前的 P0 级前置条件；B10 必须在 
 |---|---|---|
 | 团队 | 以单人开发维护为主，复杂度预算有限 | 每阶段控制部署单元与新增依赖数量 |
 | 运行环境 | 本地 Windows + Docker Compose 是主要演示环境 | E0 记录机器、Docker、JDK、资源和启动耗时 |
-| 技术基线 | Java 17、Spring Boot 3.2.2、MySQL 8.4、Redis 7 | 升级另立 ADR，不与服务拆分混做 |
+| 技术依赖 | 版本以[父 POM](../../pom.xml)和 [Compose](../../compose.yaml)为准 | 升级及持久化契约兼容遵循 [ADR 0011](../adr/0011-supported-dependencies-and-wire-compatibility.md) |
 | 流量 | 尚无真实生产峰值 | 先建立可复现基线，再确定容量和 SLO |
 | 兼容性 | 对外 HTTP 路径、Tool 名和 MCP 能力尽量保持 | 契约 fixture 与旧客户端 smoke |
 | MQ | RocketMQ 5.x 能满足订单事件、延迟和 Ops 触发 | E2 walking skeleton 与故障注入 |

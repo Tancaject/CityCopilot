@@ -13,10 +13,9 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * <p>
- * 
- * </p>
+ * 对应 {@code shop} 表的本地店铺权威实体。
  *
+ * <p>Core 负责店铺资料；GEO 与 Elasticsearch 都是可重建投影，通过 projectionVersion 防止旧事件覆盖新状态。</p>
  */
 @Data
 @EqualsAndHashCode(callSuper = false)
@@ -42,9 +41,7 @@ public class Shop implements Serializable {
      */
     private Long typeId;
 
-    /**
-     * Owning merchant user. Null means the shop has not been assigned.
-     */
+    /** 归属商户用户主键；为空表示尚未分配负责人。 */
     private Long ownerUserId;
 
     /**
@@ -68,7 +65,7 @@ public class Shop implements Serializable {
     private Double x;
 
     /**
-     * 维度
+     * 纬度
      */
     private Double y;
 
@@ -133,17 +130,14 @@ public class Shop implements Serializable {
     private LocalDateTime updateTime;
 
     /**
-     * Monotonic source version used by rebuildable search and GEO projections.
-     * It is advanced in the same transaction that appends ShopChanged to the
-     * projection outbox.
+     * 搜索和 GEO 投影使用的单调源版本；启用 Outbox 时与 ShopChanged 记录在同一事务中递增。
      */
     @TableField(
             value = "projection_version",
             insertStrategy = FieldStrategy.NEVER,
             updateStrategy = FieldStrategy.NEVER)
     private Long projectionVersion;
-
-
+    /** 查询附近店铺时临时补充的距离，非数据库字段，单位米。 */
     @TableField(exist = false)
     private Double distance;
 }

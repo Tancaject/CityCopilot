@@ -11,18 +11,30 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * 受限的本地启发式 Agent 客户端。
+ *
+ * <p>用于外部模型关闭或失败时维持只读查询能力；它只识别少量明确意图，并主动拒绝下单、支付、退款等写操作。</p>
+ */
 public final class HeuristicAgentLlmClient implements AgentLlmClient {
+    /** 仅用于在兜底提示中展示当前模型配置。 */
     private final AgentAiProperties aiProperties;
 
     public HeuristicAgentLlmClient(AgentAiProperties aiProperties) {
         this.aiProperties = aiProperties;
     }
 
+    /** 使用空提示执行兼容的启发式决策。 */
     @Override
     public AgentDecision next(String message, List<ToolMetadata> tools, List<AgentTraceStep> observations) {
         return next(message, tools, observations, Map.of());
     }
 
+    /**
+     * 按最近工具结果和关键词选择受限只读工具；不会臆造写操作所需业务标识。
+     *
+     * @return 失败说明、只读工具调用或能力提示
+     */
     @Override
     public AgentDecision next(
             String message,
@@ -40,6 +52,7 @@ public final class HeuristicAgentLlmClient implements AgentLlmClient {
                 return AgentDecision.finalAnswer("已根据工具结果完成查询。");
             }
         }
+        // 会话文本可能包含历史轮次，只对最后一段当前用户请求做意图识别。
         String currentRequest = RecommendationPreferenceResolver.currentRequest(message);
         String normalized = currentRequest.toLowerCase(Locale.ROOT);
         if (containsAny(normalized, "下单", "支付", "退款", "取消订单", "place order", "pay", "refund", "cancel order")) {
@@ -64,6 +77,7 @@ public final class HeuristicAgentLlmClient implements AgentLlmClient {
             args.put("size", 5);
             args.put("x", doubleHint(hints, "x", 120.149));
             args.put("y", doubleHint(hints, "y", 30.282));
+            // 当前轮明确偏好优先，未说明时才允许长期偏好补全分类。
             RecommendationPreferenceResolver.applyNearbyCategory(message, hints, args);
             return AgentDecision.callTool("search_nearby_shops", args);
         }

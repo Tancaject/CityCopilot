@@ -1,0 +1,362 @@
+{
+  "evidenceDate": "2026-09-10",
+  "runner": "tools/loadtest/run_booking_baseline.py",
+  "runtime": {
+    "mysqlVersion": "8.0.44",
+    "javaRuntime": "17.0.12+8-LTS-286",
+    "jvmArguments": [
+      "-Xms192m",
+      "-Xmx512m"
+    ],
+    "applicationJarSha256": "4665a7b74f181846cd6b580acd8bc938af0dbf9e1a49d6f4b91cf433c007e9d2",
+    "logicalProcessors": 32,
+    "rocketMqCompose": "tools/loadtest/booking-mq-compose.yaml",
+    "identityScope": "100 distinct existing Core test users; merchant-owned shop checked through real Core HTTP",
+    "measurementBoundary": "One local Commerce JVM; separate local Core authority, MySQL and RocketMQ; no multi-host scaling or production capacity assertion"
+  },
+  "runs": {
+    "normal": {
+      "runId": "booking-a14a8a2e010d473d",
+      "timestamp": "2026-09-10T04:08:24.743928+00:00",
+      "passed": true,
+      "scope": "Loopback Commerce HTTP with real MySQL and Core-authorized merchant fixtures; not a Core/browser or multi-host capacity claim",
+      "baseUrl": "http://127.0.0.1:18093/commerce/v1",
+      "database": "citycopilot_booking_normal_load_test",
+      "scenarios": [
+        {
+          "scenario": "hot-court",
+          "workflows": 100,
+          "http_requests": 101,
+          "concurrency": 20,
+          "duration_seconds": 0.572,
+          "workflows_per_second": 174.73,
+          "http_requests_per_second": 176.48,
+          "confirmed": 1,
+          "confirmed_units": 1,
+          "capacity_rejected": 99,
+          "unexpected": 0,
+          "business_codes": {
+            "BOOKING_SLOT_FULL": 99,
+            "BOOKING_CONFIRMED": 1
+          },
+          "workflow_latency_ms": {
+            "samples": 100,
+            "mean": 106.09,
+            "p50": 86.98,
+            "p95": 204.61,
+            "p99": 221.65,
+            "max": 255.37
+          },
+          "hold_latency_ms": {
+            "samples": 100,
+            "mean": 104.67,
+            "p50": 86.93,
+            "p95": 202.17,
+            "p99": 220.36,
+            "max": 221.55
+          },
+          "confirmation_latency_ms": {
+            "samples": 1,
+            "mean": 136.08,
+            "p50": 136.08,
+            "p95": 136.08,
+            "p99": 136.08,
+            "max": 136.08
+          }
+        },
+        {
+          "scenario": "dining",
+          "workflows": 100,
+          "http_requests": 147,
+          "concurrency": 20,
+          "duration_seconds": 1.414,
+          "workflows_per_second": 70.72,
+          "http_requests_per_second": 103.95,
+          "confirmed": 47,
+          "confirmed_units": 200,
+          "capacity_rejected": 53,
+          "unexpected": 0,
+          "business_codes": {
+            "BOOKING_CONFIRMED": 47,
+            "BOOKING_SLOT_FULL": 53
+          },
+          "workflow_latency_ms": {
+            "samples": 100,
+            "mean": 275.71,
+            "p50": 226.71,
+            "p95": 543.56,
+            "p99": 571.04,
+            "max": 576.47
+          },
+          "hold_latency_ms": {
+            "samples": 100,
+            "mean": 162.04,
+            "p50": 162.39,
+            "p95": 300.33,
+            "p99": 319.57,
+            "max": 329.72
+          },
+          "confirmation_latency_ms": {
+            "samples": 47,
+            "mean": 241.59,
+            "p50": 254.61,
+            "p95": 295.62,
+            "p99": 306.93,
+            "max": 306.93
+          }
+        },
+        {
+          "scenario": "nonhot",
+          "workflows": 100,
+          "http_requests": 200,
+          "concurrency": 20,
+          "duration_seconds": 0.449,
+          "workflows_per_second": 222.68,
+          "http_requests_per_second": 445.36,
+          "confirmed": 100,
+          "confirmed_units": 100,
+          "capacity_rejected": 0,
+          "unexpected": 0,
+          "business_codes": {
+            "BOOKING_CONFIRMED": 100
+          },
+          "workflow_latency_ms": {
+            "samples": 100,
+            "mean": 81.22,
+            "p50": 81.31,
+            "p95": 102.52,
+            "p99": 109.81,
+            "max": 112.69
+          },
+          "hold_latency_ms": {
+            "samples": 100,
+            "mean": 39.74,
+            "p50": 39.33,
+            "p95": 59.87,
+            "p99": 69.69,
+            "max": 73.0
+          },
+          "confirmation_latency_ms": {
+            "samples": 100,
+            "mean": 41.3,
+            "p50": 40.56,
+            "p95": 56.49,
+            "p99": 60.25,
+            "max": 60.94
+          }
+        }
+      ],
+      "invariants": {
+        "held": 0,
+        "confirmed": 148,
+        "unitMismatches": 0,
+        "unpublishedOutbox": 0,
+        "capacityViolations": 0,
+        "occupancyMismatches": 0,
+        "missingVersionEvents": 0
+      },
+      "mqOutage": null,
+      "publication": {
+        "at": "2026-09-10T04:08:24.426932+00:00",
+        "total": 296,
+        "failed": 0,
+        "claimed": 0,
+        "retried": 0,
+        "attempts": 296,
+        "published": 296,
+        "firstFailure": null
+      },
+      "rawReport": "tools/loadtest/results/booking-normal/summary.json",
+      "rawReportSha256": "74bbfa8d7c79b0225e67ad92f1bf9d233c4be8882d153f71dd3ac9b0065b3323",
+      "rawSamples": "tools/loadtest/results/booking-normal/summary.samples.jsonl",
+      "metricsBefore": "tools/loadtest/results/booking-normal/summary.before.prometheus",
+      "metricsAfter": "tools/loadtest/results/booking-normal/summary.after.prometheus"
+    },
+    "mqOutage": {
+      "runId": "booking-546a3a4a25594d28",
+      "timestamp": "2026-09-10T04:06:11.941398+00:00",
+      "passed": true,
+      "scope": "Loopback Commerce HTTP with real MySQL and Core-authorized merchant fixtures; not a Core/browser or multi-host capacity claim",
+      "baseUrl": "http://127.0.0.1:18093/commerce/v1",
+      "database": "citycopilot_booking_baseline_load_test",
+      "scenarios": [
+        {
+          "scenario": "hot-court",
+          "workflows": 100,
+          "http_requests": 101,
+          "concurrency": 20,
+          "duration_seconds": 0.371,
+          "workflows_per_second": 269.78,
+          "http_requests_per_second": 272.48,
+          "confirmed": 1,
+          "confirmed_units": 1,
+          "capacity_rejected": 99,
+          "unexpected": 0,
+          "business_codes": {
+            "BOOKING_SLOT_FULL": 99,
+            "BOOKING_CONFIRMED": 1
+          },
+          "workflow_latency_ms": {
+            "samples": 100,
+            "mean": 67.88,
+            "p50": 61.89,
+            "p95": 115.15,
+            "p99": 128.34,
+            "max": 131.12
+          },
+          "hold_latency_ms": {
+            "samples": 100,
+            "mean": 66.94,
+            "p50": 61.77,
+            "p95": 110.36,
+            "p99": 128.31,
+            "max": 131.09
+          },
+          "confirmation_latency_ms": {
+            "samples": 1,
+            "mean": 89.25,
+            "p50": 89.25,
+            "p95": 89.25,
+            "p99": 89.25,
+            "max": 89.25
+          }
+        },
+        {
+          "scenario": "dining",
+          "workflows": 100,
+          "http_requests": 147,
+          "concurrency": 20,
+          "duration_seconds": 1.121,
+          "workflows_per_second": 89.2,
+          "http_requests_per_second": 131.13,
+          "confirmed": 47,
+          "confirmed_units": 200,
+          "capacity_rejected": 53,
+          "unexpected": 0,
+          "business_codes": {
+            "BOOKING_CONFIRMED": 47,
+            "BOOKING_SLOT_FULL": 53
+          },
+          "workflow_latency_ms": {
+            "samples": 100,
+            "mean": 219.56,
+            "p50": 172.69,
+            "p95": 492.55,
+            "p99": 505.31,
+            "max": 509.84
+          },
+          "hold_latency_ms": {
+            "samples": 100,
+            "mean": 127.25,
+            "p50": 95.09,
+            "p95": 277.49,
+            "p99": 292.97,
+            "max": 315.64
+          },
+          "confirmation_latency_ms": {
+            "samples": 47,
+            "mean": 196.23,
+            "p50": 211.28,
+            "p95": 252.32,
+            "p99": 262.62,
+            "max": 262.62
+          }
+        },
+        {
+          "scenario": "nonhot",
+          "workflows": 100,
+          "http_requests": 200,
+          "concurrency": 20,
+          "duration_seconds": 0.377,
+          "workflows_per_second": 265.58,
+          "http_requests_per_second": 531.16,
+          "confirmed": 100,
+          "confirmed_units": 100,
+          "capacity_rejected": 0,
+          "unexpected": 0,
+          "business_codes": {
+            "BOOKING_CONFIRMED": 100
+          },
+          "workflow_latency_ms": {
+            "samples": 100,
+            "mean": 69.2,
+            "p50": 67.5,
+            "p95": 91.24,
+            "p99": 105.04,
+            "max": 105.52
+          },
+          "hold_latency_ms": {
+            "samples": 100,
+            "mean": 34.16,
+            "p50": 33.13,
+            "p95": 51.81,
+            "p99": 56.29,
+            "max": 57.89
+          },
+          "confirmation_latency_ms": {
+            "samples": 100,
+            "mean": 34.94,
+            "p50": 33.42,
+            "p95": 50.87,
+            "p99": 56.46,
+            "max": 58.6
+          }
+        }
+      ],
+      "invariants": {
+        "held": 0,
+        "confirmed": 148,
+        "unitMismatches": 0,
+        "unpublishedOutbox": 0,
+        "capacityViolations": 0,
+        "occupancyMismatches": 0,
+        "missingVersionEvents": 0
+      },
+      "mqOutage": {
+        "expiryProbe": {
+          "bookingId": "83bed171-9751-44f4-87cd-daad64cefdb8",
+          "holdExpiresAt": "2026-09-10T04:02:24.587Z",
+          "status": "HOLD_EXPIRED",
+          "occupied": 0,
+          "observedAt": "2026-09-10T04:02:30.046704+00:00",
+          "passed": true
+        },
+        "during": {
+          "at": "2026-09-10T04:02:30.074976+00:00",
+          "total": 298,
+          "failed": 298,
+          "claimed": 0,
+          "retried": 297,
+          "attempts": 1486,
+          "published": 0,
+          "firstFailure": "UNAVAILABLE: io exception"
+        },
+        "invariantsDuring": {
+          "held": 0,
+          "confirmed": 148,
+          "unitMismatches": 0,
+          "unpublishedOutbox": 298,
+          "capacityViolations": 0,
+          "occupancyMismatches": 0,
+          "missingVersionEvents": 0
+        },
+        "recovery": {
+          "at": "2026-09-10T04:06:11.672772+00:00",
+          "total": 298,
+          "failed": 0,
+          "claimed": 0,
+          "retried": 298,
+          "attempts": 2084,
+          "published": 298,
+          "firstFailure": null
+        },
+        "passed": true
+      },
+      "rawReport": "tools/loadtest/results/booking-outage-verified/summary.json",
+      "rawReportSha256": "1e6c454a3c334b675153e044171657695764b88bd5ed436d40a98ff8ee68bbd8",
+      "rawSamples": "tools/loadtest/results/booking-outage-verified/summary.samples.jsonl",
+      "metricsBefore": "tools/loadtest/results/booking-outage-verified/summary.before.prometheus",
+      "metricsAfter": "tools/loadtest/results/booking-outage-verified/summary.after.prometheus"
+    }
+  }
+}

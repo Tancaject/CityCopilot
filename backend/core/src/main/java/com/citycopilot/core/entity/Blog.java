@@ -12,10 +12,9 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 
 /**
- * <p>
- * 
- * </p>
+ * 对应 {@code note} 表的探店笔记实体。
  *
+ * <p>持久化字段保存作者、店铺和内容；头像、昵称及当前用户点赞状态由查询服务临时补充。</p>
  */
 @Data
 @EqualsAndHashCode(callSuper = false)
@@ -31,7 +30,7 @@ public class Blog implements Serializable {
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
     /**
-     * 商户id
+     * 关联店铺主键
      */
     private Long shopId;
     /**
@@ -39,17 +38,17 @@ public class Blog implements Serializable {
      */
     private Long userId;
     /**
-     * 用户图标
+     * 作者头像，非数据库字段
      */
     @TableField(exist = false)
     private String icon;
     /**
-     * 用户姓名
+     * 作者昵称，非数据库字段
      */
     @TableField(exist = false)
     private String name;
     /**
-     * 是否点赞过了
+     * 当前登录用户是否点赞，非数据库字段
      */
     @TableField(exist = false)
     private Boolean isLike;

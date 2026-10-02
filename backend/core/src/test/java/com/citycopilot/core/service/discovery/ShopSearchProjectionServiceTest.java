@@ -45,6 +45,7 @@ import static org.mockito.Mockito.when;
 class ShopSearchProjectionServiceTest {
 
     private ShopSearchGateway gateway;
+    private ShopSearchGateway.PendingGeneration pending;
     private ShopMapper shopMapper;
     private ShopTypeMapper shopTypeMapper;
     private ShopSearchProjectionService service;
@@ -53,6 +54,7 @@ class ShopSearchProjectionServiceTest {
     @BeforeEach
     void setUp() {
         gateway = mock(ShopSearchGateway.class);
+        pending = mock(ShopSearchGateway.PendingGeneration.class);
         shopMapper = mock(ShopMapper.class);
         shopTypeMapper = mock(ShopTypeMapper.class);
 
@@ -69,10 +71,14 @@ class ShopSearchProjectionServiceTest {
                 geoProperties,
                 searchProperties
         );
-        when(shopTypeMapper.selectList(null)).thenReturn(List.of());
-        when(shopMapper.selectList(null)).thenReturn(List.of());
+        when(shopMapper.projectionHighWatermark()).thenReturn(0L);
+        doAnswer(invocation -> {
+            ShopSearchGateway.RebuildCutover cutover = invocation.getArgument(1);
+            cutover.execute(pending);
+            return null;
+        }).when(gateway).rebuild(any(Collection.class), any(ShopSearchGateway.RebuildCutover.class));
         service.rebuildAll();
-        clearInvocations(gateway, shopMapper, shopTypeMapper);
+        clearInvocations(gateway, pending, shopMapper, shopTypeMapper);
     }
 
     @Test
@@ -197,11 +203,13 @@ class ShopSearchProjectionServiceTest {
                 .setSold(123)
                 .setOpenHours("09:00-22:00")
                 .setUpdateTime(updateTime);
-        when(shopTypeMapper.selectList(null)).thenReturn(List.of(new ShopType().setId(7L).setName("Coffee")));
-        when(shopMapper.selectList(null)).thenReturn(List.of(
+        when(shopTypeMapper.selectBatchIds(any(Collection.class)))
+                .thenReturn(List.of(new ShopType().setId(7L).setName("Coffee")));
+        when(shopMapper.projectionHighWatermark()).thenReturn(10L);
+        when(shopMapper.projectionPage(0L, 10L)).thenReturn(List.of(
                 shop,
-                new Shop().setId(10L).setName("Missing Latitude").setX(120D),
-                new Shop().setId(9L).setName("   ")
+                new Shop().setId(9L).setName("   "),
+                new Shop().setId(10L).setName("Missing Latitude").setX(120D)
         ));
         when(gateway.isReady()).thenReturn(true);
 
@@ -209,7 +217,7 @@ class ShopSearchProjectionServiceTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Collection<ShopSearchDocument>> documents = ArgumentCaptor.forClass(Collection.class);
-        verify(gateway).rebuild(documents.capture());
+        verify(pending).upsertAll(documents.capture());
         ShopSearchDocument document = documents.getValue().stream()
                 .filter(candidate -> candidate.id().equals(8L))
                 .findFirst()
@@ -239,8 +247,6 @@ class ShopSearchProjectionServiceTest {
 
     @Test
     void failedBestEffortUpsertDoesNotEscapeAndMarksProjectionForReconciliation() {
-        when(shopTypeMapper.selectList(null)).thenReturn(List.of());
-        when(shopMapper.selectList(null)).thenReturn(List.of());
         when(gateway.isReady()).thenReturn(true);
         service.rebuildAll();
         doThrow(new IllegalStateException("elasticsearch unavailable"))
@@ -319,21 +325,16 @@ class ShopSearchProjectionServiceTest {
                 new ShopProjectionOutboxRepository.ProjectionChange(12L, 1L, 3L)));
         Shop base = shop(1L, 7L, "base", 120D, 30D, "verified").setProjectionVersion(1L);
         Shop current = shop(1L, 7L, "current", 121D, 31D, "verified").setProjectionVersion(3L);
-        when(shopMapper.selectList(null)).thenReturn(List.of(base));
+        when(shopMapper.projectionHighWatermark()).thenReturn(1L);
+        when(shopMapper.projectionPage(0L, 1L)).thenReturn(List.of(base));
         when(shopMapper.selectBatchIds(any(Collection.class))).thenReturn(List.of(current));
         when(shopTypeMapper.selectBatchIds(any(Collection.class))).thenReturn(List.of(
                 new ShopType().setId(7L).setName("Coffee")));
-        ShopSearchGateway.PendingGeneration pending = mock(ShopSearchGateway.PendingGeneration.class);
-        doAnswer(invocation -> {
-            ShopSearchGateway.RebuildCutover cutover = invocation.getArgument(1);
-            cutover.execute(pending);
-            return null;
-        }).when(gateway).rebuild(any(Collection.class), any(ShopSearchGateway.RebuildCutover.class));
 
         assertEquals(1, service.rebuildAll());
 
         InOrder publicationOrder = inOrder(pending);
-        publicationOrder.verify(pending, times(2)).upsertAll(any(Collection.class));
+        publicationOrder.verify(pending, times(3)).upsertAll(any(Collection.class));
         publicationOrder.verify(pending).publish();
         verify(outbox, times(3)).highWatermark();
         verify(outbox).changesAfter(10L, 11L, 500);

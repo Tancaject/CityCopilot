@@ -1,6 +1,7 @@
 package com.citycopilot.commerce;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -22,10 +23,7 @@ class CommerceReconciliationJobTest {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         CommerceConsistencyService consistency = mock(CommerceConsistencyService.class);
         CommerceRedisCampaignMetadata metadata = mock(CommerceRedisCampaignMetadata.class);
-        when(jdbc.queryForList(
-                "SELECT voucher_id FROM commerce_seckill_voucher",
-                Long.class
-        )).thenReturn(List.of(100L));
+        stubVoucherPage(jdbc, List.of(100L));
         when(consistency.snapshotForReconciliation(100L))
                 .thenReturn(Map.of("consistent", true));
         CommerceReconciliationJob job = new CommerceReconciliationJob(
@@ -33,7 +31,7 @@ class CommerceReconciliationJobTest {
                 redis,
                 consistency,
                 metadata,
-                new ObjectMapper()
+                JsonMapper.builderWithJackson2Defaults().build()
         );
 
         job.reconcile();
@@ -49,10 +47,7 @@ class CommerceReconciliationJobTest {
         ValueOperations<String, String> values = mock(ValueOperations.class);
         CommerceConsistencyService consistency = mock(CommerceConsistencyService.class);
         CommerceRedisCampaignMetadata metadata = mock(CommerceRedisCampaignMetadata.class);
-        when(jdbc.queryForList(
-                "SELECT voucher_id FROM commerce_seckill_voucher",
-                Long.class
-        )).thenReturn(List.of(100L));
+        stubVoucherPage(jdbc, List.of(100L));
         when(redis.opsForValue()).thenReturn(values);
         when(values.increment("commerce:metrics:seckill:discrepancy-streak:100"))
                 .thenReturn(1L);
@@ -65,7 +60,7 @@ class CommerceReconciliationJobTest {
                 redis,
                 consistency,
                 metadata,
-                new ObjectMapper()
+                JsonMapper.builderWithJackson2Defaults().build()
         );
 
         job.reconcile();
@@ -80,10 +75,7 @@ class CommerceReconciliationJobTest {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         CommerceConsistencyService consistency = mock(CommerceConsistencyService.class);
         CommerceRedisCampaignMetadata metadata = mock(CommerceRedisCampaignMetadata.class);
-        when(jdbc.queryForList(
-                "SELECT voucher_id FROM commerce_seckill_voucher",
-                Long.class
-        )).thenReturn(List.of(100L, 200L));
+        stubVoucherPage(jdbc, List.of(100L, 200L));
         doThrow(new IllegalStateException("metadata unavailable"))
                 .when(metadata).refreshAfterCommit(100L);
         when(consistency.snapshotForReconciliation(200L))
@@ -93,7 +85,7 @@ class CommerceReconciliationJobTest {
                 redis,
                 consistency,
                 metadata,
-                new ObjectMapper()
+                JsonMapper.builderWithJackson2Defaults().build()
         );
 
         job.reconcile();
@@ -102,5 +94,17 @@ class CommerceReconciliationJobTest {
         verify(metadata).refreshAfterCommit(200L);
         verify(consistency).snapshotForReconciliation(200L);
         verify(redis).delete("commerce:metrics:seckill:discrepancy-streak:200");
+    }
+
+    private void stubVoucherPage(JdbcTemplate jdbc, List<Long> voucherIds) {
+        long highWatermark = voucherIds.get(voucherIds.size() - 1);
+        when(jdbc.queryForObject("SELECT MAX(voucher_id) FROM commerce_seckill_voucher", Long.class))
+                .thenReturn(highWatermark);
+        when(jdbc.queryForList("""
+                SELECT voucher_id FROM commerce_seckill_voucher
+                WHERE voucher_id>? AND voucher_id<=?
+                ORDER BY voucher_id
+                LIMIT ?
+                """, Long.class, 0L, highWatermark, 200)).thenReturn(voucherIds);
     }
 }

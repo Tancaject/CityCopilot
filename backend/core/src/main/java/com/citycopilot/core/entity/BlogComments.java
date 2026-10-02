@@ -10,12 +10,7 @@ import lombok.experimental.Accessors;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
-/**
- * <p>
- * 
- * </p>
- *
- */
+/** 对应 {@code note_comment} 表的探店笔记评论或回复实体。 */
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
@@ -36,7 +31,7 @@ public class BlogComments implements Serializable {
     private Long userId;
 
     /**
-     * 探店id
+     * 所属探店笔记主键
      */
     private Long blogId;
 
@@ -46,7 +41,7 @@ public class BlogComments implements Serializable {
     private Long parentId;
 
     /**
-     * 回复的评论id
+     * 直接回复的评论主键
      */
     private Long answerId;
 
@@ -60,9 +55,7 @@ public class BlogComments implements Serializable {
      */
     private Integer liked;
 
-    /**
-     * 状态，0：正常，1：被举报，2：禁止查看
-     */
+    /** 是否处于被举报或禁止查看等非正常状态；当前实体不区分具体状态码。 */
     private Boolean status;
 
     /**

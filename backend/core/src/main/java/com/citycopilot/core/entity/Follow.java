@@ -10,12 +10,7 @@ import lombok.experimental.Accessors;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
-/**
- * <p>
- * 
- * </p>
- *
- */
+/** 对应 {@code user_follow} 表的用户关注关系，记录“谁关注了谁”。 */
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
@@ -31,12 +26,12 @@ public class Follow implements Serializable {
     private Long id;
 
     /**
-     * 用户id
+     * 发起关注的用户主键
      */
     private Long userId;
 
     /**
-     * 关联的用户id
+     * 被关注用户主键
      */
     private Long followUserId;
 

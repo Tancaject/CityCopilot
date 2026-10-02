@@ -1,6 +1,7 @@
 package com.citycopilot.commerce;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -49,10 +50,11 @@ class CommerceConsistencyServiceTest {
         Map<String, Object> withMoreGlobalTraffic = fixture.service.snapshot(100L);
 
         assertThat(before.get("consistent")).isEqualTo(true);
+        assertThat(before.get("evidenceHash"))
+                .isEqualTo("204cc31d019e642b2c35cd05ded11bcf9b52114fca4e13da004133ca2cde9ef2");
         assertThat(withMoreGlobalTraffic.get("consistent")).isEqualTo(true);
         assertThat(withMoreGlobalTraffic.get("evidenceHash")).isEqualTo(before.get("evidenceHash"));
-        assertThat(fixture.service.repair(100L, String.valueOf(before.get("evidenceHash"))))
-                .containsEntry("verified", true);
+        assertThat(fixture.service.repair(100L, String.valueOf(before.get("evidenceHash"))).verified()).isTrue();
         assertThat(fixture.globalHealthReads).hasValue(2);
     }
 
@@ -81,7 +83,7 @@ class CommerceConsistencyServiceTest {
 
         verify(fixture.replicatedRedis).setIfAbsent(
                 "reconciliation_inventory_fence",
-                CommerceOrderService.FENCE_PREFIX + 100L,
+                CommerceRedisKeyspace.FENCE_PREFIX + 100L,
                 CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN
         );
     }
@@ -91,10 +93,10 @@ class CommerceConsistencyServiceTest {
         Fixture fixture = new Fixture(true);
         when(fixture.replicatedRedis.setIfAbsent(
                 eq("consistency_repair_fence"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString()
         )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT);
-        when(fixture.values.get(CommerceOrderService.FENCE_PREFIX + 100L))
+        when(fixture.values.get(CommerceRedisKeyspace.FENCE_PREFIX + 100L))
                 .thenReturn("voucher-admin-update:v1");
 
         assertThatThrownBy(() -> fixture.service.repair(100L, "evidence"))
@@ -123,12 +125,12 @@ class CommerceConsistencyServiceTest {
         Map<String, Object> before = fixture.service.snapshot(100L);
         when(fixture.replicatedRedis.setIfAbsent(
                 eq("consistency_repair_fence"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString()
         )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT);
-        when(fixture.values.get(CommerceOrderService.FENCE_PREFIX + 100L))
+        when(fixture.values.get(CommerceRedisKeyspace.FENCE_PREFIX + 100L))
                 .thenReturn(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN);
-        when(fixture.values.get(CommerceOrderService.STOCK_PREFIX + 100L)).thenReturn("4");
+        when(fixture.values.get(CommerceRedisKeyspace.STOCK_PREFIX + 100L)).thenReturn("4");
 
         assertThatThrownBy(() -> fixture.service.repair(
                 100L,
@@ -156,10 +158,10 @@ class CommerceConsistencyServiceTest {
         Fixture fixture = new Fixture(true);
         fixture.stubVoucher(100L, 5, "5", List.of(10L), Set.of("10"), 0);
         Map<String, Object> before = fixture.service.snapshot(100L);
-        when(fixture.values.get(CommerceOrderService.STOCK_PREFIX + 100L)).thenReturn("4");
+        when(fixture.values.get(CommerceRedisKeyspace.STOCK_PREFIX + 100L)).thenReturn("4");
         when(fixture.replicatedRedis.compareAndSet(
                 eq("consistency_repair_restore_reconciliation_fence"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString(),
                 eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN)
         )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
@@ -174,12 +176,12 @@ class CommerceConsistencyServiceTest {
 
         verify(fixture.replicatedRedis).setIfAbsent(
                 eq("consistency_repair_fence"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString()
         );
         verify(fixture.replicatedRedis).compareAndSet(
                 eq("consistency_repair_restore_reconciliation_fence"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString(),
                 eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN)
         );
@@ -197,20 +199,20 @@ class CommerceConsistencyServiceTest {
         Map<String, Object> before = fixture.service.snapshot(100L);
         when(fixture.replicatedRedis.setIfAbsent(
                 eq("consistency_repair_fence"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString()
         )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT);
-        when(fixture.values.get(CommerceOrderService.FENCE_PREFIX + 100L))
+        when(fixture.values.get(CommerceRedisKeyspace.FENCE_PREFIX + 100L))
                 .thenReturn(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN);
         when(fixture.replicatedRedis.compareAndSet(
                 eq("consistency_repair_takeover"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN),
                 anyString()
         )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
         when(fixture.replicatedRedis.compareAndSet(
                 eq("consistency_repair_restore_reconciliation_fence"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString(),
                 eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN)
         )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
@@ -225,7 +227,7 @@ class CommerceConsistencyServiceTest {
 
         verify(fixture.replicatedRedis).compareAndSet(
                 eq("consistency_repair_restore_reconciliation_fence"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString(),
                 eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN)
         );
@@ -240,9 +242,9 @@ class CommerceConsistencyServiceTest {
     void successfulVerifiedRepairDeletesTakenOverAutomaticFence() {
         Fixture fixture = new Fixture(true);
         fixture.stubVoucher(100L, 5, "4", List.of(10L), Set.of("10", "20"), 0);
-        when(fixture.values.get(CommerceOrderService.STOCK_PREFIX + 100L))
+        when(fixture.values.get(CommerceRedisKeyspace.STOCK_PREFIX + 100L))
                 .thenReturn("4", "4", "4", "5", "5");
-        when(fixture.sets.members(CommerceOrderService.BUYER_PREFIX + 100L))
+        when(fixture.sets.members(CommerceRedisKeyspace.BUYER_PREFIX + 100L))
                 .thenReturn(
                         Set.of("10", "20"),
                         Set.of("10", "20"),
@@ -253,27 +255,27 @@ class CommerceConsistencyServiceTest {
         Map<String, Object> before = fixture.service.snapshot(100L);
         when(fixture.replicatedRedis.setIfAbsent(
                 eq("consistency_repair_fence"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString()
         )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT);
-        when(fixture.values.get(CommerceOrderService.FENCE_PREFIX + 100L))
+        when(fixture.values.get(CommerceRedisKeyspace.FENCE_PREFIX + 100L))
                 .thenReturn(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN);
         when(fixture.replicatedRedis.compareAndSet(
                 eq("consistency_repair_takeover"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 eq(CommerceConsistencyService.RECONCILIATION_FENCE_TOKEN),
                 anyString()
         )).thenReturn(CommerceRedisReplicationExecutor.ReplicatedMutation.CHANGED);
 
-        Map<String, Object> result = fixture.service.repair(
+        var result = fixture.service.repair(
                 100L,
                 String.valueOf(before.get("evidenceHash"))
         );
 
-        assertThat(result).containsEntry("verified", true);
+        assertThat(result.verified()).isTrue();
         verify(fixture.replicatedRedis).deleteIfEquals(
                 eq("consistency_repair_release"),
-                eq(CommerceOrderService.FENCE_PREFIX + 100L),
+                eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
                 anyString()
         );
         verify(fixture.replicatedRedis, never()).compareAndSet(
@@ -289,7 +291,7 @@ class CommerceConsistencyServiceTest {
         Fixture fixture = new Fixture();
         fixture.stubVoucher(100L, 5, "5", List.of(10L), Set.of("10"), 0);
         Map<String, Object> before = fixture.service.snapshot(100L);
-        when(fixture.values.get(CommerceOrderService.STOCK_PREFIX + 100L)).thenReturn("4");
+        when(fixture.values.get(CommerceRedisKeyspace.STOCK_PREFIX + 100L)).thenReturn("4");
 
         assertThatThrownBy(() -> fixture.service.repair(
                 100L,
@@ -359,9 +361,9 @@ class CommerceConsistencyServiceTest {
                 "compensation_delta", 1
         );
         fixture.recoveryRows.set(List.of(repairRow));
-        when(fixture.values.get(CommerceOrderService.STOCK_PREFIX + 100L))
+        when(fixture.values.get(CommerceRedisKeyspace.STOCK_PREFIX + 100L))
                 .thenReturn("4", "4", "5", "5");
-        when(fixture.sets.members(CommerceOrderService.BUYER_PREFIX + 100L))
+        when(fixture.sets.members(CommerceRedisKeyspace.BUYER_PREFIX + 100L))
                 .thenReturn(
                         Set.of("10", "20"),
                         Set.of("10", "20"),
@@ -377,7 +379,7 @@ class CommerceConsistencyServiceTest {
         });
 
         Map<String, Object> before = fixture.service.snapshot(100L);
-        Map<String, Object> result = fixture.service.repair(
+        var result = fixture.service.repair(
                 100L,
                 String.valueOf(before.get("evidenceHash"))
         );
@@ -386,9 +388,8 @@ class CommerceConsistencyServiceTest {
                 .containsEntry("repairRequiredRecoveryCount", 1)
                 .containsEntry("repairRequiredCompensationDelta", 1)
                 .containsEntry("consistent", false);
-        assertThat(result)
-                .containsEntry("restoredRecoveryRows", 1)
-                .containsEntry("verified", true);
+        assertThat(result.restoredRecoveryRows()).isEqualTo(1);
+        assertThat(result.verified()).isTrue();
     }
 
     private static final class Fixture {
@@ -426,7 +427,7 @@ class CommerceConsistencyServiceTest {
             service = new CommerceConsistencyService(
                     jdbc,
                     redis,
-                    new ObjectMapper(),
+                    JsonMapper.builderWithJackson2Defaults().build(),
                     new CommerceRedisKeyspace(1, "0"),
                     useReplicatedRedis ? replicatedRedis : null,
                     null,
@@ -467,13 +468,13 @@ class CommerceConsistencyServiceTest {
                     contains("FROM commerce_order_recovery"),
                     eq(voucherId)
             )).thenAnswer(invocation -> recoveryRows.get());
-            when(values.get(CommerceOrderService.STOCK_PREFIX + voucherId)).thenReturn(redisStock);
-            when(sets.size(CommerceOrderService.INFLIGHT_PREFIX + voucherId)).thenReturn(inFlight);
+            when(values.get(CommerceRedisKeyspace.STOCK_PREFIX + voucherId)).thenReturn(redisStock);
+            when(sets.size(CommerceRedisKeyspace.INFLIGHT_PREFIX + voucherId)).thenReturn(inFlight);
             when(values.setIfAbsent(
-                    eq(CommerceOrderService.FENCE_PREFIX + voucherId),
+                    eq(CommerceRedisKeyspace.FENCE_PREFIX + voucherId),
                     anyString()
             )).thenReturn(true);
-            when(sets.members(CommerceOrderService.BUYER_PREFIX + voucherId)).thenReturn(redisBuyers);
+            when(sets.members(CommerceRedisKeyspace.BUYER_PREFIX + voucherId)).thenReturn(redisBuyers);
         }
     }
 }

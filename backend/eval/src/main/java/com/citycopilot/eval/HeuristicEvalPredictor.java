@@ -6,9 +6,16 @@ import com.citycopilot.agent.router.Mode;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 使用生产 {@link AgentRouter} 和确定性关键词规则的离线预测器。
+ *
+ * <p>它不调用外部模型，适合 CI 快速回归路由模式和基础工具映射。</p>
+ */
 final class HeuristicEvalPredictor implements EvalPredictor {
+    /** 与 Agent 生产代码共享的 REACT/PLAN_EXECUTE 分类器。 */
     private final AgentRouter router = new AgentRouter();
 
+    /** 根据路由模式和输入关键词生成可重复的离线预测。 */
     @Override
     public EvalPrediction predict(EvalCase evalCase) {
         Mode mode = router.classify(evalCase.input());
@@ -18,15 +25,22 @@ final class HeuristicEvalPredictor implements EvalPredictor {
         return new EvalPrediction(mode.name(), tools, answer, null, null);
     }
 
+    /** @return 非空用户输入，供报告关键词断言使用 */
     private String safeInput(EvalCase evalCase) {
         return evalCase.input() == null ? "" : evalCase.input();
     }
 
+    /**
+     * @param input 用户输入
+     * @param mode 已分类的执行模式
+     * @return 规则预测的工具名列表
+     */
     private List<String> predictTools(String input, Mode mode) {
         String text = input == null ? "" : input;
         String normalized = text.toLowerCase();
         List<String> tools = new ArrayList<>();
         if (mode == Mode.PLAN_EXECUTE) {
+            // PLAN_EXECUTE 允许一个意图映射多个连续工具，因此各规则独立累加。
             if (text.contains("下单")) {
                 tools.add("search_nearby_shops");
                 tools.add("list_vouchers_by_shop");
@@ -100,6 +114,7 @@ final class HeuristicEvalPredictor implements EvalPredictor {
         return tools;
     }
 
+    /** @return 文本是否包含指定的完整英文单词 */
     private boolean containsWord(String text, String word) {
         return text != null && text.matches(".*\\b" + word + "\\b.*");
     }

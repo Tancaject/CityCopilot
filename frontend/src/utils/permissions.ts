@@ -4,7 +4,7 @@ const rolePermissions: Record<string, string[]> = {
   admin: ['*'],
   geo_operator: ['admin:access', 'geo:read', 'geo:write', 'audit:read'],
   auditor: ['admin:access', 'geo:read', 'audit:read'],
-  merchant: ['admin:access', 'shop:write', 'voucher:write', 'order:write'],
+  merchant: ['admin:access', 'shop:write', 'voucher:write', 'order:write', 'booking:manage', 'booking:check-in'],
 };
 
 type PermissionSubject = string | UserDTO | null | undefined;

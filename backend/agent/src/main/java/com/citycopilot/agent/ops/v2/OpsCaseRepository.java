@@ -1,7 +1,7 @@
 package com.citycopilot.agent.ops.v2;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -15,21 +15,34 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Ops Case v2 的事务与并发控制仓储。
+ *
+ * <p>集中实现事件 Inbox 幂等、事故聚合、状态机乐观锁、worker 租约、证据 TTL、计划版本、一次性审批、执行去重和审计时间线。上层不得绕过这些数据库条件直接推进状态。</p>
+ */
 @Repository
 public class OpsCaseRepository {
-    private static final List<String> OPEN_STATUSES = List.of(
-            "OPEN", "COLLECTING_EVIDENCE", "MANUAL_REVIEW", "PLAN_READY",
-            "AWAITING_APPROVAL", "APPROVED", "EXECUTING", "VERIFYING", "RETRY_WAIT"
-    );
-
+    /** 执行参数化 SQL 和条件更新的 JDBC 客户端。 */
     private final JdbcTemplate jdbcTemplate;
+    /** 序列化证据、诊断、步骤和执行结果。 */
     private final ObjectMapper objectMapper;
 
     public OpsCaseRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
         this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper.copy().findAndRegisterModules();
+        this.objectMapper = objectMapper;
     }
 
+    /**
+     * 幂等接受事件并创建或关联一个开放 case。
+     *
+     * @param consumerGroup 消费组，参与 Inbox 唯一键
+     * @param eventId 事件唯一标识
+     * @param eventType 版本化事件类型
+     * @param payloadHash 原始载荷摘要
+     * @param payloadJson 原始事件信封
+     * @param incidentKey 聚合同一事故的业务键
+     * @return 新建/并发围栏、重复或隔离决定及关联 case
+     */
     @Transactional
     public EventAcceptance acceptEvent(
             String consumerGroup,
@@ -44,6 +57,7 @@ public class OpsCaseRepository {
                     consumer_group, event_id, event_type, payload_hash, payload_json, status
                 ) VALUES (?, ?, ?, ?, ?, 'RECEIVED')
                 """, consumerGroup, eventId, eventType, payloadHash, payloadJson);
+        // 同一消费组和 eventId 已存在时比较载荷哈希，防止标识复用掩盖不同事实。
         if (inserted == 0) {
             Map<String, Object> existing = jdbcTemplate.queryForMap("""
                     SELECT payload_hash, status
@@ -73,6 +87,7 @@ public class OpsCaseRepository {
             appendTransition(caseId, null, OpsCaseStatus.OPEN, "ops-event-consumer", "event accepted", List.of());
             opsCase = require(caseId);
         } catch (DuplicateKeyException race) {
+            // eventId 或开放 incident 唯一键竞争失败时复用赢家，避免并发消息创建两个 case。
             opsCase = findByEventId(eventId)
                     .or(() -> findOpenByIncidentKey(incidentKey))
                     .orElseThrow(() -> race);
@@ -85,6 +100,7 @@ public class OpsCaseRepository {
         return new EventAcceptance(opsCase, EventDisposition.CREATED_OR_FENCED);
     }
 
+    /** @return 指定 case 当前投影，不存在时为空 */
     public Optional<OpsCaseRecord> find(String caseId) {
         List<OpsCaseRecord> rows = jdbcTemplate.query("""
                 SELECT id, incident_key, event_id, case_type, status, version, current_step,
@@ -94,6 +110,7 @@ public class OpsCaseRepository {
         return rows.stream().findFirst();
     }
 
+    /** @return 指定 case；不存在时抛出参数异常 */
     public OpsCaseRecord require(String caseId) {
         return find(caseId).orElseThrow(() -> new IllegalArgumentException("Ops Case not found: " + caseId));
     }
@@ -102,10 +119,12 @@ public class OpsCaseRepository {
         return queryOne("event_id=?", eventId);
     }
 
+    /** @return 同一事故键尚未进入终态的 case */
     public Optional<OpsCaseRecord> findOpenByIncidentKey(String incidentKey) {
         return queryOne("incident_key=? AND open_incident_marker=1", incidentKey);
     }
 
+    /** @return 最近创建的 case，limit 被限制在 1 到 100 */
     public List<OpsCaseRecord> list(int limit) {
         return jdbcTemplate.query("""
                 SELECT id, incident_key, event_id, case_type, status, version, current_step,
@@ -116,6 +135,9 @@ public class OpsCaseRepository {
                 """, (rs, row) -> mapCase(rs), Math.max(1, Math.min(limit, 100)));
     }
 
+    /**
+     * 查询已到执行时间且处于 worker 可推进状态的候选 case。
+     */
     public List<OpsCaseRecord> workCandidates(int limit) {
         return jdbcTemplate.query("""
                 SELECT id, incident_key, event_id, case_type, status, version, current_step,
@@ -132,6 +154,11 @@ public class OpsCaseRepository {
         );
     }
 
+    /**
+     * 竞争或续租 case 级 worker 租约。
+     *
+     * @return 租约为空、已过期或已属于同一 owner 并成功更新时为 true
+     */
     public boolean tryAcquireLease(String caseId, String owner, Duration duration) {
         return jdbcTemplate.update("""
                 UPDATE ops_case
@@ -148,6 +175,7 @@ public class OpsCaseRepository {
         ) == 1;
     }
 
+    /** 仅允许租约持有者释放自己的 case 租约。 */
     public void releaseLease(String caseId, String owner) {
         jdbcTemplate.update("""
                 UPDATE ops_case
@@ -156,6 +184,11 @@ public class OpsCaseRepository {
                 """, caseId, owner);
     }
 
+    /**
+     * 以状态白名单和版本条件原子推进 case，并追加不可变转移记录。
+     *
+     * @throws OptimisticCaseConflictException 其他线程已修改版本或状态
+     */
     @Transactional
     public OpsCaseRecord transition(
             OpsCaseRecord current,
@@ -184,6 +217,7 @@ public class OpsCaseRepository {
         return require(current.id());
     }
 
+    /** 对仍开放的 case 设置协作式取消标志并推进版本。 */
     public void requestCancellation(String caseId) {
         int updated = jdbcTemplate.update("""
                 UPDATE ops_case
@@ -195,6 +229,9 @@ public class OpsCaseRepository {
         }
     }
 
+    /**
+     * 将失败 case 放入延迟重试，并根据失败阶段记录恢复位置。
+     */
     public void scheduleRetry(OpsCaseRecord current, String error, Duration delay) {
         int updated = jdbcTemplate.update("""
                 UPDATE ops_case
@@ -223,6 +260,7 @@ public class OpsCaseRepository {
         );
     }
 
+    /** 清除取消/错误状态并立即安排一次人工触发的重试。 */
     @Transactional
     public OpsCaseRecord manualRetry(OpsCaseRecord current, String actor) {
         current.status().requireTransitionTo(OpsCaseStatus.RETRY_WAIT);
@@ -251,6 +289,9 @@ public class OpsCaseRepository {
         return require(current.id());
     }
 
+    /**
+     * 将超过重试边界或无法恢复的来源写入死信表，保留原载荷与错误摘要。
+     */
     public void deadLetter(
             String sourceType,
             String sourceId,
@@ -271,6 +312,11 @@ public class OpsCaseRepository {
         );
     }
 
+    /**
+     * 保存带哈希与失效时间的证据快照。
+     *
+     * @return 新生成的 evidenceId
+     */
     public String saveEvidence(
             String caseId,
             String evidenceType,
@@ -299,26 +345,42 @@ public class OpsCaseRepository {
         return evidenceId;
     }
 
+    /** @return case 的全部历史证据，包括已过期记录 */
     public List<Map<String, Object>> evidence(String caseId) {
-        return jdbcTemplate.queryForList("""
-                SELECT id, evidence_type, source, payload_json, payload_hash,
-                       collected_at, expires_at
-                FROM ops_evidence
-                WHERE case_id=?
-                ORDER BY collected_at
-                """, caseId);
+        return readEvidence(caseId, false);
     }
 
+    /** @return 当前时刻尚未过期、可用于绑定新计划的证据 */
     public List<Map<String, Object>> validEvidence(String caseId) {
-        return jdbcTemplate.queryForList("""
-                SELECT id, evidence_type, source, payload_json, payload_hash,
-                       collected_at, expires_at
-                FROM ops_evidence
-                WHERE case_id=? AND expires_at > ?
-                ORDER BY collected_at DESC
-                """, caseId, Timestamp.from(Instant.now()));
+        return readEvidence(caseId, true);
     }
 
+    private List<Map<String, Object>> readEvidence(String caseId, boolean validOnly) {
+        var rows = jdbcTemplate.queryForList("""
+                SELECT e.id,e.evidence_type,e.source,
+                       CASE WHEN e.payload_archived_at IS NULL THEN e.payload_json ELSE a.payload_json END AS payload_json,
+                       e.payload_hash,e.collected_at,e.expires_at,
+                       CASE WHEN e.payload_archived_at IS NULL THEN 'valid'
+                            WHEN a.payload_sha256=SHA2(CAST(a.payload_json AS BINARY),256) THEN 'valid'
+                            ELSE 'invalid' END AS archive_integrity
+                FROM ops_evidence e
+                LEFT JOIN ops_evidence_payload_archive a ON a.evidence_id=e.id
+                WHERE e.case_id=? %s
+                ORDER BY e.collected_at %s
+                """.formatted(validOnly ? "AND e.expires_at > ?" : "", validOnly ? "DESC" : ""),
+                validOnly ? new Object[]{caseId, Timestamp.from(Instant.now())} : new Object[]{caseId});
+        for (var row : rows) {
+            if (!"valid".equals(row.remove("archive_integrity"))) {
+                throw new IllegalStateException("Archived Ops evidence missing or changed: " + row.get("id")
+                        + "; restore its verified original payload before reading the case");
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * 创建递增版本计划，并把此前仍活动的计划标为已取代。
+     */
     @Transactional
     public OpsPlanRecord createPlan(
             OpsCaseRecord current,
@@ -334,6 +396,7 @@ public class OpsCaseRepository {
                 current.id()
         )).orElse(0) + 1;
         String planId = UUID.randomUUID().toString();
+        // 同一 case 只有最新候选计划可继续审批，旧草稿和批准计划统一失效。
         jdbcTemplate.update(
                 "UPDATE ops_plan SET status='SUPERSEDED', superseded_at=CURRENT_TIMESTAMP(3) "
                         + "WHERE case_id=? AND status IN ('DRAFT','AWAITING_APPROVAL','APPROVED')",
@@ -357,6 +420,7 @@ public class OpsCaseRepository {
         return plan(planId);
     }
 
+    /** @return case 的最高版本计划 */
     public Optional<OpsPlanRecord> latestPlan(String caseId) {
         List<String> ids = jdbcTemplate.queryForList("""
                 SELECT id FROM ops_plan
@@ -367,6 +431,11 @@ public class OpsCaseRepository {
         return ids.stream().findFirst().map(this::plan);
     }
 
+    /**
+     * 将草稿计划置为待审批并创建绑定 planHash 的限时审批记录。
+     *
+     * @return 新 approvalId
+     */
     @Transactional
     public String requestApproval(OpsCaseRecord current, OpsPlanRecord plan, Duration ttl) {
         jdbcTemplate.update(
@@ -388,6 +457,12 @@ public class OpsCaseRepository {
         return approvalId;
     }
 
+    /**
+     * 以哈希、状态、过期时间和审批版本条件一次性记录人工决定。
+     *
+     * @param expectedPlanHash 审批人实际查看的计划摘要
+     * @return 批准后为 APPROVED，拒绝后回到 MANUAL_REVIEW 的 case
+     */
     @Transactional
     public OpsCaseRecord decideApproval(
             String approvalId,
@@ -408,6 +483,7 @@ public class OpsCaseRepository {
         if (((Timestamp) row.get("expires_at")).toInstant().isBefore(Instant.now())) {
             throw new IllegalStateException("Approval expired");
         }
+        // 版本条件更新让并发的第二个审批决定失败，而不是覆盖首个决定。
         int updated = jdbcTemplate.update("""
                 UPDATE ops_approval
                 SET decision=?, decided_by=?, decided_at=CURRENT_TIMESTAMP(3), version=version+1
@@ -430,6 +506,11 @@ public class OpsCaseRepository {
         return transition(current, OpsCaseStatus.APPROVED, actor, "plan approved", List.of());
     }
 
+    /**
+     * 在开始写工具前原子消费已批准且未过期的审批。
+     *
+     * @return 首次有效消费成功时为 true
+     */
     @Transactional
     public boolean consumeApproval(String caseId, String planId, String planHash) {
         return jdbcTemplate.update("""
@@ -441,6 +522,11 @@ public class OpsCaseRepository {
                 """, caseId, planId, planHash, Timestamp.from(Instant.now())) == 1;
     }
 
+    /**
+     * 以执行 id/幂等约束登记 RUNNING 步骤。
+     *
+     * @return 首次插入为 true；重复执行记录被 {@code INSERT IGNORE} 拒绝
+     */
     public boolean beginExecution(
             String executionId,
             String caseId,
@@ -465,6 +551,7 @@ public class OpsCaseRepository {
         ) == 1;
     }
 
+    /** 仅将仍处于 RUNNING 的执行记录更新为成功或失败终态。 */
     public void finishExecution(String executionId, boolean success, Object result, String errorCode) {
         jdbcTemplate.update("""
                 UPDATE ops_execution
@@ -478,6 +565,7 @@ public class OpsCaseRepository {
         );
     }
 
+    /** @return case 的工具执行审计记录，按开始时间和步骤排序 */
     public List<Map<String, Object>> executions(String caseId) {
         return jdbcTemplate.queryForList("""
                 SELECT id, plan_id, step_index, tool_name, arguments_json, status,
@@ -488,6 +576,7 @@ public class OpsCaseRepository {
                 """, caseId);
     }
 
+    /** @return case 的完整状态转移时间线 */
     public List<Map<String, Object>> transitions(String caseId) {
         return jdbcTemplate.queryForList("""
                 SELECT id, from_status, to_status, actor, reason, evidence_ids_json, created_at
@@ -544,6 +633,7 @@ public class OpsCaseRepository {
         );
     }
 
+    /** 在同一事务中记录状态来源、目标、操作者、原因和证据引用。 */
     private void appendTransition(
             String caseId,
             OpsCaseStatus from,
@@ -597,15 +687,26 @@ public class OpsCaseRepository {
         return safe.substring(0, Math.min(safe.length(), maxLength));
     }
 
+    /**
+     * Inbox 接受结果。
+     *
+     * @param opsCase 新建或复用的 case；隔离事件时为空
+     * @param disposition 幂等与冲突处理决定
+     */
     public record EventAcceptance(OpsCaseRecord opsCase, EventDisposition disposition) {
     }
 
+    /** 事件进入 Inbox 后的处理分类。 */
     public enum EventDisposition {
+        /** 创建了 case，或被并发唯一键围栏后复用了赢家。 */
         CREATED_OR_FENCED,
+        /** 相同 eventId 与相同载荷已处理。 */
         DUPLICATE,
+        /** 相同 eventId 携带不同载荷，已隔离等待人工处理。 */
         QUARANTINED
     }
 
+    /** case 状态或版本被并发更新时抛出的明确冲突异常。 */
     public static class OptimisticCaseConflictException extends RuntimeException {
         public OptimisticCaseConflictException(String caseId) {
             super("Ops Case version changed concurrently: " + caseId);

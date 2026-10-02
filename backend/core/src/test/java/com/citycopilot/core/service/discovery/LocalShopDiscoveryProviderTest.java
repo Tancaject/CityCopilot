@@ -5,7 +5,7 @@ import com.citycopilot.core.config.GeoProperties;
 import com.citycopilot.core.config.ShopSearchProperties;
 import com.citycopilot.core.dto.ShopDiscoveryItemDTO;
 import com.citycopilot.core.entity.Shop;
-import com.citycopilot.core.service.IShopService;
+import com.citycopilot.core.mapper.ShopMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -27,7 +27,7 @@ class LocalShopDiscoveryProviderTest {
 
     @Test
     void redisModeHydratesCandidatesThroughAuthoritativeMysqlFilters() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties properties = properties(GeoProperties.LocalDiscoveryMode.REDIS);
         when(redis.search(anyInt(), anyDouble(), anyDouble(), anyDouble(), anyInt()))
@@ -35,9 +35,9 @@ class LocalShopDiscoveryProviderTest {
                         new RedisShopGeoSearchService.Candidate(1L, 120D),
                         new RedisShopGeoSearchService.Candidate(2L, 240D)
                 )));
-        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(shop(1L, 7L, "Coffee One", 120.001D, 30D)));
+        when(shopMapper.selectList(any(Wrapper.class))).thenReturn(List.of(shop(1L, 7L, "Coffee One", 120.001D, 30D)));
 
-        List<ShopDiscoveryItemDTO> items = provider(shopService, properties, redis)
+        List<ShopDiscoveryItemDTO> items = provider(shopMapper, properties, redis)
                 .discover(query().setTypeId(7).setKeyword("Coffee"));
 
         assertEquals(1, items.size());
@@ -47,7 +47,7 @@ class LocalShopDiscoveryProviderTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<Shop>> wrapper = ArgumentCaptor.forClass(Wrapper.class);
-        verify(shopService).list(wrapper.capture());
+        verify(shopMapper).selectList(wrapper.capture());
         String sql = wrapper.getValue().getSqlSegment();
         assertTrue(sql.contains("geo_status"));
         assertTrue(sql.contains("type_id"));
@@ -57,17 +57,17 @@ class LocalShopDiscoveryProviderTest {
 
     @Test
     void missingRedisIndexFallsBackToBoundingBoxAndHaversineSqlPath() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties properties = properties(GeoProperties.LocalDiscoveryMode.REDIS);
         when(redis.search(isNull(), anyDouble(), anyDouble(), anyDouble(), anyInt()))
                 .thenReturn(RedisShopGeoSearchService.SearchResult.notReady());
-        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(
+        when(shopMapper.selectList(any(Wrapper.class))).thenReturn(List.of(
                 shop(1L, 7L, "Near", 120.001D, 30D),
                 shop(2L, 7L, "Outside", 121D, 30D)
         ));
 
-        List<ShopDiscoveryItemDTO> items = provider(shopService, properties, redis).discover(query());
+        List<ShopDiscoveryItemDTO> items = provider(shopMapper, properties, redis).discover(query());
 
         assertEquals(1, items.size());
         assertEquals(1L, items.get(0).getId());
@@ -75,7 +75,7 @@ class LocalShopDiscoveryProviderTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<Shop>> wrapper = ArgumentCaptor.forClass(Wrapper.class);
-        verify(shopService).list(wrapper.capture());
+        verify(shopMapper).selectList(wrapper.capture());
         String sql = wrapper.getValue().getSqlSegment();
         assertTrue(sql.contains("y BETWEEN"));
         assertTrue(sql.contains("x BETWEEN"));
@@ -84,45 +84,45 @@ class LocalShopDiscoveryProviderTest {
 
     @Test
     void redisFailureFallsBackToSql() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties properties = properties(GeoProperties.LocalDiscoveryMode.REDIS);
         when(redis.search(isNull(), anyDouble(), anyDouble(), anyDouble(), anyInt()))
                 .thenThrow(new IllegalStateException("redis unavailable"));
-        when(shopService.list(any(Wrapper.class)))
+        when(shopMapper.selectList(any(Wrapper.class)))
                 .thenReturn(List.of(shop(1L, 7L, "Near", 120.001D, 30D)));
 
-        List<ShopDiscoveryItemDTO> items = provider(shopService, properties, redis).discover(query());
+        List<ShopDiscoveryItemDTO> items = provider(shopMapper, properties, redis).discover(query());
 
         assertEquals(List.of(1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
     }
 
     @Test
     void redisCandidateIsRejectedWhenMysqlCoordinatesMovedOutsideRadius() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties properties = properties(GeoProperties.LocalDiscoveryMode.REDIS);
         when(redis.search(isNull(), anyDouble(), anyDouble(), anyDouble(), anyInt()))
                 .thenReturn(RedisShopGeoSearchService.SearchResult.ready(List.of(
                         new RedisShopGeoSearchService.Candidate(1L, 100D)
                 )));
-        when(shopService.list(any(Wrapper.class)))
+        when(shopMapper.selectList(any(Wrapper.class)))
                 .thenReturn(List.of(shop(1L, 7L, "Moved", 121D, 30D)));
 
-        List<ShopDiscoveryItemDTO> items = provider(shopService, properties, redis).discover(query());
+        List<ShopDiscoveryItemDTO> items = provider(shopMapper, properties, redis).discover(query());
 
         assertTrue(items.isEmpty());
     }
 
     @Test
     void mysqlModeDoesNotReadRedis() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties properties = properties(GeoProperties.LocalDiscoveryMode.MYSQL);
-        when(shopService.list(any(Wrapper.class)))
+        when(shopMapper.selectList(any(Wrapper.class)))
                 .thenReturn(List.of(shop(1L, 7L, "Near", 120.001D, 30D)));
 
-        List<ShopDiscoveryItemDTO> items = provider(shopService, properties, redis).discover(query());
+        List<ShopDiscoveryItemDTO> items = provider(shopMapper, properties, redis).discover(query());
 
         assertEquals(1, items.size());
         verify(redis, never()).search(isNull(), anyDouble(), anyDouble(), anyDouble(), anyInt());
@@ -130,33 +130,33 @@ class LocalShopDiscoveryProviderTest {
 
     @Test
     void shadowModeReturnsSqlResultWhenRedisRankingDiffers() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties properties = properties(GeoProperties.LocalDiscoveryMode.SHADOW);
         Shop sqlShop = shop(1L, 7L, "SQL", 120.001D, 30D);
         Shop redisShop = shop(2L, 7L, "Redis", 120.002D, 30D);
-        when(shopService.list(any(Wrapper.class)))
+        when(shopMapper.selectList(any(Wrapper.class)))
                 .thenReturn(List.of(sqlShop), List.of(redisShop));
         when(redis.search(isNull(), anyDouble(), anyDouble(), anyDouble(), anyInt()))
                 .thenReturn(RedisShopGeoSearchService.SearchResult.ready(List.of(
                         new RedisShopGeoSearchService.Candidate(2L, 200D)
                 )));
 
-        List<ShopDiscoveryItemDTO> items = provider(shopService, properties, redis).discover(query());
+        List<ShopDiscoveryItemDTO> items = provider(shopMapper, properties, redis).discover(query());
 
         assertEquals(List.of(1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
     }
 
     @Test
     void redisCandidateLimitIsHardCappedWithoutIntegerOverflow() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties properties = properties(GeoProperties.LocalDiscoveryMode.REDIS);
         properties.setRedisMaxCandidates(50);
         when(redis.search(isNull(), anyDouble(), anyDouble(), anyDouble(), anyInt()))
                 .thenReturn(RedisShopGeoSearchService.SearchResult.ready(List.of()));
 
-        provider(shopService, properties, redis).discover(query()
+        provider(shopMapper, properties, redis).discover(query()
                 .setCurrent(Integer.MAX_VALUE)
                 .setSize(20));
 
@@ -167,15 +167,15 @@ class LocalShopDiscoveryProviderTest {
 
     @Test
     void preferredCategoryReranksWithoutFilteringOtherNearbyShops() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties properties = properties(GeoProperties.LocalDiscoveryMode.MYSQL);
-        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(
+        when(shopMapper.selectList(any(Wrapper.class))).thenReturn(List.of(
                 shop(1L, 1L, "附近餐厅", 120.0001D, 30D),
                 shop(2L, 1L, "江畔咖啡", 120.001D, 30D)
         ));
 
-        List<ShopDiscoveryItemDTO> items = provider(shopService, properties, redis)
+        List<ShopDiscoveryItemDTO> items = provider(shopMapper, properties, redis)
                 .discover(query().setPreferredCategory("咖啡"));
 
         assertEquals(List.of(2L, 1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
@@ -183,7 +183,7 @@ class LocalShopDiscoveryProviderTest {
 
     @Test
     void elasticsearchModeUsesOrderedSearchCandidatesWithoutCallingLegacyDiscovery() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties geoProperties = properties(GeoProperties.LocalDiscoveryMode.MYSQL);
         ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
@@ -198,18 +198,18 @@ class LocalShopDiscoveryProviderTest {
         ), 2));
 
         List<ShopDiscoveryItemDTO> items = provider(
-                shopService, geoProperties, redis, projection, searchProperties
+                shopMapper, geoProperties, redis, projection, searchProperties
         ).discover(query);
 
         assertEquals(List.of(2L, 1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
         assertEquals(List.of(0, 1), items.stream().map(ShopDiscoveryItemDTO::getSearchRank).toList());
-        verify(shopService, never()).list(any(Wrapper.class));
+        verify(shopMapper, never()).selectList(any(Wrapper.class));
         verify(redis, never()).search(anyInt(), anyDouble(), anyDouble(), anyDouble(), anyInt());
     }
 
     @Test
     void elasticsearchUnavailableFallsBackToLegacyDiscovery() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         GeoProperties geoProperties = properties(GeoProperties.LocalDiscoveryMode.MYSQL);
         ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
@@ -218,12 +218,12 @@ class LocalShopDiscoveryProviderTest {
         when(projection.search(query)).thenReturn(
                 ShopSearchProjectionService.SearchCandidates.unavailable("INDEX_NOT_READY")
         );
-        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(
+        when(shopMapper.selectList(any(Wrapper.class))).thenReturn(List.of(
                 shop(1L, 7L, "Legacy Coffee", 120.001D, 30D)
         ));
 
         List<ShopDiscoveryItemDTO> items = provider(
-                shopService,
+                shopMapper,
                 geoProperties,
                 redis,
                 projection,
@@ -231,12 +231,12 @@ class LocalShopDiscoveryProviderTest {
         ).discover(query);
 
         assertEquals(List.of(1L), items.stream().map(ShopDiscoveryItemDTO::getId).toList());
-        verify(shopService).list(any(Wrapper.class));
+        verify(shopMapper).selectList(any(Wrapper.class));
     }
 
     @Test
     void availableEmptySearchResultDoesNotFallBackToLegacyDiscovery() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
         ShopDiscoveryQuery query = query().setKeyword("missing");
@@ -246,7 +246,7 @@ class LocalShopDiscoveryProviderTest {
         );
 
         List<ShopDiscoveryItemDTO> items = provider(
-                shopService,
+                shopMapper,
                 properties(GeoProperties.LocalDiscoveryMode.MYSQL),
                 redis,
                 projection,
@@ -254,12 +254,12 @@ class LocalShopDiscoveryProviderTest {
         ).discover(query);
 
         assertTrue(items.isEmpty());
-        verify(shopService, never()).list(any(Wrapper.class));
+        verify(shopMapper, never()).selectList(any(Wrapper.class));
     }
 
     @Test
     void searchShadowModeAlwaysReturnsLegacyResult() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
         ShopDiscoveryQuery query = query().setKeyword("coffee");
@@ -268,12 +268,12 @@ class LocalShopDiscoveryProviderTest {
                 new ShopSearchProjectionService.SearchCandidate(
                         shop(2L, 7L, "Search", 120.002D, 30D), 200D, 0)
         ), 1));
-        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(
+        when(shopMapper.selectList(any(Wrapper.class))).thenReturn(List.of(
                 shop(1L, 7L, "Legacy", 120.001D, 30D)
         ));
 
         List<ShopDiscoveryItemDTO> items = provider(
-                shopService,
+                shopMapper,
                 properties(GeoProperties.LocalDiscoveryMode.MYSQL),
                 redis,
                 projection,
@@ -286,17 +286,17 @@ class LocalShopDiscoveryProviderTest {
 
     @Test
     void queryWithoutKeywordOrPreferenceKeepsLegacyPath() {
-        IShopService shopService = mock(IShopService.class);
+        ShopMapper shopMapper = mock(ShopMapper.class);
         RedisShopGeoSearchService redis = mock(RedisShopGeoSearchService.class);
         ShopSearchProjectionService projection = mock(ShopSearchProjectionService.class);
         ShopDiscoveryQuery query = query();
         when(projection.shouldSearch(query)).thenReturn(false);
-        when(shopService.list(any(Wrapper.class))).thenReturn(List.of(
+        when(shopMapper.selectList(any(Wrapper.class))).thenReturn(List.of(
                 shop(1L, 7L, "Legacy", 120.001D, 30D)
         ));
 
         List<ShopDiscoveryItemDTO> items = provider(
-                shopService,
+                shopMapper,
                 properties(GeoProperties.LocalDiscoveryMode.MYSQL),
                 redis,
                 projection,
@@ -308,22 +308,22 @@ class LocalShopDiscoveryProviderTest {
     }
 
     private LocalShopDiscoveryProvider provider(
-            IShopService shopService,
+            ShopMapper shopMapper,
             GeoProperties properties,
             RedisShopGeoSearchService redis
     ) {
-        return new LocalShopDiscoveryProvider(shopService, properties, redis);
+        return new LocalShopDiscoveryProvider(shopMapper, properties, redis);
     }
 
     private LocalShopDiscoveryProvider provider(
-            IShopService shopService,
+            ShopMapper shopMapper,
             GeoProperties geoProperties,
             RedisShopGeoSearchService redis,
             ShopSearchProjectionService projection,
             ShopSearchProperties searchProperties
     ) {
         return new LocalShopDiscoveryProvider(
-                shopService,
+                shopMapper,
                 geoProperties,
                 redis,
                 projection,

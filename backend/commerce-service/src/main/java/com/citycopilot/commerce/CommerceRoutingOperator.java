@@ -1,6 +1,6 @@
 package com.citycopilot.commerce;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -26,13 +26,12 @@ import java.util.TreeSet;
 import java.util.UUID;
 
 /**
- * One-shot production operator for the Commerce routing control plane.
+ * Commerce Redis 路由控制面的生产级一次性运维任务。
  *
- * <p>The one-shot process runs the ordinary Commerce artifact with every runtime
- * role disabled. Redis control mutations are delegated to
- * {@link CommerceRedisReplicationExecutor}; each Lua CAS/SET and WAIT uses the
- * same physical master connection and therefore remains valid with Redis
- * Cluster, TLS and ACL authentication configured by Spring/Lettuce.</p>
+ * <p>运维进程复用普通 Commerce 制品，但关闭 API、Worker 等运行时角色。所有 Redis 控制面写委托给
+ * {@link CommerceRedisReplicationExecutor}，使 Lua CAS/SET 与 WAIT 使用同一主节点物理连接，兼容
+ * Spring/Lettuce 配置的 Cluster、TLS 与 ACL。迁移顺序是关闭准入、证明排空、校验目标数据、
+ * CAS 切换全局所有权，最后逐分片开放目标门禁。</p>
  */
 @Component
 @ConditionalOnProperty(
@@ -41,18 +40,30 @@ import java.util.UUID;
         havingValue = "true"
 )
 final class CommerceRoutingOperator implements ApplicationRunner {
+    /** 路由激活前必须存在的核心 Commerce 表数量。 */
     private static final int REQUIRED_COMMERCE_TABLES = 11;
 
+    /** 查询业务排空证据并迁移 PREPARED 准入归属。 */
     private final JdbcTemplate jdbc;
+    /** 读取控制记录、门禁、Stream 和目标业务数据。 */
     private final StringRedisTemplate redis;
+    /** 对控制面 CAS/SET 执行副本确认。 */
     private final CommerceRedisReplicationExecutor replicatedRedis;
+    /** 获取运维互斥租约并统计在途业务租约。 */
     private final CommerceRuntimeMutationLeases runtimeLeases;
+    /** 当前部署的源路由键空间。 */
     private final CommerceRedisKeyspace source;
+    /** 将结果或失败证据打印为结构化 JSON。 */
     private final ObjectMapper objectMapper;
+    /** 本次一次性进程要执行的动作。 */
     private final Action action;
+    /** ACTIVATE 动作的目标代际。 */
     private final String targetGeneration;
+    /** ACTIVATE 动作的目标物理分片数。 */
     private final int targetPhysicalShardCount;
+    /** 标记 ApplicationRunner 已成功完成，供 main 主动退出进程。 */
     private volatile boolean completed;
+    /** 当前运维租约；每次关键写前必须续租确认。 */
     private volatile CommerceRuntimeMutationLeases.OperatorLease activeOperatorLease;
 
     CommerceRoutingOperator(
@@ -79,6 +90,9 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         this.targetPhysicalShardCount = targetPhysicalShardCount;
     }
 
+    /**
+     * 执行指定动作并把成功结果写 stdout；前置检查失败时把证据写 stderr 后保留非零退出。
+     */
     @Override
     public void run(ApplicationArguments ignored) throws Exception {
         try {
@@ -98,6 +112,9 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return completed;
     }
 
+    /**
+     * 分派运维动作。只读 STATUS/VERIFY_DRAIN 不持有运维租约，控制面写动作必须独占租约。
+     */
     Map<String, Object> execute() {
         if (action == Action.STATUS) return status();
         if (action == Action.VERIFY_DRAIN) return verifyDrain();
@@ -125,6 +142,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return result;
     }
 
+    /** 首次建立 ACTIVE 全局控制记录和全部源分片门禁，并确认副本复制。 */
     private Map<String, Object> initialize() {
         CommerceRoutingGuard.RoutingSnapshot current = readControl();
         if (current == null) {
@@ -156,6 +174,11 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return result;
     }
 
+    /**
+     * 先把全局控制记录 CAS 为 DRAINING，再关闭每个源分片门禁。
+     *
+     * <p>全局与分片的双层关闭使新 API 请求和已经越过 API 检查的 Lua 都无法继续准入。</p>
+     */
     private Map<String, Object> beginDrain() {
         CommerceRoutingGuard.RoutingSnapshot current = requireControl();
         assertFingerprint(current, source);
@@ -194,6 +217,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return result;
     }
 
+    /** 收集业务表、Outbox、恢复、租约、Stream 和在途集合证据，确认源运行时已完全排空。 */
     private Map<String, Object> verifyDrain() {
         CommerceRoutingGuard.RoutingSnapshot current = requireSourceDraining();
         Map<String, Object> drain = drainSnapshot(source);
@@ -206,6 +230,12 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return result;
     }
 
+    /**
+     * 将路由所有权切换到目标代际，并支持在全局 CAS 已提交后的崩溃恢复。
+     *
+     * <p>目标门禁始终先保持 DRAINING；只有源再次排空、PREPARED 归属迁移完成且目标数据通过
+     * 最终校验后才逐分片开放 ACTIVE。</p>
+     */
     private Map<String, Object> activate() {
         CommerceRedisKeyspace target = targetKeyspace();
         CommerceRoutingGuard.RoutingSnapshot current = requireControl();
@@ -266,7 +296,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
             );
             current = requireControl();
             assertFingerprint(current, target);
-            // Only the CAS winner may change PREPARED routing ownership.
+            // 只有赢得全局 CAS 的运维进程才有权迁移 PREPARED 准入的路由归属。
             preparedMigration = migratePreparedAdmissions(source, target);
             preflight = targetPreflight(target);
             if (!Boolean.TRUE.equals(preflight.get("safe"))) {
@@ -282,9 +312,8 @@ final class CommerceRoutingOperator implements ApplicationRunner {
             if (fingerprintChanged) {
                 assertGates(source, CommerceRoutingGuard.RoutingState.DRAINING);
             }
-            // A crash while reopening target shards can leave mixed gates.
-            // Close every target shard again, wait for any admission that won
-            // before its gate closed, and only then resume the MySQL move.
+            // 开放目标分片期间崩溃可能留下混合门禁；先重新关闭全部目标分片，等待之前抢先取得的
+            // 准入租约结束，再恢复 MySQL 归属迁移。
             transitionGates(
                     target,
                     CommerceRoutingGuard.RoutingState.ACTIVE,
@@ -292,13 +321,11 @@ final class CommerceRoutingOperator implements ApplicationRunner {
                     "routing_gate_close_activate_resume"
             );
             assertGates(target, CommerceRoutingGuard.RoutingState.DRAINING);
-            // A previous write may have reached the master but failed WAIT.
-            // Reaffirm the committed value before performing any MySQL move.
+            // 前次写可能已到主节点但 WAIT 失败；修改 MySQL 前先同值重写并重新取得复制确认。
             confirmControlReplication(current, "routing_control_confirm_activate_resume");
             preparedMigration = migratePreparedAdmissions(source, target);
-            // A crash can leave the global CAS committed while every target
-            // gate remains fail-closed. Re-validate business data on every
-            // resume; evidence collected before the crash may already be stale.
+            // 崩溃可能留下“全局 CAS 已提交、目标门禁全关闭”；每次恢复都重验业务数据，
+            // 因为崩溃前采集的证据已经可能过期。
             preflight = targetPreflight(target);
             if (!Boolean.TRUE.equals(preflight.get("safe"))) {
                 Map<String, Object> evidence = baseResult("activate-resume");
@@ -321,9 +348,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
                     evidence
             );
         }
-        // The final PREPARED move and target check both happen while the
-        // operator lease blocks runtime business writers and before any target
-        // shard gate opens.
+        // 最后一轮 PREPARED 迁移和目标校验都在运维租约阻挡业务写、目标门禁尚未开放时完成。
         Map<String, Object> preparedPostflight = migratePreparedAdmissions(source, target);
         preflight = targetPreflight(target);
         if (!Boolean.TRUE.equals(preflight.get("safe"))) {
@@ -359,6 +384,9 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return result;
     }
 
+    /**
+     * 仅迁移尚未被 Redis 接受的 PREPARED 行；ACCEPTED/终态行始终保留原路由归属。
+     */
     private Map<String, Object> migratePreparedAdmissions(
             CommerceRedisKeyspace sourceKeyspace,
             CommerceRedisKeyspace targetKeyspace
@@ -411,6 +439,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return current;
     }
 
+    /** 以 SET NX 初始化全部分片门禁，不覆盖已有冲突状态。 */
     private void initializeGates(
             CommerceRedisKeyspace keyspace,
             CommerceRoutingGuard.RoutingState state
@@ -424,6 +453,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         }
     }
 
+    /** 对每个分片门禁执行带副本确认的 CAS 状态转换。 */
     private void transitionGates(
             CommerceRedisKeyspace keyspace,
             CommerceRoutingGuard.RoutingState expectedState,
@@ -455,6 +485,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         }
     }
 
+    /** 对已提交控制值执行同值 CAS + WAIT，供恢复进程重新取得复制证明。 */
     private void confirmControlReplication(
             CommerceRoutingGuard.RoutingSnapshot current,
             String operation
@@ -473,6 +504,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         );
     }
 
+    /** 在每个关键控制面写前续租；运维所有权丢失后立即中止。 */
     private void assertOperatorLease() {
         CommerceRuntimeMutationLeases.OperatorLease lease = activeOperatorLease;
         if (lease == null) {
@@ -535,6 +567,9 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return snapshot;
     }
 
+    /**
+     * 聚合迁移所需的完整排空证明；任一计数、租约或 Redis 分片不安全时 safe=false。
+     */
     private Map<String, Object> drainSnapshot(CommerceRedisKeyspace keyspace) {
         Map<String, Object> integrity = integritySnapshot();
         Map<String, Long> ledger = ledgerSnapshot(keyspace);
@@ -590,6 +625,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return result;
     }
 
+    /** 检查关键表、非负库存和 ID 号段种子，避免把损坏的数据库状态带入新路由。 */
     private Map<String, Object> integritySnapshot() {
         Long tableCount = jdbc.queryForObject("""
                 SELECT COUNT(DISTINCT table_name)
@@ -652,6 +688,9 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return result;
     }
 
+    /**
+     * 汇总每个分片的 Pending、未投递尾部和 Voucher 在途集合；三者均为零才算排空。
+     */
     private Map<String, Object> redisDrainState(
             CommerceRedisKeyspace keyspace,
             List<Long> voucherIds
@@ -703,6 +742,9 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return result;
     }
 
+    /**
+     * 读取单个 Stream 的消费组状态；非空 Stream 缺失消费组属于不安全状态。
+     */
     private Map<String, Object> streamState(String stream) {
         Boolean exists = redis.hasKey(stream);
         if (!Boolean.TRUE.equals(exists)) {
@@ -720,7 +762,7 @@ final class CommerceRoutingOperator implements ApplicationRunner {
 
             StreamInfo.XInfoGroups groups = redis.opsForStream().groups(stream);
             StreamInfo.XInfoGroup group = groups.stream()
-                    .filter(candidate -> CommerceOrderService.GROUP.equals(candidate.groupName()))
+                    .filter(candidate -> CommerceRedisKeyspace.ORDER_CONSUMER_GROUP.equals(candidate.groupName()))
                     .findFirst()
                     .orElse(null);
             if (group == null) {
@@ -761,6 +803,11 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         }
     }
 
+    /**
+     * 将目标键空间的库存、活动元数据、买家集合逐项与 MySQL 权威事实比对。
+     *
+     * <p>同时要求目标准入账本终态、Stream 排空、无元数据 fence、无准入租约。</p>
+     */
     private Map<String, Object> targetPreflight(CommerceRedisKeyspace target) {
         List<VoucherProjection> vouchers = voucherProjections();
         Map<Long, Set<String>> expectedBuyers = expectedBuyers();
@@ -1010,6 +1057,9 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         return UUID.randomUUID().toString().replace("-", "");
     }
 
+    /**
+     * 目标路由预检使用的 MySQL Voucher 权威投影。
+     */
     private record VoucherProjection(
             long id,
             int stock,
@@ -1020,13 +1070,20 @@ final class CommerceRoutingOperator implements ApplicationRunner {
             String sourceVersion
     ) {}
 
+    /** 一次性路由运维进程支持的动作。 */
     enum Action {
+        /** 只读查看控制记录和门禁。 */
         STATUS,
+        /** 首次初始化控制面。 */
         INITIALIZE,
+        /** 关闭新业务写和准入。 */
         BEGIN_DRAIN,
+        /** 只读验证源运行时是否排空。 */
         VERIFY_DRAIN,
+        /** 校验并切换到目标路由代际。 */
         ACTIVATE;
 
+        /** 将配置中的连字符/大小写形式解析为标准动作。 */
         static Action parse(String raw) {
             String normalized = Objects.requireNonNull(raw, "action")
                     .trim()
@@ -1043,7 +1100,9 @@ final class CommerceRoutingOperator implements ApplicationRunner {
         }
     }
 
+    /** 带结构化证据的安全前置检查异常，便于运维定位哪个条件未满足。 */
     static final class RoutingPreflightException extends IllegalStateException {
+        /** 失败时采集的不可变证据。 */
         private final Map<String, Object> evidence;
 
         RoutingPreflightException(String message, Map<String, Object> evidence) {

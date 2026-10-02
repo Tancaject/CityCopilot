@@ -1,14 +1,41 @@
 global:
   scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - citycopilot-alerts.yml
 
 scrape_configs:
+  # The monitoring process must join the Compose citycopilot network or an equivalent private network.
+  - job_name: citycopilot-rocketmq-broker
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - rocketmq-broker:5557
+        labels:
+          broker_metrics_role: "true"
   - job_name: citycopilot-core
     metrics_path: /actuator/prometheus
     static_configs:
       - targets:
           - host.docker.internal:8081
+        # Expected role, not a switch: move this label to the actual projector target in split deployments.
+        labels:
+          projection_role: "true"
+          # Set true only on targets expected to run the enabled BookingEvent business consumer.
+          booking_projection_role: "false"
   - job_name: citycopilot-agent
     metrics_path: /actuator/prometheus
     static_configs:
       - targets:
           - host.docker.internal:8082
+        # Expected Ops v2 database sampler, independent of whether this instance runs workers.
+        labels:
+          ops_case_role: "true"
+  - job_name: citycopilot-commerce
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - host.docker.internal:8083
+        labels:
+          outbox_relay_role: "true"

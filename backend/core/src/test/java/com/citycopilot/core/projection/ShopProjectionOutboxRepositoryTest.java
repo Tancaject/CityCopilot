@@ -1,7 +1,9 @@
 package com.citycopilot.core.projection;
 
+import tools.jackson.databind.json.JsonMapper;
+
 import com.citycopilot.core.entity.Shop;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,7 +33,7 @@ class ShopProjectionOutboxRepositoryTest {
     void advancesVersionAndAppendsOutboxInsideBusinessTransaction() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ShopProjectionOutboxRepository repository = new ShopProjectionOutboxRepository(
-                jdbc, new ObjectMapper().findAndRegisterModules());
+                jdbc, JsonMapper.builderWithJackson2Defaults().findAndAddModules().build());
         when(jdbc.update(contains("UPDATE shop"), eq(7L))).thenReturn(1);
         when(jdbc.queryForObject(contains("SELECT projection_version"), eq(Long.class), eq(7L)))
                 .thenReturn(4L);
@@ -60,7 +62,7 @@ class ShopProjectionOutboxRepositoryTest {
     @Test
     void refusesNonTransactionalAppend() {
         ShopProjectionOutboxRepository repository = new ShopProjectionOutboxRepository(
-                mock(JdbcTemplate.class), new ObjectMapper());
+                mock(JdbcTemplate.class), JsonMapper.builderWithJackson2Defaults().build());
 
         assertThrows(IllegalStateException.class,
                 () -> repository.append(null, new Shop().setId(1L)));
@@ -70,7 +72,7 @@ class ShopProjectionOutboxRepositoryTest {
     void conditionalClaimLosesCleanlyToAnotherReplica() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ShopProjectionOutboxRepository repository = new ShopProjectionOutboxRepository(
-                jdbc, new ObjectMapper());
+                jdbc, JsonMapper.builderWithJackson2Defaults().build());
         when(jdbc.queryForList(contains("SELECT id FROM shop_projection_outbox"),
                 eq(Long.class), eq(10))).thenReturn(java.util.List.of(1L));
         when(jdbc.update(contains("SET status='CLAIMED'"),
@@ -84,7 +86,7 @@ class ShopProjectionOutboxRepositoryTest {
     void failedInfrastructureWriteRemainsRetryableIndefinitely() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ShopProjectionOutboxRepository repository = new ShopProjectionOutboxRepository(
-                jdbc, new ObjectMapper());
+                jdbc, JsonMapper.builderWithJackson2Defaults().build());
         ShopProjectionOutboxRepository.ClaimedEvent event = new ShopProjectionOutboxRepository.ClaimedEvent(
                 1L, "event-1", 7L, 4L, 99, "claim-1");
         when(jdbc.update(contains("SET status='FAILED'"),
@@ -100,7 +102,7 @@ class ShopProjectionOutboxRepositoryTest {
     void completeFailsLoudlyAfterClaimOwnershipIsLost() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ShopProjectionOutboxRepository repository = new ShopProjectionOutboxRepository(
-                jdbc, new ObjectMapper());
+                jdbc, JsonMapper.builderWithJackson2Defaults().build());
         ShopProjectionOutboxRepository.ClaimedEvent event = new ShopProjectionOutboxRepository.ClaimedEvent(
                 1L, "event-1", 7L, 4L, 1, "claim-1");
 
@@ -112,7 +114,7 @@ class ShopProjectionOutboxRepositoryTest {
     void failFailsLoudlyAfterClaimOwnershipIsLost() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         ShopProjectionOutboxRepository repository = new ShopProjectionOutboxRepository(
-                jdbc, new ObjectMapper());
+                jdbc, JsonMapper.builderWithJackson2Defaults().build());
         ShopProjectionOutboxRepository.ClaimedEvent event = new ShopProjectionOutboxRepository.ClaimedEvent(
                 1L, "event-1", 7L, 4L, 1, "claim-1");
 

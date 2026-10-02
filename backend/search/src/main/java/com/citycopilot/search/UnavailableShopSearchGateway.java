@@ -3,8 +3,9 @@ package com.citycopilot.search;
 import java.util.Collection;
 
 /**
- * Keeps the optional search boundary injectable when enabled mode has no client,
- * while making projection write loss explicit to reconciliation callers.
+ * 搜索已开启但 Elasticsearch 客户端缺失时的失败实现。
+ *
+ * <p>它保持依赖可注入，同时让投影写入和重建显式失败，避免调用方误以为索引已经同步。</p>
  */
 final class UnavailableShopSearchGateway implements ShopSearchGateway {
 
@@ -33,6 +34,7 @@ final class UnavailableShopSearchGateway implements ShopSearchGateway {
         return false;
     }
 
+    /** @return 描述 Elasticsearch 客户端缺失的统一异常 */
     private ShopSearchException unavailable() {
         return new ShopSearchException(
                 "Elasticsearch client is unavailable",

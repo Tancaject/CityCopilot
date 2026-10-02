@@ -6,6 +6,12 @@ Commerce 是优惠券、秒杀准入、订单、Reservation、恢复记录和业
 
 旧 Core 交易 writer、Redisson 锁、旧 Redis Stream/Lua、旧 Outbox Relay、旧交易表初始化和迁移回退工具已经从仓库物理删除。不存在可通过 Spring profile 或环境变量重新启用的本地 writer。
 
+## 后台读取边界
+
+[库存初始化](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceRedisInventoryBootstrap.java)、[活动元数据初始化](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceRedisCampaignMetadata.java)和[一致性巡检](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceReconciliationJob.java)先固定本轮最大主键，再按主键游标分批读取，不一次装入全库券列表。库存初始化只判断是否存在订单、预留或恢复历史，不统计全部历史行；发现任何历史仍保持准入关闭并交给既有修复流程。巡检仍在一轮内处理上界以内的全部券，分页不会重置单券异常连续次数或改变修订/fence 顺序。
+
+分批限制的是每次 SQL 返回规模，不代表整轮巡检耗时或单券证据大小已有上限。一致性修复需要完整买家与恢复证据，不能截断后仍宣称一致；对外全量列表也不能静默改为只返回首批。订单按页接口继续使用既有页码契约；引入游标接口应作为兼容的独立变更。历史订单缺失 ledger 时的身份补建仍保留，移除它需要下述回填 postflight 与所有旧 writer 退出的部署证据。
+
 ## 完整性门禁
 
 运行：
@@ -27,8 +33,9 @@ Commerce 是优惠券、秒杀准入、订单、Reservation、恢复记录和业
 ### 首次 admission ledger 升级
 
 从无 ledger 的历史版本升级时，先关闭所有新秒杀准入，保留旧 Stream worker 直到
-旧 Stream、pending 和正在处理的消息全部归零，再停止 worker 并执行
-`deploy/mysql/commerce/003-commerce-admission-ledger.sql`。迁移会把每条非空
+旧 Stream、pending 和正在处理的消息全部归零，再停止 worker，并按
+[数据库迁移运行手册](../database-migrations.md#已有库首次接管)显式接管后执行 Commerce 迁移任务。
+[admission ledger 迁移](../../deploy/mysql/commerce/V3__admission_ledger.sql)会把每条非空
 `idempotency_key` 的既有订单，以相同 order/user/voucher/key 和
 `seckill:v1:<voucherId>` fingerprint 回填为 `ORDER_CREATED`；仅回填记录使用
 `legacy-order-v0/0` sentinel，后台恢复不会认领它。订单与已有 ledger 身份有任何
@@ -42,7 +49,7 @@ invariants migration 在校验列长度与唯一索引形状后，将 `commerce_
 
 这次发布不能做旧/新镜像混跑的普通 rolling：旧镜像不会写 admission ledger。
 维护顺序固定为：在网关封闭旧秒杀入口并把旧 API scale 到 0；保留旧 worker 排空
-旧 Stream/PEL；停止旧 worker并执行 003 建表、回填和 postflight；全量替换所有旧
+旧 Stream/PEL；停止旧 worker并由 Flyway 执行 ledger 建表、回填和 postflight；全量替换所有旧
 API/worker；初始化并核验 routing control 与每 shard gate；最后才重新开放入口。
 DDL 采用 expand/contract 只说明新旧进程可短暂连接同一扩展 schema，不代表旧准入
 语义可以与 ledger 版本并行服务。

@@ -18,10 +18,16 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * 本地磁盘文件存储实现，负责博客图片的安全校验、分目录落盘和删除。
+ *
+ * <p>控制层只接触公开路径；本类把公开 URL 前缀转换为配置目录下的规范化绝对路径。</p>
+ */
 @Slf4j
 @Service
 public class LocalFileStorageService implements FileStorageService {
 
+    /** 上传目录、公开前缀、大小上限及允许类型配置。 */
     @Resource
     private UploadProperties uploadProperties;
 
@@ -31,6 +37,7 @@ public class LocalFileStorageService implements FileStorageService {
         String fileName = createRelativeBlogPath(image.getOriginalFilename());
         Path root = uploadRoot();
         Path target = root.resolve(stripLeadingSlash(fileName)).normalize();
+        // 规范化后必须仍位于上传根目录，防止文件名通过 ../ 越权写盘。
         if (!target.startsWith(root)) {
             throw new IllegalArgumentException("错误的文件名称");
         }
@@ -52,6 +59,7 @@ public class LocalFileStorageService implements FileStorageService {
         }
         Path root = uploadRoot();
         Path target = root.resolve(stripLeadingSlash(relativePath)).normalize();
+        // 删除同样限制在上传根目录内，并拒绝把目录当成单个博客文件删除。
         if (!target.startsWith(root) || Files.isDirectory(target)) {
             throw new IllegalArgumentException("错误的文件名称");
         }
@@ -62,6 +70,12 @@ public class LocalFileStorageService implements FileStorageService {
         }
     }
 
+    /**
+     * 从大小、扩展名、MIME 类型和文件头四个维度校验上传内容。
+     *
+     * @param image 待校验上传文件
+     * @throws IllegalArgumentException 文件为空、超限或类型不可信时抛出
+     */
     private void validateImage(MultipartFile image) {
         if (image == null || image.isEmpty()) {
             throw new IllegalArgumentException("请选择要上传的图片");
@@ -88,6 +102,13 @@ public class LocalFileStorageService implements FileStorageService {
         }
     }
 
+    /**
+     * 根据扩展名验证常见图片格式的魔数，避免仅伪造后缀或 MIME 类型。
+     *
+     * @param image 待读取文件头的图片
+     * @param extension 已标准化为小写的扩展名
+     * @return 文件头是否与声明格式一致
+     */
     private boolean matchesImageSignature(MultipartFile image, String extension) {
         try (InputStream stream = new BufferedInputStream(image.getInputStream())) {
             byte[] header = stream.readNBytes(12);
@@ -132,6 +153,12 @@ public class LocalFileStorageService implements FileStorageService {
         return value & 0xFF;
     }
 
+    /**
+     * 为图片生成散列分片目录和随机文件名，避免单目录积累过多文件。
+     *
+     * @param originalFilename 原始文件名，仅用于确定扩展名
+     * @return 以 {@code /blogs/} 开头的相对路径
+     */
     private String createRelativeBlogPath(String originalFilename) {
         String suffix = imageExtension(originalFilename);
         String name = UUID.randomUUID().toString();
@@ -141,6 +168,12 @@ public class LocalFileStorageService implements FileStorageService {
         return StrUtil.format("/blogs/{}/{}/{}.{}", d1, d2, name, suffix);
     }
 
+    /**
+     * 提取并标准化文件扩展名。
+     *
+     * @param originalFilename 客户端原始文件名
+     * @return 小写扩展名，不含点号
+     */
     private String imageExtension(String originalFilename) {
         String suffix = StrUtil.subAfter(originalFilename, ".", true);
         if (StrUtil.isBlank(suffix) || suffix.contains("/") || suffix.contains("\\")) {
@@ -153,6 +186,12 @@ public class LocalFileStorageService implements FileStorageService {
         return normalizePrefix(uploadProperties.getPublicPrefix()) + stripLeadingSlash(relativePath);
     }
 
+    /**
+     * 将公开路径或兼容的旧图片路径还原成上传根目录下的相对路径。
+     *
+     * @param path 对外公开路径
+     * @return 去除公开前缀后的相对路径
+     */
     private String normalizeInputPath(String path) {
         String normalized = StrUtil.blankToDefault(path, "").replace('\\', '/');
         String publicPrefix = normalizePrefix(uploadProperties.getPublicPrefix());
@@ -177,6 +216,7 @@ public class LocalFileStorageService implements FileStorageService {
         return value.startsWith("/") ? value.substring(1) : value;
     }
 
+    /** @return 规范化且不含符号链接解析的上传根目录绝对路径 */
     private Path uploadRoot() {
         return Path.of(uploadProperties.getRootDir()).toAbsolutePath().normalize();
     }

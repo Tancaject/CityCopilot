@@ -6,6 +6,8 @@ import { fetchShopDiscovery, fetchShopTypes } from '../api/citycopilot';
 import ConsumerLocationSelector from '../components/ConsumerLocationSelector.vue';
 import { clearSelectedLocation, ensureDefaultCurrentLocation, locationState } from '../composables/location';
 import { assetUrl, formatDistance, formatPrice, formatScore, shopCover } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
+import { getPaginationLabel } from '../utils/labels';
 import type { ShopDiscoveryItem, ShopType } from '../types';
 
 const route = useRoute();
@@ -38,7 +40,12 @@ const typeName = computed(() => {
 const keyword = computed(() => (typeof route.query.name === 'string' ? route.query.name.trim() : ''));
 const title = computed(() => keyword.value || typeName.value || '全部店铺');
 const nearbyActive = computed(() => Boolean(locationState.point));
-const subtitle = computed(() => (keyword.value ? '搜索结果' : nearbyActive.value ? '消费位置附近' : '分类店铺'));
+const subtitle = computed(() => {
+  if (keyword.value) {
+    return '搜索结果';
+  }
+  return nearbyActive.value ? '消费位置附近' : '分类店铺';
+});
 const hasShops = computed(() => shops.value.length > 0);
 const orderableShopCount = computed(() => shops.value.filter((shop) => shop.orderable && shop.id).length);
 const hasOnlyExternalShops = computed(() => nearbyActive.value && hasShops.value && orderableShopCount.value === 0);
@@ -166,7 +173,7 @@ async function loadFirstPage() {
     hasMore.value = result.length > 0;
   } catch (error) {
     if (currentRequest === requestId) {
-      errorMessage.value = error instanceof Error ? error.message : '店铺加载失败';
+      errorMessage.value = getErrorMessage(error, '店铺加载失败');
     }
   } finally {
     if (currentRequest === requestId) {
@@ -196,7 +203,7 @@ async function loadMore() {
     currentPage.value = nextPage;
   } catch (error) {
     if (currentRequest === requestId) {
-      errorMessage.value = error instanceof Error ? error.message : '加载更多失败';
+      errorMessage.value = getErrorMessage(error, '加载更多失败');
     }
   } finally {
     loadingMore.value = false;
@@ -338,7 +345,7 @@ watch(
 
     <button class="load-more" type="button" :disabled="loading || loadingMore || !hasMore" @click="loadMore">
       <Loader2 v-if="loadingMore" class="spin" :size="17" aria-hidden="true" />
-      {{ loadingMore ? '加载中' : hasMore ? '加载更多' : '没有更多了' }}
+      {{ getPaginationLabel(loadingMore, hasMore) }}
     </button>
   </section>
 </template>

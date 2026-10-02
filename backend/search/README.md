@@ -27,12 +27,13 @@ citycopilot:
 
 `upsert` writes through the alias. A failed incremental write marks this
 process's projection state stale, and searches return `INDEX_STALE` until a
-successful rebuild.
+successful upsert or rebuild clears the local flag.
 
 `rebuild` creates a new generation index, bulk-indexes and refreshes all
 documents, then switches the read/write alias in one Elasticsearch alias
-update. Previous generations are intentionally retained for rollback and must
-be removed later by an explicit, separately governed retention job.
+update. Core records retired generations for explicit cleanup, which is disabled
+by default and requires retention and reader-grace windows; see the
+[projection lifecycle policy](../../docs/adr/0010-versioned-shop-search-geo-projections.md).
 
 The mapping uses only built-in Elasticsearch analyzers. Its n-gram fields make
 Chinese shop names searchable without an IK plugin; standard multi-fields

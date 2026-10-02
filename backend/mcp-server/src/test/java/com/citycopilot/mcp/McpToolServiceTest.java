@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -30,7 +32,7 @@ class McpToolServiceTest {
                 tool("pay_order", List.of("order:write")),
                 tool("admin_only", List.of("admin:access"))
         ));
-        McpToolService service = new McpToolService(client);
+        McpToolService service = new McpToolService(client, new McpCoreProperties());
 
         List<Map<String, Object>> tools = service.toolsList();
 
@@ -42,20 +44,41 @@ class McpToolServiceTest {
     @Test
     void ignoresCallerSuppliedIdentityAndDelegatesAuthorizationToCore() {
         McpCoreClient client = mock(McpCoreClient.class);
-        when(client.invoke(anyString(), any(), any())).thenReturn(
+        when(client.tools(any())).thenReturn(List.of(tool("pay_order", List.of(), 3)));
+        when(client.invoke(anyString(), any(), any(), anyInt())).thenReturn(
                 ToolInvocationResponse.failure("permission_denied", "denied", false)
         );
-        McpToolService service = new McpToolService(client);
+        McpToolService service = new McpToolService(client, new McpCoreProperties());
 
         ToolInvocationResponse result = service.call(new McpToolCallRequest(
                 "pay_order", Map.of("orderId", 123L), "spoofed", Set.of("*")
         ));
 
         assertEquals("permission_denied", result.error().code());
-        verify(client).invoke(anyString(), any(), any());
+        verify(client).invoke(eq("pay_order"), any(), any(), eq(1));
+    }
+
+    @Test
+    void sdkInvocationKeepsPublishedVersionWhenCoreCatalogChanges() {
+        McpCoreClient client = mock(McpCoreClient.class);
+        when(client.tools(any())).thenReturn(List.of(tool("pay_order", List.of(), 2)));
+        when(client.invoke(anyString(), any(), any(), anyInt())).thenReturn(
+                ToolInvocationResponse.failure("tool_contract_mismatch", "Review the changed contract", false));
+        McpToolService service = new McpToolService(client, new McpCoreProperties());
+        var published = new CityCopilotMcpToolCallbackProvider()
+                .cityCopilotToolCallbackProvider(service).getToolCallbacks()[0];
+        when(client.tools(any())).thenReturn(List.of(tool("pay_order", List.of(), 3)));
+
+        assertTrue(published.call("{\"orderId\":123}").contains("tool_contract_mismatch"));
+        verify(client).invoke(eq("pay_order"), eq(Map.of("orderId", 123)), any(), eq(2));
     }
 
     private ToolDefinition tool(String name, List<String> permissions) {
-        return new ToolDefinition(name, name, permissions, 60, true, List.of());
+        return tool(name, permissions, 1);
+    }
+
+    private ToolDefinition tool(String name, List<String> permissions, int version) {
+        return new ToolDefinition(name, name, permissions, 60, true, List.of(),
+                null, null, null, null, "core", version, Map.of());
     }
 }

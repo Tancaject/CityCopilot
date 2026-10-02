@@ -13,42 +13,44 @@ import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 尝试从 Redis 会话恢复用户上下文，并滑动刷新会话 TTL。
+ *
+ * <p>它对匿名请求始终放行，具体接口是否要求登录由后续 {@link LoginInterceptor} 决定；
+ * 请求线程上下文由外层 {@link UserContextFilter} 清理，包括此拦截器尚未返回时的异常。</p>
+ */
 public class RefreshTokenInterceptor implements HandlerInterceptor {
 
-    private StringRedisTemplate stringRedisTemplate;
+    /** 读取会话 Hash、刷新 TTL 并记录 UV 的 Redis 客户端。 */
+    private final StringRedisTemplate stringRedisTemplate;
 
+    /** @param stringRedisTemplate Redis 操作入口 */
     public RefreshTokenInterceptor(StringRedisTemplate stringRedisTemplate) {
         this.stringRedisTemplate = stringRedisTemplate;
     }
 
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         String token = request.getHeader("authorization");
         if (StrUtil.isBlank(token)) {
-            return true; // 没有 token 也放行，交给 LoginInterceptor 判断
+            return true; // 匿名请求继续执行，受保护接口由 LoginInterceptor 统一拒绝。
         }
-        // 从 Redis 获取用户
+        // 会话以 Hash 保存最小 UserDTO，键由登录 token 唯一定位。
         Map<Object, Object> userMap = stringRedisTemplate.opsForHash()
                 .entries(RedisConstants.LOGIN_USER_KEY + token);
         if (userMap.isEmpty()) {
-            return true; // 用户不存在也放行
+            return true; // token 失效等同匿名，仍交给具体路由的登录策略判断。
         }
-        // 将 hash 数据转成 UserDTO
+        // 将 Redis Hash 恢复为只包含展示与授权字段的会话 DTO。
         UserDTO user = BeanUtil.fillBeanWithMap(userMap, new UserDTO(), false);
-        // 保存到 ThreadLocal
+        // 后续拦截器和业务服务通过 UserHolder 读取同一请求的用户。
         UserHolder.saveUser(user);
-        // 刷新 token 有效期
+        // 每次有效访问滑动刷新 TTL，保持活跃用户会话。
         stringRedisTemplate.expire(RedisConstants.LOGIN_USER_KEY + token,
                 RedisConstants.LOGIN_USER_TTL, TimeUnit.MINUTES);
-        // 记录 UV（用用户ID标识唯一访客，按天统计）
+        // HyperLogLog 按用户 ID 近似统计每日独立访客，避免存储完整访问集合。
         String uvKey = RedisConstants.UV_KEY + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         stringRedisTemplate.opsForHyperLogLog().add(uvKey, user.getId().toString());
         return true;
-    }
-
-    @Override
-    public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) throws Exception {
-        // 请求结束后清理 ThreadLocal
-        UserHolder.removeUser();
     }
 }

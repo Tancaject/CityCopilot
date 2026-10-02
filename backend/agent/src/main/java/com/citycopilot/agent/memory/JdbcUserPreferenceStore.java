@@ -7,16 +7,24 @@ import org.springframework.stereotype.Repository;
 import java.sql.Timestamp;
 import java.util.List;
 
+/**
+ * 使用关系数据库保存长期偏好的 JDBC 实现。
+ *
+ * <p>以偏好类型和规范键的 SHA-256 作为用户内唯一键，既支持单值覆盖与多值共存，也避免把自由文本键直接写入索引。</p>
+ */
 @Repository
 public class JdbcUserPreferenceStore implements UserPreferenceStore {
+    /** 防止偏好查询无界增长的最大条数。 */
     private static final int MAX_LIST_SIZE = 50;
 
+    /** 执行参数化 SQL 的 Spring JDBC 客户端。 */
     private final JdbcTemplate jdbcTemplate;
 
     public JdbcUserPreferenceStore(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    /** 新偏好插入，重复偏好更新值、提及次数和时间。 */
     @Override
     public void upsert(long userId, ExplicitPreference preference) {
         jdbcTemplate.update("""
@@ -35,6 +43,7 @@ public class JdbcUserPreferenceStore implements UserPreferenceStore {
         );
     }
 
+    /** 按最近更新时间倒序读取，并将调用方 limit 限制在安全范围。 */
     @Override
     public List<UserPreference> list(long userId, int limit) {
         int safeLimit = Math.max(1, Math.min(limit, MAX_LIST_SIZE));
@@ -59,6 +68,7 @@ public class JdbcUserPreferenceStore implements UserPreferenceStore {
         );
     }
 
+    /** 以主键和 userId 联合删除，阻止跨用户遗忘。 */
     @Override
     public boolean delete(long userId, long preferenceId) {
         return jdbcTemplate.update(
@@ -68,6 +78,7 @@ public class JdbcUserPreferenceStore implements UserPreferenceStore {
         ) == 1;
     }
 
+    /** 按提取器使用的规范键删除指定类别偏好。 */
     @Override
     public int deleteByKey(long userId, PreferenceType type, String key) {
         return jdbcTemplate.update(

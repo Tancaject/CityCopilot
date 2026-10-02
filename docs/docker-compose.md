@@ -8,9 +8,10 @@
 docker compose up -d
 ```
 
-Compose 默认只启动基础设施：
+Compose 默认启动基础设施及一次性迁移任务：
 
 - Core、Agent、Commerce 各自的 MySQL
+- Core、Agent、Commerce 各自的 Flyway 迁移任务
 - 项目专用 Redis，以及一次性的 `redis-init`
 - RocketMQ NameServer、Broker、Proxy 和初始化任务
 
@@ -20,7 +21,7 @@ Elasticsearch 位于可选的 `search` profile，不会被默认基础设施脚�
 docker compose --profile search up -d elasticsearch
 ```
 
-它仅保存可从 MySQL 重建的店铺搜索投影，数据卷为 `elasticsearch-data`。启用方式和降级边界见 [Elasticsearch 店铺搜索投影](design/elasticsearch-shop-search.md)。
+它仅保存可从 MySQL 重建的店铺搜索投影，数据卷为 `elasticsearch-v9-data`。启用、旧卷升级和降级边界见 [Elasticsearch 店铺搜索投影](design/elasticsearch-shop-search.md)。
 
 `core`、`commerce`、`agent`、`mcp` 和 `frontend` 位于可选的 `app` profile，日常开发不启用，由 IDE 启动。CI 如需验证完整容器拓扑，显式执行 `docker compose --profile app up -d --build --wait`。
 
@@ -49,9 +50,9 @@ WSL Redis 仍可运行在 `127.0.0.1:6379`，但 Compose 不连接它。两个 R
 | `rocketmq-namesrv` | RocketMQ 名称服务 | `rocketmq-namesrv-logs` |
 | `rocketmq-broker` | RocketMQ Broker | `rocketmq-broker-store`、`rocketmq-broker-logs` |
 | `rocketmq-proxy` | 本地 Java 服务访问 RocketMQ 的 gRPC Proxy | 无 |
-| `elasticsearch` | 可选店铺全文检索投影，不是业务事实源 | `elasticsearch-data` |
+| `elasticsearch` | 可选店铺全文检索投影，不是业务事实源 | `elasticsearch-v9-data` |
 
-MySQL 仅在空数据卷首次创建时导入对应初始化 SQL。`.\tools\citycopilot.ps1 start` 和 `restart` 会在健康检查后执行可审计的增量迁移；当前会预检并补齐店铺 GCJ-02 坐标列与约束，异常数据存在时会停止而不是强行修改。
+数据库结构由独立迁移任务维护，应用容器等待对应任务成功后启动。日常启动、已有数据卷接管、迁移失败处置和可选开发样例导入统一见 [数据库迁移运行手册](database-migrations.md)。后台 `docker compose up -d` 返回不表示迁移成功，应查看任务退出状态。
 
 ## 端口
 
@@ -99,7 +100,7 @@ Java 服务的 Working directory 设为仓库根目录后会自动加载 `.env`�
 - 本地 Java 服务无法连接 Redis：确认 `redis` 为 `healthy`，IDE Working directory 是仓库根目录，并使用 `127.0.0.1:6380`。
 - 本地 Java 服务无法连接 MySQL：确认使用对应的 3307/3308/3309 端口，并加载根 `.env` 中对应账号密码。
 - Java 服务提示 8081/8082/8083/8090 被占用但系统查不到进程：这是已移除应用容器遗留的 Docker Desktop loopback 代理，执行 `docker desktop restart` 后再启动。
-- Core 当前表不存在：确认使用 `citycopilot-v2.sql`。默认脚本只创建 Core 当前拥有的表；旧交易表和旧迁移入口已从仓库删除。
+- 业务表不存在或迁移任务失败：按 [数据库迁移运行手册](database-migrations.md)检查对应任务，不要手工导入旧初始化 SQL。
 - 前端地图配置：本地 Vite 读取 `frontend/.env`，不再依赖 Docker 前端镜像。
 - 附近店铺无法点击：高德外部地点只用于发现展示，不能下单。页面会标明“外部地点 · 暂不支持下单”；附近没有入驻店铺时，点击“查看可下单店铺”回到本地交易店铺。
 

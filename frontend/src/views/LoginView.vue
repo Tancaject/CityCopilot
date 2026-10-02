@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { AlertCircle, Loader2, MessageCircle, ShieldCheck, Smartphone } from '@lucide/vue';
 import { sendLoginCode } from '../api/citycopilot';
 import { login } from '../composables/auth';
+import { getErrorMessage } from '../utils/errors';
 
 const router = useRouter();
 const route = useRoute();
@@ -40,7 +41,7 @@ async function handleSendCode() {
     await sendLoginCode(form.phone);
     startCooldown();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '验证码发送失败';
+    errorMessage.value = getErrorMessage(error, '验证码发送失败');
   } finally {
     sendingCode.value = false;
   }
@@ -60,7 +61,7 @@ async function handleLogin() {
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/';
     await router.replace(redirect);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '登录失败';
+    errorMessage.value = getErrorMessage(error, '登录失败');
   } finally {
     submitting.value = false;
   }
@@ -112,4 +113,3 @@ async function handleLogin() {
     </form>
   </section>
 </template>
-

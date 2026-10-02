@@ -4,7 +4,23 @@ import java.time.LocalDateTime;
 import java.util.Objects;
 
 /**
- * A denormalized shop document stored in the search projection.
+ * 存入搜索投影的反规范化店铺文档，避免查询时再跨表组装分类与地理信息。
+ *
+ * @param id 店铺主键，同时作为 Elasticsearch 文档 ID
+ * @param name 店铺名称
+ * @param typeId 分类主键
+ * @param typeName 分类名称
+ * @param area 所在区域
+ * @param address 详细地址
+ * @param longitude 经度
+ * @param latitude 纬度
+ * @param avgPrice 人均价格
+ * @param score 评分
+ * @param sold 销量
+ * @param openHours 营业时间文本
+ * @param geoStatus 地理编码状态
+ * @param updateTime 权威数据更新时间
+ * @param projectionVersion 外部版本号，防止旧投影覆盖新数据
  */
 public record ShopSearchDocument(
         Long id,
@@ -23,6 +39,7 @@ public record ShopSearchDocument(
         LocalDateTime updateTime,
         Long projectionVersion) {
 
+    /** 规范化可选文本，并校验 ID、坐标和投影版本满足索引合同。 */
     public ShopSearchDocument {
         Objects.requireNonNull(id, "id must not be null");
         if (id <= 0) {
@@ -46,6 +63,7 @@ public record ShopSearchDocument(
         }
     }
 
+    /** @return 新的文档构建器 */
     public static Builder builder() {
         return new Builder();
     }
@@ -66,6 +84,7 @@ public record ShopSearchDocument(
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    /** 收集店铺投影字段，最终由 record 构造器完成统一校验。 */
     public static final class Builder {
         private Long id;
         private String name;
@@ -102,6 +121,7 @@ public record ShopSearchDocument(
         public Builder updateTime(LocalDateTime value) { this.updateTime = value; return this; }
         public Builder projectionVersion(Long value) { this.projectionVersion = value; return this; }
 
+        /** @return 经过规范化与校验的不可变搜索文档 */
         public ShopSearchDocument build() {
             return new ShopSearchDocument(id, name, typeId, typeName, area, address, longitude, latitude,
                     avgPrice, score, sold, openHours, geoStatus, updateTime, projectionVersion);

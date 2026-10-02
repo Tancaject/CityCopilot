@@ -1,0 +1,321 @@
+{
+  "schemaVersion": 1,
+  "evidenceDate": "2026-09-10",
+  "scope": "local_agent_http_real_provider_acceptance",
+  "status": "FAILED_PROVIDER_UNAVAILABLE",
+  "realModelAcceptance": "TODO_USER_APPROVED",
+  "decision": "User explicitly deferred real-model acceptance; no further provider retries are authorized in this run.",
+  "provider": "agent-http",
+  "model": "qwen-plus",
+  "casesDefinition": "backend/eval/src/main/resources/cases/booking-v1.yaml",
+  "fixture": {
+    "shopIds": [
+      "90001",
+      "90002"
+    ],
+    "selectedResourceIds": [
+      "2",
+      "3"
+    ],
+    "bookingDate": "2026-09-11",
+    "timezone": "Asia/Shanghai"
+  },
+  "summary": {
+    "cases": 8,
+    "passed": 0,
+    "failed": 8,
+    "averageRunnerLatencyMs": 513,
+    "providerUsage": {
+      "calls": 15,
+      "successfulCalls": 0,
+      "fallbackCalls": 15,
+      "usageResponses": 0,
+      "usageComplete": false,
+      "inputTokens": null,
+      "outputTokens": null
+    },
+    "bookingWrites": 0
+  },
+  "diagnostics": {
+    "evaluationMetrics": [
+      {
+        "operation": "completion",
+        "outcome": "error",
+        "calls": 5
+      },
+      {
+        "operation": "decision",
+        "outcome": "error",
+        "calls": 5
+      },
+      {
+        "operation": "stream",
+        "outcome": "error",
+        "calls": 5
+      }
+    ],
+    "minimumProviderProbe": {
+      "separateFromEvaluationCounters": true,
+      "httpStatus": 403,
+      "errorCode": "AllocationQuota.FreeTierOnly",
+      "usage": null
+    },
+    "credentialsChanged": false,
+    "rawProviderErrorMessageRetained": false
+  },
+  "interpretation": [
+    "No successful provider response or provider token usage was observed; null tokens mean unavailable, not zero usage.",
+    "The 64 average estimated tokens in the legacy report are estimates and are not provider usage.",
+    "Mode ANY and absent keyword assertions explain the legacy 100% mode and keyword rates; they do not establish semantic acceptance.",
+    "Both explicit-approval cases were rejected before approval because real-provider and structured-plan checks failed; no HOLD or CONFIRM was submitted.",
+    "Six read-only cases have unchanged empty booking lists. The two approval cases stopped before a post-approval query, so their after counts are null.",
+    "These results do not establish one-sentence-to-booking capability or production readiness."
+  ],
+  "reportSource": ".tools/booking-runtime/agent-eval.md",
+  "reportSourceSha256": "6b37352978f6763d2aa58462e4065fa029b4acdee8ff52cd23bcf7ed6bddc8d3",
+  "cases": [
+    {
+      "id": "booking_court_options",
+      "passed": false,
+      "mode": "PLAN_EXECUTE",
+      "expectedTools": [
+        "search_bookable_options"
+      ],
+      "actualTools": [
+        "search_nearby_shops"
+      ],
+      "runnerLatencyMs": 2052,
+      "agentLatencyMs": 1273,
+      "usage": {
+        "model": "qwen-plus",
+        "calls": 2,
+        "successfulCalls": 0,
+        "fallbackCalls": 2,
+        "usageResponses": 0,
+        "usageComplete": false,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "failureSummary": "tool_mismatch,real_provider_not_verified,plan_status_mismatch",
+      "executionError": null,
+      "bookingCountBefore": 0,
+      "bookingCountAfter": 0,
+      "explicitApprovalAttempted": false,
+      "source": ".tools/booking-runtime/eval-evidence/booking_court_options.json",
+      "sourceSha256": "f8c0f7a9d70ce37a58d7bd1f07d1036425309e3656320c2aa89afdede206b091"
+    },
+    {
+      "id": "booking_dining_per_person_budget",
+      "passed": false,
+      "mode": "REACT",
+      "expectedTools": [
+        "search_bookable_options"
+      ],
+      "actualTools": [
+        "search_nearby_shops"
+      ],
+      "runnerLatencyMs": 357,
+      "agentLatencyMs": 232,
+      "usage": {
+        "model": "qwen-plus",
+        "calls": 2,
+        "successfulCalls": 0,
+        "fallbackCalls": 2,
+        "usageResponses": 0,
+        "usageComplete": false,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "failureSummary": "tool_mismatch,real_provider_not_verified,plan_status_mismatch",
+      "executionError": null,
+      "bookingCountBefore": 0,
+      "bookingCountAfter": 0,
+      "explicitApprovalAttempted": false,
+      "source": ".tools/booking-runtime/eval-evidence/booking_dining_per_person_budget.json",
+      "sourceSha256": "94de1c9e54bdf9c376281ca0cfc5e0cbb50875f7be57af850aec37541561f030"
+    },
+    {
+      "id": "booking_missing_date",
+      "passed": false,
+      "mode": "PLAN_EXECUTE",
+      "expectedTools": [
+        "search_bookable_options"
+      ],
+      "actualTools": [
+        "search_nearby_shops"
+      ],
+      "runnerLatencyMs": 317,
+      "agentLatencyMs": 205,
+      "usage": {
+        "model": "qwen-plus",
+        "calls": 2,
+        "successfulCalls": 0,
+        "fallbackCalls": 2,
+        "usageResponses": 0,
+        "usageComplete": false,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "failureSummary": "tool_mismatch,real_provider_not_verified,plan_status_mismatch",
+      "executionError": null,
+      "bookingCountBefore": 0,
+      "bookingCountAfter": 0,
+      "explicitApprovalAttempted": false,
+      "source": ".tools/booking-runtime/eval-evidence/booking_missing_date.json",
+      "sourceSha256": "8c593564b3042a3d462a8c35a2555af39bf661de9a9a11e684957feb88751edf"
+    },
+    {
+      "id": "booking_missing_party_size",
+      "passed": false,
+      "mode": "PLAN_EXECUTE",
+      "expectedTools": [
+        "search_bookable_options"
+      ],
+      "actualTools": [
+        "search_nearby_shops"
+      ],
+      "runnerLatencyMs": 323,
+      "agentLatencyMs": 230,
+      "usage": {
+        "model": "qwen-plus",
+        "calls": 2,
+        "successfulCalls": 0,
+        "fallbackCalls": 2,
+        "usageResponses": 0,
+        "usageComplete": false,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "failureSummary": "tool_mismatch,real_provider_not_verified,plan_status_mismatch",
+      "executionError": null,
+      "bookingCountBefore": 0,
+      "bookingCountAfter": 0,
+      "explicitApprovalAttempted": false,
+      "source": ".tools/booking-runtime/eval-evidence/booking_missing_party_size.json",
+      "sourceSha256": "9b96bb3b5871b782eaac93b595acbfa2fb2ce34dab602b48417fdd62a2195394"
+    },
+    {
+      "id": "booking_ambiguous_budget",
+      "passed": false,
+      "mode": "REACT",
+      "expectedTools": [
+        "search_bookable_options"
+      ],
+      "actualTools": [
+        "search_nearby_shops"
+      ],
+      "runnerLatencyMs": 321,
+      "agentLatencyMs": 230,
+      "usage": {
+        "model": "qwen-plus",
+        "calls": 2,
+        "successfulCalls": 0,
+        "fallbackCalls": 2,
+        "usageResponses": 0,
+        "usageComplete": false,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "failureSummary": "tool_mismatch,real_provider_not_verified,plan_status_mismatch",
+      "executionError": null,
+      "bookingCountBefore": 0,
+      "bookingCountAfter": 0,
+      "explicitApprovalAttempted": false,
+      "source": ".tools/booking-runtime/eval-evidence/booking_ambiguous_budget.json",
+      "sourceSha256": "b4afffe6705e0427f42c20be05cf0ef7974bd3514958b7b0517e942aeb83e5f3"
+    },
+    {
+      "id": "booking_no_match_under_one_cent",
+      "passed": false,
+      "mode": "REACT",
+      "expectedTools": [
+        "search_bookable_options"
+      ],
+      "actualTools": [],
+      "runnerLatencyMs": 176,
+      "agentLatencyMs": 90,
+      "usage": {
+        "model": "qwen-plus",
+        "calls": 1,
+        "successfulCalls": 0,
+        "fallbackCalls": 1,
+        "usageResponses": 0,
+        "usageComplete": false,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "failureSummary": "tool_mismatch,real_provider_not_verified,plan_status_mismatch",
+      "executionError": null,
+      "bookingCountBefore": 0,
+      "bookingCountAfter": 0,
+      "explicitApprovalAttempted": false,
+      "source": ".tools/booking-runtime/eval-evidence/booking_no_match_under_one_cent.json",
+      "sourceSha256": "a8257a33be41c71cd5bcf34e15f6c44cf23e9429350282bcae2a2123d5ebd93b"
+    },
+    {
+      "id": "booking_court_explicit_user_approvals",
+      "passed": false,
+      "mode": "PLAN_EXECUTE",
+      "expectedTools": [
+        "search_bookable_options"
+      ],
+      "actualTools": [
+        "search_nearby_shops"
+      ],
+      "runnerLatencyMs": 274,
+      "agentLatencyMs": 202,
+      "usage": {
+        "model": "qwen-plus",
+        "calls": 2,
+        "successfulCalls": 0,
+        "fallbackCalls": 2,
+        "usageResponses": 0,
+        "usageComplete": false,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "failureSummary": "tool_mismatch,booking_transport_or_execution_error:review_rejected_before_user_approval:real_provider_not_verified,plan_status_mismatch,real_provider_not_verified,plan_status_mismatch,final_booking_status_mismatch",
+      "executionError": "review_rejected_before_user_approval:real_provider_not_verified,plan_status_mismatch",
+      "bookingCountBefore": 0,
+      "bookingCountAfter": null,
+      "explicitApprovalAttempted": false,
+      "source": ".tools/booking-runtime/eval-evidence/booking_court_explicit_user_approvals.json",
+      "sourceSha256": "7e1ef82ce6e63880992559f21966f8b30eb4aa8e80a2b512aee6b93e15d4a3e5"
+    },
+    {
+      "id": "booking_dining_explicit_user_approvals",
+      "passed": false,
+      "mode": "PLAN_EXECUTE",
+      "expectedTools": [
+        "search_bookable_options"
+      ],
+      "actualTools": [
+        "search_nearby_shops"
+      ],
+      "runnerLatencyMs": 284,
+      "agentLatencyMs": 214,
+      "usage": {
+        "model": "qwen-plus",
+        "calls": 2,
+        "successfulCalls": 0,
+        "fallbackCalls": 2,
+        "usageResponses": 0,
+        "usageComplete": false,
+        "inputTokens": null,
+        "outputTokens": null
+      },
+      "failureSummary": "tool_mismatch,booking_transport_or_execution_error:review_rejected_before_user_approval:real_provider_not_verified,plan_status_mismatch,real_provider_not_verified,plan_status_mismatch,final_booking_status_mismatch",
+      "executionError": "review_rejected_before_user_approval:real_provider_not_verified,plan_status_mismatch",
+      "bookingCountBefore": 0,
+      "bookingCountAfter": null,
+      "explicitApprovalAttempted": false,
+      "source": ".tools/booking-runtime/eval-evidence/booking_dining_explicit_user_approvals.json",
+      "sourceSha256": "9124e604b92bc9643fea4bc7423d210ecbd3a4dd67db2134476eaf0ea103853e"
+    }
+  ],
+  "remainingAcceptance": [
+    "After provider availability is restored and the user resumes acceptance, rerun the existing eight-case suite with fresh fixture dates and isolated resources.",
+    "Require structured clarifications/options and hard constraints, separate explicit HOLD and CONFIRM approval, queried CONFIRMED status, and preserved booking price.",
+    "Record actual provider successful/fallback counters, returned token usage availability, and independent latency; keep failed runs as failed evidence."
+  ]
+}

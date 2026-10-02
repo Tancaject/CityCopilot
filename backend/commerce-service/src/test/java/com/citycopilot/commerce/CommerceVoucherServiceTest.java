@@ -1,5 +1,6 @@
 package com.citycopilot.commerce;
 
+import com.citycopilot.contract.commerce.CommerceContracts.VoucherCreated;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -88,7 +89,7 @@ class CommerceVoucherServiceTest {
         when(ids.nextVoucherId()).thenReturn(123L);
         CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata);
 
-        long created = service.create(Map.of(
+        VoucherCreated created = service.create(Map.of(
                 "shopId", 1L,
                 "title", "Valid",
                 "payValue", 50,
@@ -99,7 +100,7 @@ class CommerceVoucherServiceTest {
                 "endTime", "2026-07-31T00:00:00Z"
         ), 7L, true);
 
-        assertThat(created).isEqualTo(123L);
+        assertThat(created.id()).isEqualTo(123L);
         verify(ids).nextVoucherId();
         verify(inventory).initializeNewVoucher(123L, 10);
         verify(metadata).refreshAfterCommit(123L);

@@ -152,6 +152,7 @@ class ElasticsearchShopSearchGatewayTest {
         private boolean failIndex;
         private boolean failBulk;
         private String aliasRemovalPattern;
+        private String activeIndex;
 
         @Override
         public boolean aliasExists(String alias) {
@@ -197,6 +198,17 @@ class ElasticsearchShopSearchGatewayTest {
             aliasRemovalPattern = previousIndexPattern;
             operations.add("alias:" + alias + "->" + newIndex);
             aliasExists = true;
+            activeIndex = newIndex;
+        }
+
+        @Override
+        public List<String> aliasTargets(String alias) {
+            return activeIndex == null ? List.of() : List.of(activeIndex);
+        }
+
+        @Override
+        public boolean deleteUnaliasedIndex(String index) {
+            return !index.equals(activeIndex);
         }
     }
 }

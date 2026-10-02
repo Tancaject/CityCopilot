@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { MapPinned, Navigation } from '@lucide/vue';
 import { hasAmapKey, loadAmap } from '../utils/amap';
+import { getErrorMessage } from '../utils/errors';
 
 const props = defineProps<{
   x?: number;
@@ -53,7 +54,7 @@ async function renderMap() {
     });
     mapReady.value = true;
   } catch (error) {
-    mapError.value = error instanceof Error ? error.message : '地图加载失败';
+    mapError.value = getErrorMessage(error, '地图加载失败');
   }
 }
 

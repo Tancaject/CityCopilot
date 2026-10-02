@@ -3,7 +3,7 @@ package com.citycopilot.core.service.discovery;
 import com.citycopilot.core.config.GeoProperties;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.ShopDiscoveryItemDTO;
-import com.citycopilot.core.entity.Shop;
+import com.citycopilot.core.dto.ShopViewDTO;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -30,9 +30,9 @@ class LegacyShopGeoQueryAdapterTest {
 
         assertTrue(result.getSuccess());
         @SuppressWarnings("unchecked")
-        List<Shop> shops = (List<Shop>) result.getData();
-        assertEquals(List.of(1L, 2L), shops.stream().map(Shop::getId).toList());
-        assertEquals(10D, shops.get(0).getDistance());
+        List<ShopViewDTO> shops = (List<ShopViewDTO>) result.getData();
+        assertEquals(List.of(1L, 2L), shops.stream().map(ShopViewDTO::id).toList());
+        assertEquals(10D, shops.get(0).distance());
         verify(provider).discover(any(ShopDiscoveryQuery.class));
     }
 
@@ -57,7 +57,7 @@ class LegacyShopGeoQueryAdapterTest {
 
         assertTrue(result.getSuccess());
         @SuppressWarnings("unchecked")
-        List<Shop> shops = (List<Shop>) result.getData();
+        List<ShopViewDTO> shops = (List<ShopViewDTO>) result.getData();
         assertTrue(shops.isEmpty());
     }
 

@@ -1,7 +1,19 @@
 package com.citycopilot.search;
 
 /**
- * Search criteria. Category preference affects ranking only; it is never a hard filter.
+ * 店铺搜索条件；偏好分类只影响排序，不会作为硬过滤条件排除其他店铺。
+ *
+ * @param keyword 匹配店名、分类、区域和地址的关键词
+ * @param preferredCategory 用于相关度加权的偏好分类
+ * @param typeId 必须匹配的店铺分类主键
+ * @param minAvgPrice 最低人均价格
+ * @param maxAvgPrice 最高人均价格
+ * @param minScore 最低评分
+ * @param longitude 距离检索中心经度
+ * @param latitude 距离检索中心纬度
+ * @param radiusMeters 检索半径，单位米
+ * @param offset 分页起始偏移量
+ * @param size 请求页大小
  */
 public record ShopSearchRequest(
         String keyword,
@@ -16,8 +28,10 @@ public record ShopSearchRequest(
         int offset,
         int size) {
 
+    /** Builder 未指定页大小时使用的默认值。 */
     public static final int DEFAULT_SIZE = 20;
 
+    /** 规范化文本并校验价格、分页和 GEO 参数必须成组且处于有效范围。 */
     public ShopSearchRequest {
         keyword = trimToNull(keyword);
         preferredCategory = trimToNull(preferredCategory);
@@ -52,6 +66,7 @@ public record ShopSearchRequest(
         }
     }
 
+    /** @return 新的可变构建器，最终由 record 构造器统一校验 */
     public static Builder builder() {
         return new Builder();
     }
@@ -64,6 +79,7 @@ public record ShopSearchRequest(
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    /** 收集可选搜索条件，避免调用点使用冗长的 record 构造参数列表。 */
     public static final class Builder {
         private String keyword;
         private String preferredCategory;
@@ -92,6 +108,7 @@ public record ShopSearchRequest(
         public Builder offset(int value) { this.offset = value; return this; }
         public Builder size(int value) { this.size = value; return this; }
 
+        /** @return 完成校验并创建不可变搜索请求 */
         public ShopSearchRequest build() {
             return new ShopSearchRequest(keyword, preferredCategory, typeId, minAvgPrice, maxAvgPrice,
                     minScore, longitude, latitude, radiusMeters, offset, size);

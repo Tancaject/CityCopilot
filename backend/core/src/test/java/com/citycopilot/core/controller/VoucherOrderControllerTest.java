@@ -84,7 +84,7 @@ class VoucherOrderControllerTest {
         ResponseEntity<Result> response = controller.commerceFailure(error);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(response.getHeaders().containsKey(HttpHeaders.RETRY_AFTER)).isFalse();
+        assertThat(response.getHeaders().containsHeader(HttpHeaders.RETRY_AFTER)).isFalse();
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().getCode()).isEqualTo("SECKILL_STOCK_NOT_ENOUGH");
         assertThat(response.getBody().getErrorMsg()).isEqualTo("Voucher stock exhausted");

@@ -1,11 +1,8 @@
 package com.citycopilot.commerce;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.inOrder;
@@ -16,8 +13,6 @@ class CommerceOrderAdmissionLeaseTest {
     @Test
     void shardLeaseAndRoutingRecheckBothPrecedeDurablePrepare() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        StringRedisTemplate redis = mock(StringRedisTemplate.class);
-        TransactionTemplate transactions = mock(TransactionTemplate.class);
         CommerceOrderIdGenerator ids = mock(CommerceOrderIdGenerator.class);
         CommerceAdmissionDurabilityService durableAdmissions =
                 mock(CommerceAdmissionDurabilityService.class);
@@ -36,25 +31,17 @@ class CommerceOrderAdmissionLeaseTest {
         )).thenReturn(durable);
         when(durable.wasAccepted()).thenReturn(true);
         when(durable.orderId()).thenReturn(300L);
-        CommerceOrderService service = new CommerceOrderService(
+        CommerceOrderAdmissionService service = new CommerceOrderAdmissionService(
                 jdbc,
-                redis,
-                transactions,
-                new ObjectMapper(),
                 ids,
                 durableAdmissions,
                 replicatedRedis,
                 new CommerceRedisKeyspace(2, "v1"),
                 runtimeLeases,
-                routing,
-                "test",
-                false,
-                100,
-                10
+                routing
         );
 
-        assertThat(service.seckill(100L, 200L, "request-1"))
-                .containsEntry("orderId", "300");
+        assertThat(service.seckill(100L, 200L, "request-1").orderId()).isEqualTo("300");
 
         InOrder order = inOrder(runtimeLeases, routing, durableAdmissions, lease);
         order.verify(runtimeLeases).acquireAdmission(100L);

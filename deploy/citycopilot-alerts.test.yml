@@ -1,0 +1,155 @@
+rule_files: [citycopilot-alerts.yml]
+evaluation_interval: 15s
+tests:
+  - name: "scrape failure waits then resolves"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-agent\",instance=\"agent:8082\"}", "values": "1 0x3 1x2"}
+    alert_rule_test:
+      - {"eval_time": "2m", "alertname": "CityCopilotTargetDown", "exp_alerts": []}
+      - {"eval_time": "3m", "alertname": "CityCopilotTargetDown", "exp_alerts": [{"exp_labels": {"job": "citycopilot-agent", "instance": "agent:8082", "severity": "critical"}, "exp_annotations": {"summary": "CityCopilot 服务指标连续抓取失败", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#target-down"}}]}
+      - {"eval_time": "5m", "alertname": "CityCopilotTargetDown", "exp_alerts": []}
+  - name: "shared queue replicas use max and recover after backlog drains"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-core\",instance=\"core-a:8081\",projection_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_shop_projection_oldest_age_seconds{job=\"citycopilot-core\",instance=\"core-a:8081\",projection_role=\"true\"}", "values": "80 80 180x5 0x2"}
+      - {"series": "up{job=\"citycopilot-core\",instance=\"core-b:8081\",projection_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_shop_projection_oldest_age_seconds{job=\"citycopilot-core\",instance=\"core-b:8081\",projection_role=\"true\"}", "values": "80x10"}
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"commerce-a:8083\",outbox_relay_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_commerce_outbox_oldest_ready_age_seconds{job=\"citycopilot-commerce\",instance=\"commerce-a:8083\",outbox_relay_role=\"true\"}", "values": "80 80 180x5 0x2"}
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"commerce-b:8083\",outbox_relay_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_commerce_outbox_oldest_ready_age_seconds{job=\"citycopilot-commerce\",instance=\"commerce-b:8083\",outbox_relay_role=\"true\"}", "values": "80x10"}
+      - {"series": "citycopilot_shop_projection_sample_timestamp_seconds{job=\"citycopilot-core\",instance=\"core-a:8081\",projection_role=\"true\"}", "values": "1+60x10"}
+      - {"series": "citycopilot_shop_projection_sample_timestamp_seconds{job=\"citycopilot-core\",instance=\"core-b:8081\",projection_role=\"true\"}", "values": "1+60x10"}
+    alert_rule_test:
+      - {"eval_time": "6m", "alertname": "CityCopilotCommerceOutboxAge", "exp_alerts": []}
+      - {"eval_time": "7m", "alertname": "CityCopilotCommerceOutboxAge", "exp_alerts": [{"exp_labels": {"job": "citycopilot-commerce", "queue": "commerce-outbox", "severity": "warning"}, "exp_annotations": {"summary": "Commerce 最老未发布事件持续超时", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#commerce-outbox"}}]}
+      - {"eval_time": "8m", "alertname": "CityCopilotCommerceOutboxAge", "exp_alerts": []}
+      - {"eval_time": "6m", "alertname": "CityCopilotShopProjectionAge", "exp_alerts": []}
+      - {"eval_time": "7m", "alertname": "CityCopilotShopProjectionAge", "exp_alerts": [{"exp_labels": {"job": "citycopilot-core", "queue": "shop-projection", "severity": "warning"}, "exp_annotations": {"summary": "店铺搜索与 GEO 投影积压持续超时", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#shop-projection"}}]}
+      - {"eval_time": "8m", "alertname": "CityCopilotShopProjectionAge", "exp_alerts": []}
+  - name: "stale zero and absent samples alert without using old queue ages"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-core\",instance=\"stale:8081\",projection_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_shop_projection_sample_timestamp_seconds{job=\"citycopilot-core\",instance=\"stale:8081\",projection_role=\"true\"}", "values": "1x5 361+60x4"}
+      - {"series": "citycopilot_shop_projection_oldest_age_seconds{job=\"citycopilot-core\",instance=\"stale:8081\",projection_role=\"true\"}", "values": "300x10"}
+      - {"series": "up{job=\"citycopilot-core\",instance=\"never:8081\",projection_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_shop_projection_sample_timestamp_seconds{job=\"citycopilot-core\",instance=\"never:8081\",projection_role=\"true\"}", "values": "0x5 361+60x4"}
+      - {"series": "citycopilot_shop_projection_oldest_age_seconds{job=\"citycopilot-core\",instance=\"never:8081\",projection_role=\"true\"}", "values": "300x10"}
+      - {"series": "up{job=\"citycopilot-core\",instance=\"missing:8081\",projection_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_shop_projection_sample_timestamp_seconds{job=\"citycopilot-core\",instance=\"missing:8081\",projection_role=\"true\"}", "values": "_ _ _ _ _ _ 361+60x4"}
+      - {"series": "citycopilot_shop_projection_oldest_age_seconds{job=\"citycopilot-core\",instance=\"missing:8081\",projection_role=\"true\"}", "values": "300x10"}
+      - {"series": "up{job=\"citycopilot-core\",instance=\"api-only:8081\"}", "values": "1x10"}
+      - {"series": "up{job=\"citycopilot-core\",instance=\"down:8081\",projection_role=\"true\"}", "values": "0x10"}
+    alert_rule_test:
+      - {"eval_time": "1m", "alertname": "CityCopilotProjectionSampleStale", "exp_alerts": []}
+      - {"eval_time": "4m", "alertname": "CityCopilotProjectionSampleStale", "exp_alerts": [{"exp_labels": {"job": "citycopilot-core", "instance": "stale:8081", "projection_role": "true", "severity": "warning"}, "exp_annotations": {"summary": "店铺投影积压采样失鲜或缺失", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable"}}, {"exp_labels": {"job": "citycopilot-core", "instance": "never:8081", "projection_role": "true", "severity": "warning"}, "exp_annotations": {"summary": "店铺投影积压采样失鲜或缺失", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable"}}, {"exp_labels": {"job": "citycopilot-core", "instance": "missing:8081", "projection_role": "true", "severity": "warning"}, "exp_annotations": {"summary": "店铺投影积压采样失鲜或缺失", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable"}}]}
+      - {"eval_time": "6m", "alertname": "CityCopilotProjectionSampleStale", "exp_alerts": []}
+      - {"eval_time": "5m", "alertname": "CityCopilotShopProjectionAge", "exp_alerts": []}
+  - name: "outbox NaN or missing metrics alert only on expected live relay roles"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"nan:8083\",outbox_relay_role=\"true\"}", "values": "1x6"}
+      - {"series": "citycopilot_commerce_outbox_oldest_ready_age_seconds{job=\"citycopilot-commerce\",instance=\"nan:8083\",outbox_relay_role=\"true\"}", "values": "NaN NaN NaN 0x3"}
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"missing:8083\",outbox_relay_role=\"true\"}", "values": "1x6"}
+      - {"series": "citycopilot_commerce_outbox_oldest_ready_age_seconds{job=\"citycopilot-commerce\",instance=\"missing:8083\",outbox_relay_role=\"true\"}", "values": "_ _ _ 0x3"}
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"api-only:8083\"}", "values": "1x6"}
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"down:8083\",outbox_relay_role=\"true\"}", "values": "0x6"}
+    alert_rule_test:
+      - {"eval_time": "1m", "alertname": "CityCopilotOutboxMetricUnavailable", "exp_alerts": []}
+      - {"eval_time": "2m", "alertname": "CityCopilotOutboxMetricUnavailable", "exp_alerts": [{"exp_labels": {"job": "citycopilot-commerce", "instance": "nan:8083", "outbox_relay_role": "true", "severity": "warning"}, "exp_annotations": {"summary": "Commerce Outbox 指标缺失或采样失败", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable"}}, {"exp_labels": {"job": "citycopilot-commerce", "instance": "missing:8083", "outbox_relay_role": "true", "severity": "warning"}, "exp_annotations": {"summary": "Commerce Outbox 指标缺失或采样失败", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable"}}]}
+      - {"eval_time": "3m", "alertname": "CityCopilotOutboxMetricUnavailable", "exp_alerts": []}
+      - {"eval_time": "2m", "alertname": "CityCopilotCommerceOutboxAge", "exp_alerts": []}
+  - name: "order completion uses durable backlog across replicas and recovers"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"commerce-a:8083\"}", "values": "1x10"}
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"commerce-b:8083\"}", "values": "1x10"}
+      - {"series": "citycopilot_commerce_order_pending_oldest_age_seconds{job=\"citycopilot-commerce\",instance=\"commerce-a:8083\"}", "values": "80 80 180x5 0x2"}
+      - {"series": "citycopilot_commerce_order_pending_oldest_age_seconds{job=\"citycopilot-commerce\",instance=\"commerce-b:8083\"}", "values": "80x10"}
+      - {"series": "citycopilot_commerce_order_repair_required{job=\"citycopilot-commerce\",instance=\"commerce-a:8083\"}", "values": "0 0 1x5 0x2"}
+      - {"series": "citycopilot_commerce_order_repair_required{job=\"citycopilot-commerce\",instance=\"commerce-b:8083\"}", "values": "0x10"}
+      - {"series": "citycopilot_commerce_order_completion_sample_timestamp_seconds{job=\"citycopilot-commerce\",instance=\"commerce-a:8083\"}", "values": "1+60x10"}
+      - {"series": "citycopilot_commerce_order_completion_sample_timestamp_seconds{job=\"citycopilot-commerce\",instance=\"commerce-b:8083\"}", "values": "1+60x10"}
+    alert_rule_test:
+      - {"eval_time": "6m", "alertname": "CityCopilotOrderCompletionAge", "exp_alerts": []}
+      - {"eval_time": "7m", "alertname": "CityCopilotOrderCompletionAge", "exp_alerts": [{"exp_labels": {"job": "citycopilot-commerce", "queue": "commerce-admission", "severity": "warning"}, "exp_annotations": {"summary": "已受理订单持续未完成持久化", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#order-completion"}}]}
+      - {"eval_time": "8m", "alertname": "CityCopilotOrderCompletionAge", "exp_alerts": []}
+      - {"eval_time": "3m", "alertname": "CityCopilotAdmissionRepairRequired", "exp_alerts": []}
+      - {"eval_time": "4m", "alertname": "CityCopilotAdmissionRepairRequired", "exp_alerts": [{"exp_labels": {"job": "citycopilot-commerce", "queue": "commerce-admission", "severity": "critical"}, "exp_annotations": {"summary": "订单准入账本存在需要人工修复的记录", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#order-completion"}}]}
+      - {"eval_time": "8m", "alertname": "CityCopilotAdmissionRepairRequired", "exp_alerts": []}
+  - name: "order completion stale zero and missing samples cannot hide behind healthy scrape"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"stale:8083\"}", "values": "1x10"}
+      - {"series": "citycopilot_commerce_order_completion_sample_timestamp_seconds{job=\"citycopilot-commerce\",instance=\"stale:8083\"}", "values": "1x5 361+60x4"}
+      - {"series": "citycopilot_commerce_order_pending_oldest_age_seconds{job=\"citycopilot-commerce\",instance=\"stale:8083\"}", "values": "300x10"}
+      - {"series": "citycopilot_commerce_order_repair_required{job=\"citycopilot-commerce\",instance=\"stale:8083\"}", "values": "1x10"}
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"never:8083\"}", "values": "1x10"}
+      - {"series": "citycopilot_commerce_order_completion_sample_timestamp_seconds{job=\"citycopilot-commerce\",instance=\"never:8083\"}", "values": "0x5 361+60x4"}
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"missing:8083\"}", "values": "1x10"}
+      - {"series": "citycopilot_commerce_order_completion_sample_timestamp_seconds{job=\"citycopilot-commerce\",instance=\"missing:8083\"}", "values": "_ _ _ _ _ _ 361+60x4"}
+      - {"series": "up{job=\"citycopilot-commerce\",instance=\"down:8083\"}", "values": "0x10"}
+    alert_rule_test:
+      - {"eval_time": "1m", "alertname": "CityCopilotOrderCompletionSampleStale", "exp_alerts": []}
+      - {"eval_time": "4m", "alertname": "CityCopilotOrderCompletionSampleStale", "exp_alerts": [{"exp_labels": {"job": "citycopilot-commerce", "instance": "stale:8083", "severity": "warning"}, "exp_annotations": {"summary": "订单持久化完成指标采样失鲜或缺失", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable"}}, {"exp_labels": {"job": "citycopilot-commerce", "instance": "never:8083", "severity": "warning"}, "exp_annotations": {"summary": "订单持久化完成指标采样失鲜或缺失", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable"}}, {"exp_labels": {"job": "citycopilot-commerce", "instance": "missing:8083", "severity": "warning"}, "exp_annotations": {"summary": "订单持久化完成指标采样失鲜或缺失", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable"}}]}
+      - {"eval_time": "6m", "alertname": "CityCopilotOrderCompletionSampleStale", "exp_alerts": []}
+      - {"eval_time": "5m", "alertname": "CityCopilotOrderCompletionAge", "exp_alerts": []}
+      - {"eval_time": "4m", "alertname": "CityCopilotAdmissionRepairRequired", "exp_alerts": []}
+  - name: "booking projection idle is unknown without pretending delay is zero or declaring an outage"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-core\",instance=\"quiet:8081\",booking_projection_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_booking_projection_consumer_active{job=\"citycopilot-core\",instance=\"quiet:8081\",booking_projection_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_booking_projection_last_commit_seconds{job=\"citycopilot-core\",instance=\"quiet:8081\",booking_projection_role=\"true\"}", "values": "0x10"}
+      - {"series": "citycopilot_booking_projection_last_delay_seconds{job=\"citycopilot-core\",instance=\"quiet:8081\",booking_projection_role=\"true\"}", "values": "NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN"}
+      - {"series": "citycopilot_booking_business_consume_total{job=\"citycopilot-core\",instance=\"quiet:8081\",booking_projection_role=\"true\",outcome=\"failure\"}", "values": "0x10"}
+      - {"series": "citycopilot_booking_projection_clock_skew_total{job=\"citycopilot-core\",instance=\"quiet:8081\",booking_projection_role=\"true\"}", "values": "0x10"}
+      - {"series": "up{job=\"citycopilot-core\",instance=\"disabled:8081\",booking_projection_role=\"false\"}", "values": "1x10"}
+      - {"series": "citycopilot_booking_projection_consumer_active{job=\"citycopilot-core\",instance=\"disabled:8081\",booking_projection_role=\"false\"}", "values": "0x10"}
+    alert_rule_test:
+      - {"eval_time": "10m", "alertname": "CityCopilotBookingProjectionConsumerUnavailable", "exp_alerts": []}
+      - {"eval_time": "10m", "alertname": "CityCopilotBookingProjectionDelay", "exp_alerts": []}
+      - {"eval_time": "10m", "alertname": "CityCopilotBookingProjectionFailure", "exp_alerts": []}
+      - {"eval_time": "10m", "alertname": "CityCopilotBookingProjectionClockSkew", "exp_alerts": []}
+  - name: "booking projection missing or stopped consumer alerts only on expected live targets"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-core\",instance=\"stopped:8081\",booking_projection_role=\"true\"}", "values": "1x8"}
+      - {"series": "citycopilot_booking_projection_consumer_active{job=\"citycopilot-core\",instance=\"stopped:8081\",booking_projection_role=\"true\"}", "values": "0x3 1x4"}
+      - {"series": "citycopilot_booking_projection_last_commit_seconds{job=\"citycopilot-core\",instance=\"stopped:8081\",booking_projection_role=\"true\"}", "values": "0x8"}
+      - {"series": "up{job=\"citycopilot-core\",instance=\"missing:8081\",booking_projection_role=\"true\"}", "values": "1x8"}
+      - {"series": "citycopilot_booking_projection_consumer_active{job=\"citycopilot-core\",instance=\"missing:8081\",booking_projection_role=\"true\"}", "values": "_ _ _ _ 1x4"}
+      - {"series": "citycopilot_booking_projection_last_commit_seconds{job=\"citycopilot-core\",instance=\"missing:8081\",booking_projection_role=\"true\"}", "values": "_ _ _ _ 0x4"}
+      - {"series": "up{job=\"citycopilot-core\",instance=\"down:8081\",booking_projection_role=\"true\"}", "values": "0x8"}
+    alert_rule_test:
+      - {"eval_time": "1m", "alertname": "CityCopilotBookingProjectionConsumerUnavailable", "exp_alerts": []}
+      - {"eval_time": "2m", "alertname": "CityCopilotBookingProjectionConsumerUnavailable", "exp_alerts": [{"exp_labels": {"job": "citycopilot-core", "instance": "stopped:8081", "booking_projection_role": "true", "severity": "warning"}, "exp_annotations": {"summary": "应运行预约业务投影的实例未启动消费者或指标缺失", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#booking-projection"}}, {"exp_labels": {"job": "citycopilot-core", "instance": "missing:8081", "booking_projection_role": "true", "severity": "warning"}, "exp_annotations": {"summary": "应运行预约业务投影的实例未启动消费者或指标缺失", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#booking-projection"}}]}
+      - {"eval_time": "4m", "alertname": "CityCopilotBookingProjectionConsumerUnavailable", "exp_alerts": []}
+  - name: "booking projection failures quarantine clock skew and committed delay trigger then resolve"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-core\",instance=\"consumer:8081\",booking_projection_role=\"true\"}", "values": "1x8"}
+      - {"series": "citycopilot_booking_business_consume_total{job=\"citycopilot-core\",instance=\"consumer:8081\",booking_projection_role=\"true\",outcome=\"failure\"}", "values": "0 1x7"}
+      - {"series": "citycopilot_booking_business_consume_total{job=\"citycopilot-core\",instance=\"consumer:8081\",booking_projection_role=\"true\",outcome=\"quarantined\"}", "values": "0 0 1x6"}
+      - {"series": "citycopilot_booking_projection_clock_skew_total{job=\"citycopilot-core\",instance=\"consumer:8081\",booking_projection_role=\"true\"}", "values": "0 1x7"}
+      - {"series": "citycopilot_booking_projection_last_commit_seconds{job=\"citycopilot-core\",instance=\"consumer:8081\",booking_projection_role=\"true\"}", "values": "1+60x8"}
+      - {"series": "citycopilot_booking_projection_last_delay_seconds{job=\"citycopilot-core\",instance=\"consumer:8081\",booking_projection_role=\"true\"}", "values": "180x2 0x5"}
+    alert_rule_test:
+      - {"eval_time": "1m", "alertname": "CityCopilotBookingProjectionFailure", "exp_alerts": []}
+      - {"eval_time": "3m", "alertname": "CityCopilotBookingProjectionFailure", "exp_alerts": [{"exp_labels": {"job": "citycopilot-core", "severity": "warning"}, "exp_annotations": {"summary": "预约业务事件近期消费失败或发生载荷冲突隔离", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#booking-projection"}}]}
+      - {"eval_time": "7m", "alertname": "CityCopilotBookingProjectionFailure", "exp_alerts": []}
+      - {"eval_time": "3m", "alertname": "CityCopilotBookingProjectionClockSkew", "exp_alerts": [{"exp_labels": {"job": "citycopilot-core", "severity": "warning"}, "exp_annotations": {"summary": "预约事件发生时间晚于投影提交观测时间", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#booking-projection"}}]}
+      - {"eval_time": "7m", "alertname": "CityCopilotBookingProjectionClockSkew", "exp_alerts": []}
+      - {"eval_time": "2m", "alertname": "CityCopilotBookingProjectionDelay", "exp_alerts": [{"exp_labels": {"job": "citycopilot-core", "severity": "warning"}, "exp_annotations": {"summary": "新提交预约业务投影的事件发生至提交延迟过高", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#booking-projection"}}]}
+      - {"eval_time": "3m", "alertname": "CityCopilotBookingProjectionDelay", "exp_alerts": []}
+  - name: "booking projection old delay cannot masquerade as a fresh measurement"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-core\",instance=\"old:8081\",booking_projection_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_booking_projection_last_commit_seconds{job=\"citycopilot-core\",instance=\"old:8081\",booking_projection_role=\"true\"}", "values": "1x10"}
+      - {"series": "citycopilot_booking_projection_last_delay_seconds{job=\"citycopilot-core\",instance=\"old:8081\",booking_projection_role=\"true\"}", "values": "300x10"}
+    alert_rule_test:
+      - {"eval_time": "6m", "alertname": "CityCopilotBookingProjectionDelay", "exp_alerts": []}

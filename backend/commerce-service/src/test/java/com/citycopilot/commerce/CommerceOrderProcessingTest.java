@@ -1,6 +1,6 @@
 package com.citycopilot.commerce;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -14,6 +14,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,6 +45,8 @@ class CommerceOrderProcessingTest {
     private CommerceAdmissionDurabilityService durableAdmissions;
     private CommerceRedisReplicationExecutor replicatedRedis;
     private CommerceOrderService service;
+    private CommerceOrderAdmissionService admissions;
+    private CommerceOrderStreamWorker worker;
 
     @BeforeEach
     void setUp() {
@@ -52,18 +56,56 @@ class CommerceOrderProcessingTest {
         ids = mock(CommerceOrderIdGenerator.class);
         durableAdmissions = mock(CommerceAdmissionDurabilityService.class);
         replicatedRedis = mock(CommerceRedisReplicationExecutor.class);
-        service = new CommerceOrderService(
-                jdbc,
-                redis,
-                transactions,
-                new ObjectMapper(),
-                ids,
-                durableAdmissions,
-                replicatedRedis,
-                "test",
-                true,
-                10
-        );
+        var json = JsonMapper.builderWithJackson2Defaults().build();
+        var keyspace = new CommerceRedisKeyspace(1, "0");
+        var recovery = new CommerceOrderRecoveryStore(jdbc);
+        service = new CommerceOrderService(jdbc, redis, transactions, json, durableAdmissions,
+                keyspace, null, null, recovery);
+        admissions = new CommerceOrderAdmissionService(jdbc, ids, durableAdmissions, replicatedRedis,
+                keyspace, null, null);
+        worker = new CommerceOrderStreamWorker(jdbc, redis, transactions, json, durableAdmissions,
+                keyspace, null, service, admissions, recovery, "test", true, 10, 10);
+    }
+
+    @Test
+    void orderReservationOutboxAndAdmissionStayInsideOneTransactionCallback() {
+        AtomicBoolean inTransaction = new AtomicBoolean();
+        List<String> writes = new ArrayList<>();
+        doAnswer(invocation -> {
+            assertThat(inTransaction.compareAndSet(false, true)).isTrue();
+            try {
+                Consumer<TransactionStatus> callback = invocation.getArgument(0);
+                callback.accept(mock(TransactionStatus.class));
+            } finally {
+                inTransaction.set(false);
+            }
+            return null;
+        }).when(transactions).executeWithoutResult(any());
+        when(jdbc.update(anyString(), any(Object[].class))).thenAnswer(invocation -> {
+            assertThat(inTransaction).isTrue();
+            writes.add(invocation.getArgument(0));
+            return 1;
+        });
+        when(jdbc.queryForMap(contains("FROM commerce_voucher"), eq(100L))).thenReturn(Map.of(
+                "shop_id", 1L, "title", "券", "shop_name", "店", "pay_value", 100, "actual_value", 200));
+        doAnswer(invocation -> {
+            assertThat(inTransaction).isTrue();
+            writes.add("DURABLE_ORDER_CREATED");
+            return null;
+        }).when(durableAdmissions).markOrderCreated(300L, 100L, 200L, "request-1");
+
+        service.createOrder(SOURCE_ID, "claim-1", 300L, 100L, 200L, "request-1");
+
+        assertThat(writes).hasSize(8);
+        assertThat(writes.get(0)).contains("SET claimed_until=");
+        assertThat(writes.get(1)).contains("INSERT INTO commerce_reservation");
+        assertThat(writes.get(2)).contains("stock=stock-1");
+        assertThat(writes.get(3)).contains("INSERT INTO commerce_order(");
+        assertThat(writes.get(4)).contains("UPDATE commerce_reservation");
+        assertThat(writes.get(5)).contains("INSERT INTO commerce_outbox_event");
+        assertThat(writes.get(6)).isEqualTo("DURABLE_ORDER_CREATED");
+        assertThat(writes.get(7)).contains("terminal_at=CURRENT_TIMESTAMP");
+        verify(transactions).executeWithoutResult(any());
     }
 
     @Test
@@ -78,9 +120,9 @@ class CommerceOrderProcessingTest {
                 anyList(), any(String[].class)
         )).thenReturn(0L);
 
-        Map<String, Object> result = service.seckill(100L, 200L, "request-1");
+        var result = admissions.seckill(100L, 200L, "request-1");
 
-        assertThat(result.get("orderId")).isEqualTo("300");
+        assertThat(result.orderId()).isEqualTo("300");
         @SuppressWarnings("rawtypes")
         ArgumentCaptor<List> keys = ArgumentCaptor.forClass(List.class);
         verify(replicatedRedis).executeReplicatedScript(
@@ -110,7 +152,7 @@ class CommerceOrderProcessingTest {
                 anyList(), any(String[].class)
         )).thenReturn(11L);
 
-        assertThatThrownBy(() -> service.seckill(100L, 200L, "request-1"))
+        assertThatThrownBy(() -> admissions.seckill(100L, 200L, "request-1"))
                 .isInstanceOfSatisfying(
                         CommerceApiException.class,
                         error -> assertThat(error.code()).isEqualTo("COMMERCE_ROUTING_NOT_ACTIVE")
@@ -129,7 +171,7 @@ class CommerceOrderProcessingTest {
                 anyList(), any(String[].class)
         )).thenThrow(new IllegalStateException("WAIT confirmation timed out"));
 
-        assertThatThrownBy(() -> service.seckill(100L, 200L, "request-1"))
+        assertThatThrownBy(() -> admissions.seckill(100L, 200L, "request-1"))
                 .isInstanceOfSatisfying(
                         CommerceApiException.class,
                         error -> {
@@ -165,8 +207,8 @@ class CommerceOrderProcessingTest {
                 any(Object[].class)
         )).thenThrow(new IllegalStateException("ack unavailable")).thenReturn(1L);
 
-        service.process(record);
-        service.process(record);
+        worker.process(record);
+        worker.process(record);
 
         verify(redis, times(2)).execute(
                 any(DefaultRedisScript.class),
@@ -199,7 +241,7 @@ class CommerceOrderProcessingTest {
                 any(Object[].class)
         )).thenReturn(0);
 
-        service.process(record);
+        worker.process(record);
 
         verify(transactions, never()).executeWithoutResult(any());
         verify(redis, never()).execute(
@@ -221,7 +263,7 @@ class CommerceOrderProcessingTest {
         ))
                 .thenReturn("300|99|seckill:v1:99");
 
-        assertThatThrownBy(() -> service.seckill(100L, 200L, "request-1"))
+        assertThatThrownBy(() -> admissions.seckill(100L, 200L, "request-1"))
                 .isInstanceOfSatisfying(
                         CommerceApiException.class,
                         error -> assertThat(error.code()).isEqualTo("COMMERCE_IDEMPOTENCY_CONFLICT")
@@ -254,7 +296,7 @@ class CommerceOrderProcessingTest {
                 any(Object[].class)
         )).thenReturn(-2L);
 
-        service.completeRecovery(SOURCE_ID, "claim-1", 300L, 100L, 200L, "request-1");
+        worker.completeRecovery(SOURCE_ID, "claim-1", 300L, 100L, 200L, "request-1");
 
         verify(jdbc).update(
                 org.mockito.ArgumentMatchers.argThat(sql ->
@@ -296,7 +338,7 @@ class CommerceOrderProcessingTest {
                 any(Object[].class)
         )).thenReturn(0L);
 
-        service.completeRecovery(SOURCE_ID, "claim-1", 300L, 100L, 200L, "request-1");
+        worker.completeRecovery(SOURCE_ID, "claim-1", 300L, 100L, 200L, "request-1");
 
         verify(jdbc).update(
                 org.mockito.ArgumentMatchers.argThat(sql ->

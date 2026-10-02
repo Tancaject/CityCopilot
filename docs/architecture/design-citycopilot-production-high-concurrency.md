@@ -32,7 +32,7 @@ CityCopilot 的生产形态固定为四个领域服务，不再按技术层继�
 - Commerce 已改为 Redis Cluster 同槽 Lua 准入、分片 Stream、MySQL Recovery/Outbox、可过期 claim/fencing、毒消息持久化和无限可重试 Outbox；单券当前仍固定到一个逻辑 hash-tag shard，不包含下文的多 bucket/escrow 扩展。
 - Search/GEO 已使用同事务 MySQL Outbox、共享 writer lease/fencing、版本化 ES/GEO 写入、封闭水位追平和 cutover barrier；当前是 Projector 直接消费 MySQL Outbox，不经过 RocketMQ。
 - Agent 生产角色禁用 JVM 状态回退，目录 readiness 能区分短暂刷新失败与过期缓存；显式偏好仍只是搜索/排序提示，不是完整推荐系统。
-- 尚未完成的代码边界包括 Shop 删除 tombstone、独立 `shop_type` 变更传播、Search/GEO 主键游标全量扫描、旧 generation 清理，以及超热点券多 bucket 库存 escrow。
+- 尚未完成的代码边界包括 Shop 删除 tombstone、独立 `shop_type` 变更传播，以及超热点券多 bucket 库存 escrow。Search/GEO 有界重建与一次性旧代际回收的实现及验证边界见 [ADR-0010](../adr/0010-versioned-shop-search-geo-projections.md)。
 - 所有吞吐、可用性、跨 AZ 接管、Redis 复制确认、MQ/ES/MySQL 托管服务握手和 RPO/RTO 数值仍需真实环境验证；本节不把静态配置或单元测试写成生产证明。
 
 ## 2. 设计约束与质量目标
@@ -194,7 +194,7 @@ flowchart TB
 ### 6.2 服务通信
 
 - 单机环境使用 Docker Compose 服务名和显式环境变量端点；未来多主机部署通过外部负载均衡或私有 DNS 提供稳定地址，不引入 Nacos/Eureka；
-- Core 到 Commerce、Agent/MCP 到 Core 使用版本化 HTTP 和明确超时预算；
+- Core 到 Commerce、Commerce 回查 Core、Agent/MCP 到 Core 使用版本化 HTTP；截止时间、容量限制和取消边界见[跨服务请求预算](request-budgets.md)；
 - 只有幂等读或携带稳定 Idempotency-Key 的命令允许自动重试；
 - 写命令失败时不得回退到旧本地 writer；
 - 熔断只阻止故障扩散，不能伪造成功；429/503 必须带稳定错误码和 Retry-After；
@@ -432,11 +432,11 @@ incomingVersion <= storedVersion -> idempotent ignore
 
 1. 获取带 fencing token 的重建租约；
 2. 创建新 generation 并记录事件/数据库高水位 W0；
-3. 使用主键游标分页读取快照并 Bulk 写入，不得全表装入 JVM；当前实现仍一次读取店铺列表，扩量上线前必须完成此项；
+3. 按扫描开始时的店铺主键上界分页读取，搜索复用 generation Bulk 写入、GEO 按页批量写入，每页之间续租；当前代码与统一验证边界见 [ADR-0010](../adr/0010-versioned-shop-search-geo-projections.md)；
 4. 当前 writer lease 让增量 Projector 与 rebuild 互斥，rebuild 用 Outbox 水位追平 building generation；
 5. building generation 追平当前高水位后，校验文档数、最大版本、抽样 hash、DLQ 和失败数；
 6. 使用一次原子 alias update 切换读 alias；
-7. 保留最近两个 generation 后受控清理。
+7. 保留活跃代际和最近退役代际；更早代际在保留期结束且读者实际排空后，通过 [ADR-0010 的一次性维护入口](../adr/0010-versioned-shop-search-geo-projections.md#旧代际受控回收)有界回收。
 
 ### 8.3 Redis GEO
 
@@ -486,7 +486,7 @@ Core、Commerce、Agent 使用独立数据库、独立账号和独立迁移历�
 - 写、事务、写后读、Outbox Relay 和投影高水位读取走 writer；
 - 只有允许陈旧的列表、分析和审计查询走 reader；
 - 连接总量保持在预算的 70% 以下；
-- DDL 使用 Flyway/Liquibase expand-contract，由独立 migration Job 执行；
+- DDL 使用 Flyway expand-contract，由独立 migration Job 执行；操作与已有库接管见 [数据库迁移运行手册](../database-migrations.md)；
 - 不默认分库分表。Redis/Stream 已吸收突发，MySQL 持续写容量未越界前，索引、归档、分区和读副本更简单可靠；
 - 若未来物理分片，order、recovery、stock bucket 和 outbox 必须按同一稳定路由键共置，一个业务事务不得跨库。
 

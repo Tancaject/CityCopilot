@@ -1,6 +1,9 @@
 package com.citycopilot.commerce;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.citycopilot.contract.commerce.CommerceContracts.AdmissionRepairRequeued;
+import com.citycopilot.contract.commerce.CommerceContracts.DeadLetterReplayResult;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -20,8 +23,8 @@ class CommerceOperationsServiceTest {
     void rejectsInvalidSummaryRangeBeforeQueryingTheDatabase() {
         CommerceOperationsService service = new CommerceOperationsService(
                 mock(JdbcTemplate.class),
-                mock(CommerceOrderService.class),
-                new ObjectMapper(),
+                mock(CommerceOrderAdmissionService.class),
+                JsonMapper.builderWithJackson2Defaults().build(),
                 mock(CommerceRoutingGuard.class),
                 mock(CommerceAdmissionDurabilityService.class)
         );
@@ -35,12 +38,12 @@ class CommerceOperationsServiceTest {
     @Test
     void replaysACommerceDeadLetterThroughFreshLuaAdmission() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        CommerceOrderService orders = mock(CommerceOrderService.class);
+        CommerceOrderAdmissionService orders = mock(CommerceOrderAdmissionService.class);
         CommerceRoutingGuard routing = mock(CommerceRoutingGuard.class);
         CommerceOperationsService service = new CommerceOperationsService(
                 jdbc,
                 orders,
-                new ObjectMapper(),
+                JsonMapper.builderWithJackson2Defaults().build(),
                 routing,
                 mock(CommerceAdmissionDurabilityService.class)
         );
@@ -62,15 +65,14 @@ class CommerceOperationsServiceTest {
                 "state", "processing"
         ));
 
-        Map<String, Object> result = service.replayDeadLetter(
+        DeadLetterReplayResult result = service.replayDeadLetter(
                 "1720000000000-0",
                 "user:1"
         );
 
-        assertThat(result)
-                .containsEntry("status", "replayed")
-                .containsEntry("deadLetterRecordId", "1720000000000-0")
-                .containsEntry("orderId", "300");
+        assertThat(result.status()).isEqualTo("replayed");
+        assertThat(result.deadLetterRecordId()).isEqualTo("1720000000000-0");
+        assertThat(result.orderId()).isEqualTo("300");
         verify(routing).requireAdmissionActive(100L);
         verify(orders).replayAdmission(300L, 100L, 200L, "request-1");
         verify(jdbc).update(
@@ -87,11 +89,11 @@ class CommerceOperationsServiceTest {
     @Test
     void replayIsBlockedUntilRequiredInventoryRepairCompletes() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        CommerceOrderService orders = mock(CommerceOrderService.class);
+        CommerceOrderAdmissionService orders = mock(CommerceOrderAdmissionService.class);
         CommerceOperationsService service = new CommerceOperationsService(
                 jdbc,
                 orders,
-                new ObjectMapper(),
+                JsonMapper.builderWithJackson2Defaults().build(),
                 mock(CommerceRoutingGuard.class),
                 mock(CommerceAdmissionDurabilityService.class)
         );
@@ -123,17 +125,15 @@ class CommerceOperationsServiceTest {
         );
         CommerceOperationsService service = new CommerceOperationsService(
                 jdbc,
-                mock(CommerceOrderService.class),
-                new ObjectMapper(),
+                mock(CommerceOrderAdmissionService.class),
+                JsonMapper.builderWithJackson2Defaults().build(),
                 mock(CommerceRoutingGuard.class),
                 admissions
         );
 
-        Map<String, Object> result = service.requeueAdmissionRepair(300L, "operator:7");
+        AdmissionRepairRequeued result = service.requeueAdmissionRepair(300L, "operator:7");
 
-        assertThat(result)
-                .containsEntry("status", "requeued")
-                .containsEntry("orderId", "300");
+        assertThat(result).isEqualTo(new AdmissionRepairRequeued("requeued", "300"));
         verify(admissions).requeueRepairRequired(300L);
         verify(jdbc).update(
                 org.mockito.ArgumentMatchers.contains("INSERT INTO commerce_outbox_event"),
@@ -141,7 +141,7 @@ class CommerceOperationsServiceTest {
                 org.mockito.ArgumentMatchers.eq("commerce.admission.repair.requeued"),
                 org.mockito.ArgumentMatchers.eq("commerce_admission_repair_requeue"),
                 org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.eq(1),
+                org.mockito.ArgumentMatchers.eq(1L),
                 org.mockito.ArgumentMatchers.contains("operator:7")
         );
     }

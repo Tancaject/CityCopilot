@@ -4,6 +4,7 @@ import { AlertCircle, Database, Download, Loader2, RefreshCw, Search, Trash2 } f
 import { cleanupAuditLogs, exportOperationLogs, fetchAuditStatus, fetchOperationLogs } from '../api/citycopilot';
 import ConfirmDialog from '../components/ConfirmDialog.vue';
 import { authState } from '../composables/auth';
+import { getErrorMessage } from '../utils/errors';
 import { hasPermission } from '../utils/permissions';
 import type { AuditStatus, OperationLog } from '../types';
 
@@ -52,7 +53,7 @@ async function loadAudit() {
     logs.value = logResult || [];
     status.value = statusResult;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '审计日志加载失败';
+    errorMessage.value = getErrorMessage(error, '审计日志加载失败');
   } finally {
     loading.value = false;
   }
@@ -71,7 +72,7 @@ async function exportLogs() {
     link.click();
     URL.revokeObjectURL(url);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '审计日志导出失败';
+    errorMessage.value = getErrorMessage(error, '审计日志导出失败');
   } finally {
     exporting.value = false;
   }
@@ -87,7 +88,7 @@ async function cleanupLogs() {
     cleanupOpen.value = false;
     await loadAudit();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '审计日志清理失败';
+    errorMessage.value = getErrorMessage(error, '审计日志清理失败');
   } finally {
     cleaning.value = false;
   }

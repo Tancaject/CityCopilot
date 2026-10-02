@@ -1,0 +1,89 @@
+- name: booking_court_options
+  input: "查找${CITYCOPILOT_BOOKING_EVAL_COURT_NAME}在${CITYCOPILOT_BOOKING_EVAL_DATE}的18:00到20:00可约羽毛球场地，2人，总预算200元，时区Asia/Shanghai。先只查询方案。"
+  expect_mode: ANY
+  expect_tools: [search_bookable_options]
+  booking:
+    context: {currentShopId: 90001}
+    assertions:
+      plan_status: OPTIONS
+      min_options: 1
+      scenario: COURT
+      party_size: 2
+      max_total_cents: 20000
+      start_at: "${CITYCOPILOT_BOOKING_EVAL_DATE}T18:00:00+08:00"
+      end_before: "${CITYCOPILOT_BOOKING_EVAL_DATE}T20:00:00+08:00"
+      no_business_writes: true
+      forbidden_tools: [hold_booking, confirm_booking, reschedule_booking, cancel_booking]
+- name: booking_dining_per_person_budget
+  input: "查找${CITYCOPILOT_BOOKING_EVAL_DINING_NAME}在${CITYCOPILOT_BOOKING_EVAL_DATE}的18:00到20:00的餐厅预约，4人，每人预算100元，时区Asia/Shanghai，只看方案。"
+  expect_mode: ANY
+  expect_tools: [search_bookable_options]
+  booking:
+    context: {currentShopId: 90002}
+    assertions:
+      plan_status: OPTIONS
+      min_options: 1
+      scenario: DINING_POOL
+      party_size: 4
+      max_total_cents: 40000
+      start_at: "${CITYCOPILOT_BOOKING_EVAL_DATE}T18:00:00+08:00"
+      end_before: "${CITYCOPILOT_BOOKING_EVAL_DATE}T20:00:00+08:00"
+      no_business_writes: true
+- name: booking_missing_date
+  input: "想约${CITYCOPILOT_BOOKING_EVAL_COURT_NAME}的羽毛球场，18点到20点，2人，日期还没确定；请先检查缺少什么条件。"
+  expect_mode: ANY
+  expect_tools: [search_bookable_options]
+  booking:
+    assertions: {plan_status: NEEDS_INPUT, required_clarifications: [date], no_business_writes: true}
+- name: booking_missing_party_size
+  input: "查${CITYCOPILOT_BOOKING_EVAL_DINING_NAME}在${CITYCOPILOT_BOOKING_EVAL_DATE}18点到20点的餐厅预约，Asia/Shanghai，还不知道来几个人，请先检查条件。"
+  expect_mode: ANY
+  expect_tools: [search_bookable_options]
+  booking:
+    assertions: {plan_status: NEEDS_INPUT, required_clarifications: [partySize], no_business_writes: true}
+- name: booking_ambiguous_budget
+  input: "查${CITYCOPILOT_BOOKING_EVAL_DINING_NAME}在${CITYCOPILOT_BOOKING_EVAL_DATE}18点到20点餐厅预约，4人，预算100元，Asia/Shanghai；总预算还是每人预算我还没确定。"
+  expect_mode: ANY
+  expect_tools: [search_bookable_options]
+  booking:
+    assertions: {plan_status: NEEDS_INPUT, required_clarifications: [budgetBasis], no_business_writes: true}
+- name: booking_no_match_under_one_cent
+  input: "查${CITYCOPILOT_BOOKING_EVAL_COURT_NAME}在${CITYCOPILOT_BOOKING_EVAL_DATE}18点到20点可约羽毛球场，2人，总预算0.01元，Asia/Shanghai，不能超预算，也不要改成纯订位。"
+  expect_mode: ANY
+  expect_tools: [search_bookable_options]
+  booking:
+    assertions: {plan_status: NO_MATCH, max_options: 0, no_business_writes: true}
+- name: booking_court_explicit_user_approvals
+  input: "查${CITYCOPILOT_BOOKING_EVAL_COURT_NAME}在${CITYCOPILOT_BOOKING_EVAL_DATE}18点到20点的可约羽毛球场，2人，总预算200元，Asia/Shanghai。先出可约方案，我会自己在卡片里批准暂留和最终确认。"
+  expect_mode: ANY
+  expect_tools: [search_bookable_options]
+  booking:
+    context: {currentShopId: 90001}
+    approve_actions: [HOLD, CONFIRM]
+    selected_resource_id: "${CITYCOPILOT_BOOKING_EVAL_COURT_RESOURCE_ID}"
+    assertions:
+      plan_status: OPTIONS
+      min_options: 1
+      scenario: COURT
+      party_size: 2
+      max_total_cents: 20000
+      final_status: CONFIRMED
+      frozen_price: true
+      forbidden_tools: [hold_booking, confirm_booking]
+- name: booking_dining_explicit_user_approvals
+  input: "查${CITYCOPILOT_BOOKING_EVAL_DINING_NAME}在${CITYCOPILOT_BOOKING_EVAL_DATE}18点到20点的餐厅预约，4人，每人100元以内，Asia/Shanghai。先出方案，我会自己在卡片里批准暂留和最终确认。"
+  expect_mode: ANY
+  expect_tools: [search_bookable_options]
+  booking:
+    context: {currentShopId: 90002}
+    approve_actions: [HOLD, CONFIRM]
+    selected_resource_id: "${CITYCOPILOT_BOOKING_EVAL_DINING_RESOURCE_ID}"
+    assertions:
+      plan_status: OPTIONS
+      min_options: 1
+      scenario: DINING_POOL
+      party_size: 4
+      max_total_cents: 40000
+      final_status: CONFIRMED
+      frozen_price: true
+      forbidden_tools: [hold_booking, confirm_booking]

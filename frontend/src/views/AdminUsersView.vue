@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCw, Search, ShieldCheck, UserRound } from '@lucide/vue';
 import { fetchAdminUsers, fetchPermissionMatrix, updateAdminUserRole } from '../api/citycopilot';
+import { getErrorMessage } from '../utils/errors';
 import type { UserAdmin } from '../types';
 
 const users = ref<UserAdmin[]>([]);
@@ -38,7 +39,7 @@ async function loadUsers() {
   try {
     users.value = await fetchAdminUsers(1, keyword.value.trim() || undefined);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '用户加载失败';
+    errorMessage.value = getErrorMessage(error, '用户加载失败');
   } finally {
     loading.value = false;
   }
@@ -53,7 +54,7 @@ async function saveRole(user: UserAdmin, role: string) {
     users.value = users.value.map((item) => (item.id === updated.id ? updated : item));
     successMessage.value = '用户角色已更新，现有登录态已失效';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '角色更新失败';
+    errorMessage.value = getErrorMessage(error, '角色更新失败');
   } finally {
     savingId.value = null;
   }

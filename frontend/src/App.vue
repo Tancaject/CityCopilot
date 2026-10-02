@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue';
-import { Activity, Braces, ClipboardCheck, Database, FileText, LayoutDashboard, LogOut, MapPin, ReceiptText, Rss, Search, ShieldCheck, SquarePen, Store, Ticket, UserRound } from '@lucide/vue';
+import { Activity, Braces, CalendarDays, ClipboardCheck, Database, FileText, LayoutDashboard, LogOut, MapPin, ReceiptText, Rss, Search, ShieldCheck, SquarePen, Store, Ticket, UserRound } from '@lucide/vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import AiAssistantPanel from './components/AiAssistantPanel.vue';
 import { authState, clearAuth, initAuth, logout } from './composables/auth';
@@ -13,40 +13,26 @@ const searchTerm = ref('');
 const isLoginRoute = computed(() => route.name === 'login');
 const isOpsRoute = computed(() => typeof route.path === 'string' && route.path.startsWith('/admin'));
 const displayName = computed(() => authState.user?.nickName || authState.user?.name || '我的');
-const canAccessAdmin = computed(() => hasPermission(authState.user, 'admin:access'));
 const canAccessAudit = computed(() => hasPermission(authState.user, 'audit:read'));
-const canAccessGeoAdmin = computed(() => hasPermission(authState.user, 'geo:read'));
-const canAccessOrderAdmin = computed(() => hasPermission(authState.user, 'order:write'));
-const canAccessShopAdmin = computed(() => hasPermission(authState.user, 'shop:write'));
-const canAccessVoucherAdmin = computed(() => hasPermission(authState.user, 'voucher:write'));
-const canAccessUserAdmin = computed(() => hasPermission(authState.user, 'user:write'));
-const canAccessContentAdmin = computed(() => hasPermission(authState.user, 'content:write'));
-const hasAdminLinks = computed(
-  () =>
-    canAccessAdmin.value ||
-    canAccessAudit.value ||
-    canAccessGeoAdmin.value ||
-    canAccessShopAdmin.value ||
-    canAccessVoucherAdmin.value ||
-    canAccessOrderAdmin.value ||
-    canAccessUserAdmin.value ||
-    canAccessContentAdmin.value,
-);
+const adminNavItems = [
+  { permission: 'admin:access', name: 'admin-dashboard', label: '概览', detail: '实时指标', icon: LayoutDashboard },
+  { permission: 'shop:write', name: 'admin-shops', label: '店铺', detail: '资料与坐标', icon: Store },
+  { permission: 'geo:read', name: 'geo-shops-admin', label: '校准', detail: 'GEO 队列', icon: MapPin },
+  { permission: 'voucher:write', name: 'admin-vouchers', label: '券包', detail: '活动配置', icon: Ticket },
+  { permission: 'order:write', name: 'admin-orders', label: '核销', detail: '订单动作', icon: ClipboardCheck },
+  { permission: 'booking:manage', alternativePermission: 'booking:check-in', name: 'admin-bookings', label: '预约', detail: '排期与到店核销', icon: CalendarDays },
+  { permission: 'user:write', name: 'admin-users', label: '用户', detail: '角色权限', icon: ShieldCheck },
+  { permission: 'content:write', name: 'admin-blogs', label: '内容', detail: '笔记治理', icon: FileText },
+  { permission: 'audit:read', name: 'admin-audit', label: '审计', detail: '操作日志', icon: Database },
+  { permission: 'audit:read', name: 'admin-api', label: '契约', detail: 'API 自检', icon: Braces },
+  { permission: 'audit:read', name: 'admin-agent-traces', label: 'Traces', detail: 'Agent 轨迹', icon: Activity },
+  { permission: 'audit:read', name: 'admin-ops-cases', label: 'Agent', detail: '诊断与审批', icon: ShieldCheck },
+] as const;
 const visibleAdminLinks = computed(() =>
-  [
-    { enabled: canAccessAdmin.value, name: 'admin-dashboard', label: '概览', detail: '实时指标', icon: LayoutDashboard },
-    { enabled: canAccessShopAdmin.value, name: 'admin-shops', label: '店铺', detail: '资料与坐标', icon: Store },
-    { enabled: canAccessGeoAdmin.value, name: 'geo-shops-admin', label: '校准', detail: 'GEO 队列', icon: MapPin },
-    { enabled: canAccessVoucherAdmin.value, name: 'admin-vouchers', label: '券包', detail: '活动配置', icon: Ticket },
-    { enabled: canAccessOrderAdmin.value, name: 'admin-orders', label: '核销', detail: '订单动作', icon: ClipboardCheck },
-    { enabled: canAccessUserAdmin.value, name: 'admin-users', label: '用户', detail: '角色权限', icon: ShieldCheck },
-    { enabled: canAccessContentAdmin.value, name: 'admin-blogs', label: '内容', detail: '笔记治理', icon: FileText },
-    { enabled: canAccessAudit.value, name: 'admin-audit', label: '审计', detail: '操作日志', icon: Database },
-    { enabled: canAccessAudit.value, name: 'admin-api', label: '契约', detail: 'API 自检', icon: Braces },
-    { enabled: canAccessAudit.value, name: 'admin-agent-traces', label: 'Traces', detail: 'Agent 轨迹', icon: Activity },
-    { enabled: canAccessAudit.value, name: 'admin-ops-cases', label: 'Agent', detail: '诊断与审批', icon: ShieldCheck },
-  ].filter((link) => link.enabled),
+  adminNavItems.filter((link) => hasPermission(authState.user, link.permission)
+    || ('alternativePermission' in link && hasPermission(authState.user, link.alternativePermission))),
 );
+const hasAdminLinks = computed(() => visibleAdminLinks.value.length > 0);
 
 async function handleLogout() {
   await logout();
@@ -170,6 +156,10 @@ onUnmounted(() => {
           <RouterLink v-if="authState.isLoggedIn" :to="{ name: 'orders' }">
             <ReceiptText :size="17" aria-hidden="true" />
             订单
+          </RouterLink>
+          <RouterLink v-if="authState.isLoggedIn" :to="{ name: 'bookings' }">
+            <CalendarDays :size="17" aria-hidden="true" />
+            预约
           </RouterLink>
           <RouterLink v-if="hasAdminLinks" :to="{ name: 'admin-dashboard' }">
             <LayoutDashboard :size="17" aria-hidden="true" />

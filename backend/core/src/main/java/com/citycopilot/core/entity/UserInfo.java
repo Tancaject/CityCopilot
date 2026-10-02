@@ -11,13 +11,7 @@ import java.io.Serializable;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-/**
- * <p>
- * 
- * </p>
- *
- * @since 2021-12-24
- */
+/** 对应 {@code user_profile} 表的扩展个人资料，以 userId 与认证账户一一对应。 */
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
@@ -67,9 +61,7 @@ public class UserInfo implements Serializable {
      */
     private Integer credits;
 
-    /**
-     * 会员级别，0~9级,0代表未开通会员
-     */
+    /** 是否已开通会员；当前实体按布尔值映射，不区分具体等级。 */
     private Boolean level;
 
     /**

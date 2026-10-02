@@ -1,0 +1,87 @@
+{
+  "date": "2026-09-10",
+  "runId": "20260910090003",
+  "mysqlVersion": "8.0.44",
+  "serverScope": "127.0.0.1:33319 isolated *_test databases",
+  "runner": "tools/migrations/verify-booking-migrations.ps1",
+  "actualScripts": [
+    "tools/migrations/apply-core-migrations.sh",
+    "tools/migrations/apply-commerce-migrations.sh"
+  ],
+  "platformAdapter": "Git Bash invokes repository scripts. A native mysql shim only strips CRLF and preserves exit status via pipefail.",
+  "scenarios": [
+    {
+      "database": "citycopilot_migration_core_empty_20260910090003_test",
+      "service": "core",
+      "mode": "empty",
+      "status": "passed",
+      "scriptPasses": 2,
+      "scriptLogs": [
+        "Applied the durable shop projection outbox migration.\nCore schema migrations are up to date.",
+        "Core schema migrations are up to date."
+      ],
+      "schemaInventory": "booking_behavior_projection\tInnoDB\nevent_projection_version\tInnoDB\ngeo_batch_job\tInnoDB\ngeo_batch_job_item\tInnoDB\nnote\tInnoDB\nnote_comment\tInnoDB\noperation_log\tInnoDB\nprocessed_event\tInnoDB\nsearch_impression\tInnoDB\nshop\tInnoDB\nshop_projection_lease\tInnoDB\nshop_projection_outbox\tInnoDB\nshop_type\tInnoDB\nuser_account\tInnoDB\nuser_behavior_event\tInnoDB\nuser_checkin\tInnoDB\nuser_follow\tInnoDB\nuser_preference_feature\tInnoDB\nuser_profile\tInnoDB\nbooking_behavior_projection\tPRIMARY\tPRIMARY KEY\nsearch_impression\tPRIMARY\tPRIMARY KEY\nuser_behavior_event\tchk_behavior_origin\tCHECK\nuser_behavior_event\tPRIMARY\tPRIMARY KEY\nuser_preference_feature\tPRIMARY\tPRIMARY KEY"
+    },
+    {
+      "database": "citycopilot_migration_core_legacy_20260910090003_test",
+      "service": "core",
+      "mode": "legacy",
+      "status": "passed",
+      "scriptPasses": 2,
+      "scriptLogs": [
+        "Applied the shop GCJ-02 coordinate contract migration.\nApplied the durable shop projection outbox migration.\nCore schema migrations are up to date.",
+        "Core schema migrations are up to date."
+      ],
+      "schemaInventory": "booking_behavior_projection\tInnoDB\nevent_projection_version\tInnoDB\ngeo_batch_job\tInnoDB\ngeo_batch_job_item\tInnoDB\nnote\tInnoDB\nnote_comment\tInnoDB\noperation_log\tInnoDB\nprocessed_event\tInnoDB\nsearch_impression\tInnoDB\nshop\tInnoDB\nshop_projection_lease\tInnoDB\nshop_projection_outbox\tInnoDB\nshop_type\tInnoDB\nuser_account\tInnoDB\nuser_behavior_event\tInnoDB\nuser_checkin\tInnoDB\nuser_follow\tInnoDB\nuser_preference_feature\tInnoDB\nuser_profile\tInnoDB\nbooking_behavior_projection\tPRIMARY\tPRIMARY KEY\nsearch_impression\tPRIMARY\tPRIMARY KEY\nuser_behavior_event\tchk_behavior_origin\tCHECK\nuser_behavior_event\tPRIMARY\tPRIMARY KEY\nuser_preference_feature\tPRIMARY\tPRIMARY KEY"
+    },
+    {
+      "database": "citycopilot_migration_commerce_empty_20260910090003_test",
+      "service": "commerce",
+      "mode": "empty",
+      "status": "passed",
+      "scriptPasses": 2,
+      "scriptLogs": [
+        "Applied/verified the Commerce admission ledger and legacy-order identity backfill.\n1\n1\n1\n1\n1\n1\nApplied/verified durable Commerce ID segments and Outbox aggregate-version uniqueness.\nCommerce schema migrations are up to date.",
+        "Applied/verified the Commerce admission ledger and legacy-order identity backfill.\n1\n1\n1\n1\n1\n1\nApplied/verified durable Commerce ID segments and Outbox aggregate-version uniqueness.\nCommerce schema migrations are up to date."
+      ],
+      "schemaInventory": "commerce_admission_ledger\tInnoDB\ncommerce_booking\tInnoDB\ncommerce_booking_command\tInnoDB\ncommerce_booking_coupon_rule\tInnoDB\ncommerce_booking_offer\tInnoDB\ncommerce_booking_quote\tInnoDB\ncommerce_booking_reminder\tInnoDB\ncommerce_booking_resource\tInnoDB\ncommerce_booking_slot\tInnoDB\ncommerce_booking_user_guard\tInnoDB\ncommerce_dead_letter\tInnoDB\ncommerce_id_segment\tInnoDB\ncommerce_inbox_event\tInnoDB\ncommerce_order\tInnoDB\ncommerce_order_recovery\tInnoDB\ncommerce_outbox_event\tInnoDB\ncommerce_reservation\tInnoDB\ncommerce_seckill_voucher\tInnoDB\ncommerce_user_booking_coupon\tInnoDB\ncommerce_voucher\tInnoDB\nshop_summary_projection\tInnoDB\ncommerce_booking\tchk_booking_status\tCHECK\ncommerce_booking\tchk_booking_units\tCHECK\ncommerce_booking\tfk_booking_resource\tFOREIGN KEY\ncommerce_booking\tfk_booking_slot\tFOREIGN KEY\ncommerce_booking\tPRIMARY\tPRIMARY KEY\ncommerce_booking_command\tfk_booking_command_booking\tFOREIGN KEY\ncommerce_booking_command\tPRIMARY\tPRIMARY KEY\ncommerce_booking_coupon_rule\tchk_booking_coupon_amount\tCHECK\ncommerce_booking_coupon_rule\tchk_booking_coupon_issuance\tCHECK\ncommerce_booking_coupon_rule\tchk_booking_coupon_rule_time\tCHECK\ncommerce_booking_coupon_rule\tchk_booking_coupon_type\tCHECK\ncommerce_booking_coupon_rule\tfk_booking_coupon_offer\tFOREIGN KEY\ncommerce_booking_coupon_rule\tPRIMARY\tPRIMARY KEY\ncommerce_booking_coupon_rule\tuk_booking_coupon_version\tUNIQUE\ncommerce_booking_offer\tchk_booking_offer_kind\tCHECK\ncommerce_booking_offer\tchk_booking_offer_price\tCHECK\ncommerce_booking_offer\tchk_booking_offer_status\tCHECK\ncommerce_booking_offer\tfk_booking_offer_resource\tFOREIGN KEY\ncommerce_booking_offer\tPRIMARY\tPRIMARY KEY\ncommerce_booking_quote\tchk_booking_quote_purpose\tCHECK\ncommerce_booking_quote\tfk_booking_quote_consumed\tFOREIGN KEY\ncommerce_booking_quote\tfk_booking_quote_offer\tFOREIGN KEY\ncommerce_booking_quote\tfk_booking_quote_resource\tFOREIGN KEY\ncommerce_booking_quote\tPRIMARY\tPRIMARY KEY\ncommerce_booking_reminder\tchk_booking_reminder_status\tCHECK\ncommerce_booking_reminder\tfk_booking_reminder_booking\tFOREIGN KEY\ncommerce_booking_reminder\tPRIMARY\tPRIMARY KEY\ncommerce_booking_reminder\tuk_booking_reminder\tUNIQUE\ncommerce_booking_resource\tchk_booking_resource_kind\tCHECK\ncommerce_booking_resource\tchk_booking_resource_party\tCHECK\ncommerce_booking_resource\tchk_booking_resource_status\tCHECK\ncommerce_booking_resource\tPRIMARY\tPRIMARY KEY\ncommerce_booking_slot\tchk_booking_slot_capacity\tCHECK\ncommerce_booking_slot\tchk_booking_slot_status\tCHECK\ncommerce_booking_slot\tchk_booking_slot_time\tCHECK\ncommerce_booking_slot\tfk_booking_slot_resource\tFOREIGN KEY\ncommerce_booking_slot\tPRIMARY\tPRIMARY KEY\ncommerce_booking_slot\tuk_booking_slot_start\tUNIQUE\ncommerce_booking_user_guard\tPRIMARY\tPRIMARY KEY\ncommerce_user_booking_coupon\tchk_user_booking_coupon_binding\tCHECK\ncommerce_user_booking_coupon\tchk_user_booking_coupon_status\tCHECK\ncommerce_user_booking_coupon\tfk_user_booking_coupon_booking\tFOREIGN KEY\ncommerce_user_booking_coupon\tfk_user_booking_coupon_rule\tFOREIGN KEY\ncommerce_user_booking_coupon\tPRIMARY\tPRIMARY KEY\ncommerce_user_booking_coupon\tuk_booking_coupon_claim\tUNIQUE\ncommerce_user_booking_coupon\tuk_booking_coupon_owner_rule\tUNIQUE"
+    },
+    {
+      "database": "citycopilot_migration_commerce_legacy_20260910090003_test",
+      "service": "commerce",
+      "mode": "legacy",
+      "status": "passed",
+      "scriptPasses": 2,
+      "scriptLogs": [
+        "Applied/verified the Commerce admission ledger and legacy-order identity backfill.\nApplied the Commerce Outbox expired-claim index migration.\nApplied/verified durable Commerce ID segments and Outbox aggregate-version uniqueness.\nCommerce schema migrations are up to date.",
+        "Applied/verified the Commerce admission ledger and legacy-order identity backfill.\n1\n1\n1\n1\n1\n1\nApplied/verified durable Commerce ID segments and Outbox aggregate-version uniqueness.\nCommerce schema migrations are up to date."
+      ],
+      "schemaInventory": "commerce_admission_ledger\tInnoDB\ncommerce_booking\tInnoDB\ncommerce_booking_command\tInnoDB\ncommerce_booking_coupon_rule\tInnoDB\ncommerce_booking_offer\tInnoDB\ncommerce_booking_quote\tInnoDB\ncommerce_booking_reminder\tInnoDB\ncommerce_booking_resource\tInnoDB\ncommerce_booking_slot\tInnoDB\ncommerce_booking_user_guard\tInnoDB\ncommerce_dead_letter\tInnoDB\ncommerce_id_segment\tInnoDB\ncommerce_inbox_event\tInnoDB\ncommerce_order\tInnoDB\ncommerce_order_recovery\tInnoDB\ncommerce_outbox_event\tInnoDB\ncommerce_reservation\tInnoDB\ncommerce_seckill_voucher\tInnoDB\ncommerce_user_booking_coupon\tInnoDB\ncommerce_voucher\tInnoDB\nshop_summary_projection\tInnoDB\ncommerce_booking\tchk_booking_status\tCHECK\ncommerce_booking\tchk_booking_units\tCHECK\ncommerce_booking\tfk_booking_resource\tFOREIGN KEY\ncommerce_booking\tfk_booking_slot\tFOREIGN KEY\ncommerce_booking\tPRIMARY\tPRIMARY KEY\ncommerce_booking_command\tfk_booking_command_booking\tFOREIGN KEY\ncommerce_booking_command\tPRIMARY\tPRIMARY KEY\ncommerce_booking_coupon_rule\tchk_booking_coupon_amount\tCHECK\ncommerce_booking_coupon_rule\tchk_booking_coupon_issuance\tCHECK\ncommerce_booking_coupon_rule\tchk_booking_coupon_rule_time\tCHECK\ncommerce_booking_coupon_rule\tchk_booking_coupon_type\tCHECK\ncommerce_booking_coupon_rule\tfk_booking_coupon_offer\tFOREIGN KEY\ncommerce_booking_coupon_rule\tPRIMARY\tPRIMARY KEY\ncommerce_booking_coupon_rule\tuk_booking_coupon_version\tUNIQUE\ncommerce_booking_offer\tchk_booking_offer_kind\tCHECK\ncommerce_booking_offer\tchk_booking_offer_price\tCHECK\ncommerce_booking_offer\tchk_booking_offer_status\tCHECK\ncommerce_booking_offer\tfk_booking_offer_resource\tFOREIGN KEY\ncommerce_booking_offer\tPRIMARY\tPRIMARY KEY\ncommerce_booking_quote\tchk_booking_quote_purpose\tCHECK\ncommerce_booking_quote\tfk_booking_quote_consumed\tFOREIGN KEY\ncommerce_booking_quote\tfk_booking_quote_offer\tFOREIGN KEY\ncommerce_booking_quote\tfk_booking_quote_resource\tFOREIGN KEY\ncommerce_booking_quote\tPRIMARY\tPRIMARY KEY\ncommerce_booking_reminder\tchk_booking_reminder_status\tCHECK\ncommerce_booking_reminder\tfk_booking_reminder_booking\tFOREIGN KEY\ncommerce_booking_reminder\tPRIMARY\tPRIMARY KEY\ncommerce_booking_reminder\tuk_booking_reminder\tUNIQUE\ncommerce_booking_resource\tchk_booking_resource_kind\tCHECK\ncommerce_booking_resource\tchk_booking_resource_party\tCHECK\ncommerce_booking_resource\tchk_booking_resource_status\tCHECK\ncommerce_booking_resource\tPRIMARY\tPRIMARY KEY\ncommerce_booking_slot\tchk_booking_slot_capacity\tCHECK\ncommerce_booking_slot\tchk_booking_slot_status\tCHECK\ncommerce_booking_slot\tchk_booking_slot_time\tCHECK\ncommerce_booking_slot\tfk_booking_slot_resource\tFOREIGN KEY\ncommerce_booking_slot\tPRIMARY\tPRIMARY KEY\ncommerce_booking_slot\tuk_booking_slot_start\tUNIQUE\ncommerce_booking_user_guard\tPRIMARY\tPRIMARY KEY\ncommerce_user_booking_coupon\tchk_user_booking_coupon_binding\tCHECK\ncommerce_user_booking_coupon\tchk_user_booking_coupon_status\tCHECK\ncommerce_user_booking_coupon\tfk_user_booking_coupon_booking\tFOREIGN KEY\ncommerce_user_booking_coupon\tfk_user_booking_coupon_rule\tFOREIGN KEY\ncommerce_user_booking_coupon\tPRIMARY\tPRIMARY KEY\ncommerce_user_booking_coupon\tuk_booking_coupon_claim\tUNIQUE\ncommerce_user_booking_coupon\tuk_booking_coupon_owner_rule\tUNIQUE"
+    }
+  ],
+  "invariants": {
+    "coreShopCount": 14,
+    "coreUserCount": 5,
+    "coreShopFingerprint": "e0b0cb452a70e7b5f3ecd2a8c5ef9eb3d4657558162c43319be0862661d9cec9",
+    "legacyOrderFingerprint": "764da8a09a0b0c4dda6a8778bf8a397920f1f64418302c5200e91e92264aaefc",
+    "legacyOrderId": 92001,
+    "legacyVoucherId": 91001,
+    "legacyStockBeforeAndAfter": 7,
+    "legacyOrderStatusBeforeAndAfter": 1,
+    "payValueBeforeAndAfter": 20000,
+    "actualValueBeforeAndAfter": 24000,
+    "idempotencyKeyBeforeAndAfter": "CaseSensitive-Legacy-Key",
+    "admissionBackfill": "ORDER_CREATED",
+    "commerceBookingTableCount": 10,
+    "commerceBookingCheckCount": 19,
+    "bookingPostflight": "6|9|5|actor_id,idempotency_key|resource_id,start_at|booking_id,schedule_version,kind",
+    "pricingPostflight": "4|10|7|user_id,claim_key|user_id,rule_id",
+    "invalidResourceKind": "rejected_MYSQL_3819",
+    "invalidFeedbackOrigin": "rejected_MYSQL_3819"
+  },
+  "limitations": [
+    "Local standalone MySQL and Git Bash, not a complete container deployment rehearsal.",
+    "Old schemas are controlled fixtures: prior GEO checks absent, prior Commerce indexes and idempotency collation. This does not exhaust unknown production schema drift.",
+    "No system MySQL80 or Core/UI business database was modified."
+  ]
+}

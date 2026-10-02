@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("start", "stop", "restart", "status", "logs", "reset")]
+    [ValidateSet("start", "stop", "restart", "migrate", "status", "logs", "reset")]
     [string]$Action = "start",
     [string]$Service,
     [switch]$Force
@@ -287,12 +287,15 @@ function Invoke-RedisInitialization {
     Invoke-Compose run --rm --no-deps redis-init
 }
 
-function Invoke-CoreSchemaMigrations {
-    Invoke-Compose exec -T mysql sh /opt/citycopilot/migrations/apply-core-migrations.sh
-}
-
-function Invoke-CommerceSchemaMigrations {
-    Invoke-Compose exec -T commerce-mysql sh /opt/citycopilot/migrations/apply-commerce-migrations.sh
+function Invoke-SchemaMigrations {
+    foreach ($job in @("core-migrate", "commerce-migrate", "agent-migrate")) {
+        try {
+            # Recreate the job so a previous successful container cannot skip new SQL.
+            Invoke-Compose up --no-deps --force-recreate --abort-on-container-exit --exit-code-from $job $job
+        } catch {
+            throw "Database migration failed for $job. Run '.\tools\citycopilot.ps1 logs -Service $job'. For an existing database without Flyway history, follow docs/database-migrations.md before retrying; no automatic baseline was applied. $($_.Exception.Message)"
+        }
+    }
 }
 
 Ensure-EnvironmentFile
@@ -303,8 +306,7 @@ switch ($Action) {
         Invoke-Compose config --quiet
         Remove-ApplicationContainers
         Start-Infrastructure
-        Invoke-CoreSchemaMigrations
-        Invoke-CommerceSchemaMigrations
+        Invoke-SchemaMigrations
         Invoke-Compose ps
         $environment = Read-CityCopilotEnvironment
         Write-Host ("Infrastructure is ready: MySQL {0}/{1}/{2}, Redis {3}, RocketMQ Proxy 18081." -f
@@ -323,13 +325,22 @@ switch ($Action) {
     "restart" {
         Ensure-DockerDaemon
         Remove-ApplicationContainers
+        $arguments = @("up", "-d", "--wait") + $InfrastructureServices
+        Invoke-Compose @arguments
         $arguments = @("restart") + $InfrastructureServices
         Invoke-Compose @arguments
         Wait-ServicesHealthy -Names $InfrastructureServices
         Invoke-RedisInitialization
-        Invoke-CoreSchemaMigrations
-        Invoke-CommerceSchemaMigrations
+        Invoke-SchemaMigrations
         Write-Host "CityCopilot infrastructure restarted and is healthy." -ForegroundColor Green
+    }
+    "migrate" {
+        Ensure-DockerDaemon
+        Invoke-Compose config --quiet
+        Invoke-Compose up -d mysql agent-mysql commerce-mysql
+        Wait-ServicesHealthy -Names @("mysql", "agent-mysql", "commerce-mysql")
+        Invoke-SchemaMigrations
+        Write-Host "Core, Commerce, and Agent database migrations completed." -ForegroundColor Green
     }
     "status" {
         Ensure-DockerDaemon

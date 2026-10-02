@@ -15,7 +15,7 @@ class CommerceOrderServiceValidationTest {
 
     @Test
     void acceptsAnActiveSeckillVoucherInsideItsWindow() {
-        assertThatCode(() -> CommerceOrderService.validateAdmissionConfig(voucher(), NOW))
+        assertThatCode(() -> CommerceOrderAdmissionService.validateAdmissionConfig(voucher(), NOW))
                 .doesNotThrowAnyException();
     }
 
@@ -23,13 +23,13 @@ class CommerceOrderServiceValidationTest {
     void rejectsInactiveAndOutOfWindowVouchers() {
         Map<String, Object> inactive = voucher();
         inactive.put("status", 2);
-        assertThatThrownBy(() -> CommerceOrderService.validateAdmissionConfig(inactive, NOW))
+        assertThatThrownBy(() -> CommerceOrderAdmissionService.validateAdmissionConfig(inactive, NOW))
                 .isInstanceOf(CommerceApiException.class)
                 .hasMessage("Voucher is not active");
 
         Map<String, Object> future = voucher();
         future.put("begin_time", Timestamp.from(NOW.plusSeconds(60)));
-        assertThatThrownBy(() -> CommerceOrderService.validateAdmissionConfig(future, NOW))
+        assertThatThrownBy(() -> CommerceOrderAdmissionService.validateAdmissionConfig(future, NOW))
                 .isInstanceOf(CommerceApiException.class)
                 .hasMessage("Seckill has not started");
     }

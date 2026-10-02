@@ -21,17 +21,33 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+/**
+ * 后台 API 契约自描述控制器。
+ *
+ * <p>从 Spring MVC 已注册的映射中生成 Core 端点、权限和标准错误目录，供管理界面或
+ * 内部工具查看；所有接口只读，并受审计读权限保护。</p>
+ */
 @RestController
 @RequestMapping("/admin/api")
 @RequirePermission(PermissionCodes.AUDIT_READ)
 public class ApiContractController {
 
+    /** Spring MVC 运行时路由表，是端点清单的实际来源。 */
     @Resource(name = "requestMappingHandlerMapping")
     private RequestMappingHandlerMapping handlerMapping;
 
+    /** 有效角色权限配置的解析策略。 */
     @Resource
     private PermissionPolicy permissionPolicy;
 
+    /**
+     * 枚举当前进程实际注册的 Core MVC 端点。
+     *
+     * <p>过滤框架和第三方控制器，并按路径排序以保持输出稳定；条件化未加载的控制器
+     * 不会出现在结果中。</p>
+     *
+     * @return 请求方法、路径、控制器、处理方法及权限元数据列表
+     */
     @GetMapping("/endpoints")
     public Result endpoints() {
         List<Map<String, Object>> endpoints = new ArrayList<>();
@@ -51,6 +67,11 @@ public class ApiContractController {
         return Result.ok(endpoints);
     }
 
+    /**
+     * 返回对外承诺的标准业务错误目录。
+     *
+     * @return 错误码及面向调用方的语义说明
+     */
     @GetMapping("/errors")
     public Result errors() {
         return Result.ok(List.of(
@@ -96,11 +117,22 @@ public class ApiContractController {
         ));
     }
 
+    /**
+     * 返回合并默认值和配置覆盖后的角色权限表。
+     *
+     * @return 角色到有效权限集合的映射
+     */
     @GetMapping("/permissions")
     public Result permissions() {
         return Result.ok(permissionPolicy.effectiveRolePermissions());
     }
 
+    /**
+     * 提取路由声明的 HTTP 方法并稳定排序。
+     *
+     * @param info Spring MVC 路由元数据
+     * @return 方法名列表；未限制方法时返回 {@code ALL}
+     */
     private List<String> methods(RequestMappingInfo info) {
         Set<RequestMethod> methods = info.getMethodsCondition().getMethods();
         if (methods.isEmpty()) {
@@ -109,6 +141,12 @@ public class ApiContractController {
         return methods.stream().map(RequestMethod::name).sorted().toList();
     }
 
+    /**
+     * 兼容新版 PathPattern 与旧版 AntPath 两种 Spring 路由条件。
+     *
+     * @param info Spring MVC 路由元数据
+     * @return 去重并按字典序排列的路径列表
+     */
     private List<String> paths(RequestMappingInfo info) {
         Set<String> paths = new TreeSet<>();
         if (info.getPathPatternsCondition() != null) {
@@ -119,6 +157,14 @@ public class ApiContractController {
         return new ArrayList<>(paths);
     }
 
+    /**
+     * 解析处理方法的有效权限声明。
+     *
+     * <p>方法级声明优先于类级声明；使用合并注解查询以兼容组合注解和继承元数据。</p>
+     *
+     * @param handler MVC 处理方法
+     * @return 权限编码和 any-of 匹配模式；无声明时返回空权限
+     */
     private Map<String, Object> permission(HandlerMethod handler) {
         RequirePermission permission = AnnotatedElementUtils.findMergedAnnotation(handler.getMethod(), RequirePermission.class);
         if (permission == null) {
@@ -130,10 +176,23 @@ public class ApiContractController {
         return Map.of("permissions", List.of(permission.value()), "anyOf", permission.anyOf());
     }
 
+    /**
+     * 构造一个稳定的错误目录条目。
+     *
+     * @param code 机器可读错误码
+     * @param message 错误语义说明
+     * @return 不可变错误条目
+     */
     private Map<String, String> error(String code, String message) {
         return Map.of("code", code, "message", message);
     }
 
+    /**
+     * 将端点条目中的路径值安全转换为排序所需的字符串列表。
+     *
+     * @param value 待转换值
+     * @return 字符串列表；结构不符时返回空列表
+     */
     @SuppressWarnings("unchecked")
     private List<String> castList(Object value) {
         return value instanceof List<?> list ? (List<String>) list : List.of();

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { AlertCircle, Braces, KeyRound, Loader2, RefreshCw, Search } from '@lucide/vue';
 import { fetchApiEndpoints, fetchApiErrors, fetchPermissionMatrix } from '../api/citycopilot';
+import { getErrorMessage } from '../utils/errors';
 import type { ApiEndpoint, ApiErrorDefinition } from '../types';
 
 type ApiTab = 'endpoints' | 'errors' | 'permissions';
@@ -69,7 +70,7 @@ async function loadContracts() {
     errors.value = errorResult || [];
     permissions.value = permissionResult || {};
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'API 契约加载失败';
+    errorMessage.value = getErrorMessage(error, 'API 契约加载失败');
   } finally {
     loading.value = false;
   }

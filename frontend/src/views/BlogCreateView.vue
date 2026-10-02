@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { AlertCircle, ImagePlus, Loader2, Send } from '@lucide/vue';
 import { publishBlog, uploadBlogImage } from '../api/citycopilot';
 import { assetUrl } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
 
 const router = useRouter();
 const MAX_IMAGES = 6;
@@ -58,7 +59,7 @@ async function handleFiles(event: Event) {
       images.value = images.value.concat(imagePath);
     }
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '图片上传失败';
+    errorMessage.value = getErrorMessage(error, '图片上传失败');
   } finally {
     uploading.value = false;
     input.value = '';
@@ -98,7 +99,7 @@ async function handlePublish() {
     });
     await router.replace({ name: 'blog-detail', params: { id } });
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '发布失败';
+    errorMessage.value = getErrorMessage(error, '发布失败');
   } finally {
     publishing.value = false;
   }

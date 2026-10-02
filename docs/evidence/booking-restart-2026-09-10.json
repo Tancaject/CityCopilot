@@ -1,0 +1,148 @@
+{
+  "testOnly": true,
+  "runId": "restart-e11ae54506a143c8814c4716dc1815ad",
+  "startedAt": "2026-09-10T04:45:07.965166+00:00",
+  "passed": true,
+  "environment": {
+    "core": "http://127.0.0.1:8081",
+    "commerce": "http://127.0.0.1:8083",
+    "mysql": "127.0.0.1:33319",
+    "coreDatabase": "citycopilot_booking_core_test",
+    "commerceDatabase": "citycopilot_booking_ui_test",
+    "consumerGroup": "booking-test-ui-v1"
+  },
+  "jar": {
+    "path": ".tools/booking-runtime/commerce-app.jar",
+    "sha256": "4665a7b74f181846cd6b580acd8bc938af0dbf9e1a49d6f4b91cf433c007e9d2",
+    "unchanged": true
+  },
+  "limitations": [
+    "One isolated local JVM restart; no production recovery-time or availability claim.",
+    "Only SELECT statements inspect MySQL; no deadline or worker policy is rewritten.",
+    "The initial 35-second MQ observation timed out; later read-only verification confirmed delayed delivery. This is not real-time synchronization."
+  ],
+  "oldProcess": {
+    "ProcessId": 12756,
+    "ExecutablePath": "C:\\Program Files\\Java\\jdk-17\\bin\\java.exe",
+    "CommandLine": "\"C:\\Program Files\\Java\\jdk-17\\bin\\java.exe\" -Xms128m -Xmx384m -jar .tools/booking-runtime/commerce-app.jar --spring.config.additional-location=file:.tools/booking-runtime/commerce.yaml --citycopilot.commerce.outbox-relay-enabled=true --citycopilot.commerce.rocketmq-enabled=true --citycopilot.commerce.rocketmq-endpoints=127.0.0.1:18089",
+    "CreationDate": "2026-09-10T12:42:10.68392+08:00"
+  },
+  "effectiveHoldSeconds": 120,
+  "fixture": {
+    "userId": "100297",
+    "shopId": "90002",
+    "resourceId": "9",
+    "slotId": "18",
+    "bookingId": "a8038cad-e1b6-45d0-91da-4f43447aa360",
+    "pricingMode": "ON_SITE"
+  },
+  "beforeRestart": {
+    "status": "HELD",
+    "version": 0,
+    "occupied": 2,
+    "databaseNow": "2026-09-10T04:45:09.099000Z",
+    "holdExpiresAt": "2026-09-10T04:47:09.056000Z",
+    "scheduleVersion": 0
+  },
+  "restart": {
+    "stoppedAt": "2026-09-10T04:45:09.7705999+00:00",
+    "newPid": 4168,
+    "oldPid": 12756,
+    "startedAt": "2026-09-10T04:45:09.7974040+00:00",
+    "argumentsPreserved": true,
+    "coreObservedReadyAt": "2026-09-10T04:45:16.255936+00:00"
+  },
+  "afterRestartBeforeExpiry": {
+    "status": "HELD",
+    "version": 0,
+    "occupied": 2,
+    "databaseNow": "2026-09-10T04:45:16.278000Z",
+    "holdExpiresAt": "2026-09-10T04:47:09.056000Z",
+    "scheduleVersion": 0
+  },
+  "afterExpiry": {
+    "status": "HOLD_EXPIRED",
+    "version": 1,
+    "occupied": 0,
+    "databaseNow": "2026-09-10T04:47:11.578000Z",
+    "holdExpiresAt": "2026-09-10T04:47:09.056000Z",
+    "scheduleVersion": 0
+  },
+  "observedExpiryDelayMs": 2522,
+  "cleanup": {
+    "bookingReleased": true,
+    "resourceUnavailable": true
+  },
+  "finishedAt": "2026-09-10T04:47:48.125817+00:00",
+  "initialObservation": {
+    "passed": false,
+    "finishedAt": "2026-09-10T04:47:48.125817+00:00",
+    "mqObservationSeconds": 35,
+    "failure": {
+      "type": "AssertionError",
+      "message": "Real MQ did not project both restart experiment events"
+    }
+  },
+  "messageDelivery": [
+    {
+      "eventId": "3444f91e-f17a-4d25-9e08-be1e2bacaada",
+      "version": 0,
+      "eventType": "commerce.booking.held",
+      "attributed": 0,
+      "inboxStatus": "PROCESSED",
+      "processedAt": "2026-09-10T04:46:43.541000Z",
+      "publishedAt": "2026-09-10T04:45:16.232000Z",
+      "behaviorType": "HELD",
+      "outboxStatus": "PUBLISHED",
+      "businessOccurredAt": "2026-09-10T04:45:09.064Z",
+      "publishedToProcessedMs": 87309.0
+    },
+    {
+      "eventId": "82565de3-0999-4b74-8c8c-15f9f2ef02bf",
+      "version": 1,
+      "eventType": "commerce.booking.hold_expired",
+      "attributed": 0,
+      "inboxStatus": "PROCESSED",
+      "processedAt": "2026-09-10T04:48:39.526000Z",
+      "publishedAt": "2026-09-10T04:47:11.833000Z",
+      "behaviorType": "HOLD_EXPIRED",
+      "outboxStatus": "PUBLISHED",
+      "businessOccurredAt": "2026-09-10T04:47:11Z",
+      "publishedToProcessedMs": 87693.0
+    }
+  ],
+  "projection": {
+    "status": "HOLD_EXPIRED",
+    "version": 1,
+    "attributed": 0
+  },
+  "extendedObservation": {
+    "readOnly": true,
+    "observedAt": "2026-09-10T04:51:31.527119+00:00",
+    "maxWaitSeconds": 180
+  },
+  "diagnostics": {
+    "clocks": {
+      "hostBeforeUtc": "2026-09-10T04:55:01.3460038+00:00",
+      "brokerUtc": "2026-09-10T04:55:01.514975092Z",
+      "mysqlUtc": "2026-09-10T04:55:01.646000Z",
+      "hostAfterUtc": "2026-09-10T04:55:01.6490635+00:00"
+    },
+    "toolUtcSample": "2026-09-10 04:51:57 UTC",
+    "sameEventAuditProcessedAt": "2026-09-10T04:47:11.835Z",
+    "sameEventFeedbackProcessedAt": "2026-09-10T04:48:39.526Z",
+    "sameEventConsumerGroupDifferenceMs": 87691,
+    "consumerProgress": {
+      "queueCount": 8,
+      "consumeDiffTotal": 0,
+      "consumeInflightTotal": 0
+    },
+    "connectionDiagnostics": [
+      "consumerConnection via retry-topic route: no route for %RETRY%booking-test-ui-v1",
+      "consumerConnection via broker address: group not online; does not reconstruct historical gRPC client state"
+    ],
+    "coreProcessInspection": "One Core JVM PID 43888; post-event consumer threads idle; no historical cause established",
+    "latencyCause": "UNRESOLVED",
+    "performanceTargetPassed": false
+  }
+}

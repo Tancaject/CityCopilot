@@ -1,0 +1,65 @@
+name: citycopilot-booking-load
+
+services:
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.5.0
+    user: root
+    mem_limit: 512m
+    environment:
+      JAVA_OPT_EXT: "-Xms192m -Xmx192m -Xmn64m"
+    command: sh mqnamesrv
+    healthcheck:
+      test: [CMD-SHELL, "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/9876'"]
+      interval: 5s
+      retries: 30
+  rocketmq-broker:
+    image: apache/rocketmq:5.5.0
+    user: root
+    mem_limit: 1g
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn192m -XX:MaxDirectMemorySize=192m"
+    command: sh mqbroker -c /home/rocketmq/rocketmq-5.5.0/conf/broker.conf
+    volumes:
+      - ../../deploy/rocketmq/broker.conf:/home/rocketmq/rocketmq-5.5.0/conf/broker.conf:ro
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/10911'"]
+      interval: 5s
+      retries: 30
+  rocketmq-init:
+    image: apache/rocketmq:5.5.0
+    user: root
+    mem_limit: 256m
+    environment:
+      JAVA_OPT_EXT: "-Xms96m -Xmx96m -Xmn32m"
+    command:
+      - sh
+      - -ec
+      - |
+        sh mqadmin updateTopic -n rocketmq-namesrv:9876 -b rocketmq-broker:10911 -t citycopilot-commerce-events-v1
+        sh mqadmin updateTopic -n rocketmq-namesrv:9876 -b rocketmq-broker:10911 -t citycopilot-ops-events-v1
+    depends_on:
+      rocketmq-broker:
+        condition: service_healthy
+  rocketmq-proxy:
+    image: apache/rocketmq:5.5.0
+    user: root
+    mem_limit: 768m
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: "-Xms384m -Xmx384m -Xmn128m -XX:MaxDirectMemorySize=128m"
+    command: sh mqproxy -pc /home/rocketmq/booking-proxy.json
+    volumes:
+      - ./booking-mq-proxy.json:/home/rocketmq/booking-proxy.json:ro
+    ports:
+      - "127.0.0.1:18089:8081"
+    depends_on:
+      rocketmq-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD-SHELL, "bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8081'"]
+      interval: 5s
+      retries: 30

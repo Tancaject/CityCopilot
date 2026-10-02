@@ -4,6 +4,8 @@ import { RouterLink } from 'vue-router';
 import { AlertCircle, Heart, Loader2, RefreshCw, Rss } from '@lucide/vue';
 import { fetchFollowBlogs } from '../api/citycopilot';
 import { assetUrl, blogCover } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
+import { getPaginationLabel } from '../utils/labels';
 import type { Blog } from '../types';
 
 const blogs = ref<Blog[]>([]);
@@ -25,7 +27,7 @@ async function loadFirstPage() {
     offset.value = result.offset;
     hasMore.value = result.list.length > 0;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '关注流加载失败';
+    errorMessage.value = getErrorMessage(error, '关注流加载失败');
   } finally {
     loading.value = false;
   }
@@ -47,7 +49,7 @@ async function loadMore() {
     lastId.value = result.minTime;
     offset.value = result.offset;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '加载更多失败';
+    errorMessage.value = getErrorMessage(error, '加载更多失败');
   } finally {
     loadingMore.value = false;
   }
@@ -60,6 +62,7 @@ onMounted(loadFirstPage);
   <section class="list-hero">
     <p class="eyebrow">Following</p>
     <h1>关注流</h1>
+    <p>按发布时间浏览当前关注作者的笔记，包含历史内容。</p>
   </section>
 
   <section v-if="errorMessage" class="notice notice-error">
@@ -108,7 +111,7 @@ onMounted(loadFirstPage);
 
     <button class="load-more" type="button" :disabled="loading || loadingMore || !hasMore" @click="loadMore">
       <Loader2 v-if="loadingMore" class="spin" :size="17" aria-hidden="true" />
-      {{ loadingMore ? '加载中' : hasMore ? '加载更多' : '没有更多了' }}
+      {{ getPaginationLabel(loadingMore, hasMore) }}
     </button>
   </section>
 </template>

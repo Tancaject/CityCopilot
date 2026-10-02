@@ -4,7 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.contract.tool.ToolAudience;
 import com.citycopilot.core.config.AuditProperties;
@@ -24,13 +24,34 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 业务操作审计服务，保存操作者、目标对象、前后快照和执行结果。
+ *
+ * <p>后台审计查询、CSV 导出和保留期清理都以 {@link OperationLog} 为统一数据源。</p>
+ */
 @Slf4j
 @Service
 public class OperationLogService extends ServiceImpl<OperationLogMapper, OperationLog> {
 
+    /** 审计日志保留天数和单次导出上限。 */
     @Resource
     private AuditProperties auditProperties;
 
+    /**
+     * 记录一次业务操作。
+     *
+     * <p>使用独立事务并吞掉审计写入异常，避免审计设施故障改变原业务结果。</p>
+     *
+     * @param module 业务模块，如 {@code shop} 或 {@code geo}
+     * @param action 稳定操作名称
+     * @param targetType 目标资源类型
+     * @param targetId 可选目标主键
+     * @param targetKey 可读或外部目标标识
+     * @param beforeData 变更前快照
+     * @param afterData 变更后快照或请求数据
+     * @param success 业务操作是否成功
+     * @param errorMessage 失败原因；成功时为空
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(
             String module,
@@ -65,6 +86,16 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
         }
     }
 
+    /**
+     * 按可选条件分页查询最新审计日志。
+     *
+     * @param current 从 1 开始的页码
+     * @param module 可选业务模块
+     * @param action 可选操作名称
+     * @param targetType 可选目标资源类型
+     * @param targetId 可选目标主键
+     * @return 按主键倒序排列的日志页
+     */
     @AgentTool(
             name = "query_audit_logs",
             description = "Query operation audit logs",
@@ -89,6 +120,15 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
                 .page(new Page<>(pageNo, SystemConstants.MAX_PAGE_SIZE));
     }
 
+    /**
+     * 按过滤条件导出受配置上限约束的 CSV 文本。
+     *
+     * @param module 可选业务模块
+     * @param action 可选操作名称
+     * @param targetType 可选目标资源类型
+     * @param targetId 可选目标主键
+     * @return 包含表头的 CSV 内容
+     */
     public String exportLogs(
             String module,
             String action,
@@ -124,6 +164,11 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
         return builder.toString();
     }
 
+    /**
+     * 删除早于当前保留期边界的审计日志。
+     *
+     * @return 清理前统计出的过期日志数量
+     */
     @Transactional
     public Long cleanupExpiredLogs() {
         LocalDateTime cutoff = retentionCutoff();
@@ -134,6 +179,11 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
         return count;
     }
 
+    /**
+     * 汇总审计保留策略与当前过期数量。
+     *
+     * @return 保留天数、导出上限、截止时间及数量统计
+     */
     @AgentTool(
             name = "get_audit_retention_status",
             description = "Get audit retention and cleanup status",
@@ -154,10 +204,17 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
         );
     }
 
+    /** @return 按配置保留天数计算的最早保留时间 */
     private LocalDateTime retentionCutoff() {
         return LocalDateTime.now().minusDays(Math.max(1, auditProperties.getRetentionDays()));
     }
 
+    /**
+     * 尽力把任意快照转为 JSON；不可序列化时退化为字符串，避免影响审计主流程。
+     *
+     * @param value 待记录对象
+     * @return JSON、字符串或 {@code null}
+     */
     private String toJson(Object value) {
         if (value == null) {
             return null;
@@ -169,6 +226,12 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
         }
     }
 
+    /**
+     * 向 CSV 缓冲区追加一行并处理列分隔。
+     *
+     * @param builder 导出缓冲区
+     * @param values 当前行各列值
+     */
     private void appendCsvRow(StringBuilder builder, Object... values) {
         for (int index = 0; index < values.length; index++) {
             if (index > 0) {
@@ -179,6 +242,12 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
         builder.append('\n');
     }
 
+    /**
+     * 按 CSV 规则转义逗号、引号和换行。
+     *
+     * @param builder 导出缓冲区
+     * @param value 单元格值
+     */
     private void appendCsvValue(StringBuilder builder, Object value) {
         if (value == null) {
             return;

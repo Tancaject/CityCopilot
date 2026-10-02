@@ -2,8 +2,15 @@ package com.citycopilot.agent.router;
 
 import java.util.List;
 
+/**
+ * 根据当前用户消息选择 Agent 执行模式的轻量路由器。
+ *
+ * <p>出现顺序表达或写操作意图时进入 Plan-Execute，以获得计划、权限、Critic 和确认保护；其他请求使用成本更低的 ReAct。</p>
+ */
 public final class AgentRouter {
+    /** 暗示多步骤先后关系的中英文标记。 */
     private static final List<String> SEQUENCE_MARKERS = List.of("然后", "接着", "最后", "先", "then", "next", "finally", "first");
+    /** 必须进入确认能力更完整模式的写操作标记。 */
     private static final List<String> WRITE_MARKERS = List.of(
             "下单",
             "支付",
@@ -26,6 +33,10 @@ public final class AgentRouter {
             "retry failed"
     );
 
+    /**
+     * @param message 仅当前轮用户输入，不应包含历史会话
+     * @return 多步骤/写意图为 PLAN_EXECUTE，否则为 REACT
+     */
     public Mode classify(String message) {
         if (message == null || message.isBlank()) {
             return Mode.REACT;

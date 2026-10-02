@@ -1,6 +1,6 @@
 # CityCopilot Frontend
 
-这是 CityCopilot 的 Vue 3 + TypeScript 前端。开发时通过 Vite 代理把 `/api` 转发到主后端 `backend/agent` 的 `http://127.0.0.1:8081`，把 `/uploads` 转发到同一个后端。
+这是 CityCopilot 的 Vue + TypeScript 前端。开发时 Vite 将 `/api/agent` 转发到 Agent（`8082`），其余 `/api` 及 `/uploads` 转发到 Core（`8081`）；API 路径转发时移除 `/api` 前缀。代理配置以 [vite.config.ts](vite.config.ts) 为准。
 
 主要页面包括首页、混合发现店铺列表、店铺详情、订单、关注流、内容发布、AI 面板、地理校准台、订单/券/店铺/用户/内容/审计管理页和 Agent Trace 看板。店铺列表现在调用 `/shop/discovery`，会跟随共享消费位置展示本地已入驻店铺和高德周边 POI；高德 POI 只展示，不进入交易详情。
 
@@ -8,7 +8,7 @@
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -48,14 +48,6 @@ npm run dev
 
 ## 后端配置
 
-后端推荐使用 `CITYCOPILOT_*` 环境变量：
+基础设施、数据库迁移和四个 Java 服务的启动方式见[后端说明](../backend/README.md)与 [Docker Compose 指南](../docs/docker-compose.md)。服务以仓库根目录为工作目录，加载根 `.env`；不要将后端凭据放入 `VITE_*` 变量。
 
-```powershell
-$env:CITYCOPILOT_DB_URL="jdbc:mysql://127.0.0.1:3306/citycopilot?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
-$env:CITYCOPILOT_DB_USERNAME="root"
-$env:CITYCOPILOT_DB_PASSWORD="你的数据库密码"
-$env:CITYCOPILOT_REDIS_HOST="127.0.0.1"
-$env:CITYCOPILOT_REDIS_PORT="6379"
-```
-
-地图、AI、上传和权限相关后端配置使用 `citycopilot.*` 前缀，例如 `citycopilot.geo.default-city`、`citycopilot.ai.model`、`citycopilot.upload.root-dir`。
+预约用户端和商家管理端操作见[预约用户指南](../docs/architecture/booking-user-guide.md)。

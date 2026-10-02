@@ -1,185 +1,173 @@
 package com.citycopilot.core.service.impl;
 
-import cn.hutool.core.bean.BeanUtil;
-import cn.hutool.core.util.BooleanUtil;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.citycopilot.core.dto.BlogView;
 import com.citycopilot.core.dto.Result;
+import com.citycopilot.core.dto.ScrollResult;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.entity.Blog;
-import com.citycopilot.core.entity.Follow;
-import com.citycopilot.core.entity.User;
 import com.citycopilot.core.mapper.BlogMapper;
 import com.citycopilot.core.service.IBlogService;
-import com.citycopilot.core.service.IFollowService;
 import com.citycopilot.core.service.IUserService;
+import com.citycopilot.core.service.OperationLogService;
 import com.citycopilot.core.utils.SystemConstants;
 import com.citycopilot.core.utils.UserHolder;
-import jakarta.annotation.Resource;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import com.citycopilot.core.dto.ScrollResult;
-import org.springframework.data.redis.core.ZSetOperations;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static com.citycopilot.core.utils.RedisConstants.BLOG_LIKED_KEY;
-import static com.citycopilot.core.utils.RedisConstants.FEED_KEY;
-
-/**
- * <p>
- *  服务实现类
- * </p>
- *
- */
+/** MySQL owns community relationships; counts and feed are derived from those facts. */
 @Service
 public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IBlogService {
-    @Resource
-    private IUserService userService;
-    @Resource
-    private IFollowService followService;
-    @Resource
-    private StringRedisTemplate stringRedisTemplate;
+    private final IUserService userService;
+    private final OperationLogService operationLogService;
+
+    public BlogServiceImpl(IUserService userService, OperationLogService operationLogService) {
+        this.userService = userService;
+        this.operationLogService = operationLogService;
+    }
 
     @Override
     public Result queryBlogById(Long id) {
-        Blog blog=getById(id);
-        if (blog==null){
-            return Result.fail("BLOG_NOT_FOUND", "查询不到笔记");
-        }
-        queryBlogUser(blog);
-        isBlogLiked(blog);
-        return Result.ok(blog);
-    }
-
-    private void isBlogLiked(Blog blog) {
-        UserDTO user = UserHolder.getUser();
-        if (user==null)return;//如果用户未登录直接返回，不需要查询是否点赞
-        Long userId= user.getId();
-        Double score=stringRedisTemplate.opsForZSet().score(BLOG_LIKED_KEY+blog.getId(),userId.toString());
-        blog.setIsLike(score!=null );
+        Blog blog = getById(id);
+        if (blog == null) return Result.fail("BLOG_NOT_FOUND", "查询不到笔记");
+        enrich(List.of(blog));
+        return Result.ok(toView(blog));
     }
 
     @Override
     public Result queryHotBlog(Integer current) {
-        // 根据用户查询
-        Page<Blog> page = query()
-                .orderByDesc("liked")
-                .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
-        List<Blog> records = page.getRecords();
-        // 查询用户
-        records.forEach(blog -> {
-            this.queryBlogUser(blog);
-            this.isBlogLiked(blog);
-        });
-        return Result.ok(records);
+        if (current == null || current < 1) return Result.fail("INVALID_PAGE", "页码必须大于零");
+        List<Blog> blogs = query().orderByDesc("liked", "id")
+                .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE)).getRecords();
+        enrich(blogs);
+        return Result.ok(blogs.stream().map(BlogServiceImpl::toView).toList());
     }
 
     @Override
-    public Result likeBlog(Long id) {
-        //获得当前用户id
-        Long userId= UserHolder.getUser().getId();
-        Double score=stringRedisTemplate.opsForZSet().score(BLOG_LIKED_KEY+id,userId.toString());
-        //没点过赞，则点赞+1
-        if (score==null){
-            //更新数据库
-            boolean success = update().setSql("liked = liked +1").eq("id", id).update();
-             if (success){//更新数据库成功则写入redis的sortedSet
-                 stringRedisTemplate.opsForZSet().add(BLOG_LIKED_KEY+id,userId.toString(),System.currentTimeMillis());
-             }
-        }else {//如果已点赞则取消点赞
-            boolean success = update().setSql("liked = liked -1").eq("id", id).update();
-            if (success){//更新数据库成功则从redis中移除用户点赞信息
-                stringRedisTemplate.opsForZSet().remove(BLOG_LIKED_KEY+id,userId.toString());
-            }
+    public Result queryBlogsByUser(Long userId, Integer current) {
+        List<Blog> blogs = query().eq("user_id", userId)
+                .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE)).getRecords();
+        return Result.ok(blogs.stream().map(BlogServiceImpl::toView).toList());
+    }
+
+    @Override
+    public Result queryAdminBlogs(Integer current, String keyword) {
+        int pageNo = current == null || current < 1 ? 1 : current;
+        Page<Blog> page = query()
+                .and(StrUtil.isNotBlank(keyword), wrapper -> wrapper
+                        .like("title", keyword)
+                        .or()
+                        .like("content", keyword))
+                .orderByDesc("id")
+                .page(new Page<>(pageNo, SystemConstants.MAX_PAGE_SIZE));
+        return Result.ok(page.convert(BlogServiceImpl::toView));
+    }
+
+    @Override
+    public Result deleteBlog(Long id) {
+        Blog before = getById(id);
+        if (before == null) {
+            return Result.fail("BLOG_NOT_FOUND", "笔记不存在");
         }
+        removeById(id);
+        // 审计仍在删除完成后独立写入，不把两者扩展为同一事务。
+        operationLogService.record("content", "blog_delete", "blog", id, String.valueOf(id), before, null, true, null);
+        return Result.ok();
+    }
+
+    @Override
+    public Long countBlogs() {
+        return query().count();
+    }
+
+    @Override
+    public Long countBlogsCreatedSince(LocalDateTime since) {
+        return query().ge("create_time", since).count();
+    }
+
+    @Override
+    @Transactional
+    public Result likeBlog(Long id) {
+        Long userId = UserHolder.getUser().getId();
+        // The note row serializes toggles and counter maintenance in the same transaction.
+        // ponytail: one row lock per note; split counter aggregation only after measured hot-note contention.
+        if (baseMapper.lockNote(id) == null) return Result.fail("BLOG_NOT_FOUND", "笔记不存在");
+        boolean removed = baseMapper.deleteLike(id, userId) > 0;
+        if (!removed) {
+            baseMapper.insertLike(id, userId, System.currentTimeMillis());
+        }
+        baseMapper.adjustLikeCount(id, removed ? -1 : 1);
         return Result.ok();
     }
 
     @Override
     public Result queryBlogLikes(Long id) {
-         //查询top5的点赞用户
-        Set<String> top5 = stringRedisTemplate.opsForZSet().range(BLOG_LIKED_KEY + id, 0, 4);
-        if (top5==null||top5.isEmpty())return Result.ok(Collections.emptyList());
-        //解析出用户id
-        List<Long> ids = top5.stream().map(Long::valueOf).collect(Collectors.toList());
-        //根据id查用户
-        List<UserDTO> userDTOS = userService.listByIds(ids).stream().map(user -> BeanUtil.copyProperties(user, UserDTO.class)).collect(Collectors.toList());
-        return Result.ok(userDTOS);
+        List<Long> ids = baseMapper.firstLikers(id);
+        if (ids.isEmpty()) return Result.ok(List.of());
+        Map<Long, UserDTO> users = userService.findUserProfiles(ids).stream()
+                .collect(Collectors.toMap(UserDTO::getId, Function.identity()));
+        return Result.ok(ids.stream().map(users::get).filter(Objects::nonNull).toList());
     }
 
     @Override
     public Result saveBlog(Blog blog) {
-        //获得登录用户信息
-        UserDTO userDTO=UserHolder.getUser();
-        blog.setUserId(userDTO.getId());
-        //保存探店笔记
-        boolean isSuccess=save(blog);
-        if (!isSuccess){
-            return Result.fail("BLOG_CREATE_FAILED", "新增笔记失败！");
-        }
-        //查询笔记作者所有粉丝
-        List<Follow> follows = followService.query().eq("follow_user_id", userDTO.getId()).list();
-        //推送笔记给粉丝
-        for (Follow follow:follows){
-            Long userId = follow.getUserId();
-            //推送
-            String key=FEED_KEY+userId;
-            stringRedisTemplate.opsForZSet().add(key,blog.getId().toString(),System.currentTimeMillis());
-        }
-        return Result.ok(blog.getId());
+        blog.setId(null);
+        blog.setUserId(UserHolder.getUser().getId());
+        blog.setLiked(0);
+        blog.setComments(0);
+        blog.setCreateTime(null);
+        blog.setUpdateTime(null);
+        return save(blog) ? Result.ok(blog.getId()) : Result.fail("BLOG_CREATE_FAILED", "新增笔记失败");
     }
 
     @Override
     public Result queryBlogOfFollow(Long lastId, Integer offset) {
-        Long userId = UserHolder.getUser().getId();
-        // 从 Redis ZSet 中滚动分页查询：ZREVRANGEBYSCORE feed:{userId} lastId 0 WITHSCORES LIMIT offset count
-        String key = FEED_KEY + userId;
-        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
-                .reverseRangeByScoreWithScores(key, 0, lastId, offset, 3);
-        if (typedTuples == null || typedTuples.isEmpty()) {
-            return Result.ok();
+        if (lastId == null || lastId < 0 || offset == null || offset < 0) {
+            return Result.fail("INVALID_CURSOR", "关注动态游标无效，请刷新后重试");
         }
-        // 解析数据：blogId、score（时间戳）、offset
-        List<Long> ids = new ArrayList<>(typedTuples.size());
-        long minTime = 0;
-        int os = 1; // 统计与最小时间戳相同的元素个数（用于下次分页偏移）
-        for (ZSetOperations.TypedTuple<String> tuple : typedTuples) {
-            ids.add(Long.valueOf(tuple.getValue()));
-            long time = tuple.getScore().longValue();
-            if (time == minTime) {
-                os++;
-            } else {
-                minTime = time;
-                os = 1;
-            }
-        }
-        // 根据 id 查询 blog（保持顺序）
-        String idStr = ids.stream().map(String::valueOf).collect(Collectors.joining(","));
-        List<Blog> blogs = query().in("id", ids)
-                .last("ORDER BY FIELD(id," + idStr + ")").list();
-        blogs.forEach(blog -> {
-            queryBlogUser(blog);
-            isBlogLiked(blog);
-        });
-        // 封装返回
+        List<BlogMapper.FeedEntry> entries = baseMapper.followFeed(UserHolder.getUser().getId(), lastId, offset);
+        if (entries.isEmpty()) return Result.ok();
+        List<Long> ids = entries.stream().map(BlogMapper.FeedEntry::id).toList();
+        Map<Long, Blog> byId = listByIds(ids).stream().collect(Collectors.toMap(Blog::getId, Function.identity()));
+        List<Blog> blogs = ids.stream().map(byId::get).filter(Objects::nonNull).toList();
+        enrich(blogs);
+        long minTime = entries.get(entries.size() - 1).time();
+        int sameTime = (int) entries.stream().filter(entry -> entry.time() == minTime).count();
         ScrollResult result = new ScrollResult();
-        result.setList(blogs);
+        result.setList(blogs.stream().map(BlogServiceImpl::toView).toList());
         result.setMinTime(minTime);
-        result.setOffset(os);
+        result.setOffset(sameTime + (minTime == lastId ? offset : 0));
         return Result.ok(result);
     }
 
-    private void queryBlogUser(Blog blog) {
-        Long userId = blog.getUserId();
-        User user = userService.getById(userId);
-        blog.setName(user.getNickName());
-        blog.setIcon(user.getIcon());
+    private static BlogView toView(Blog blog) {
+        return new BlogView(blog.getId(), blog.getShopId(), blog.getUserId(),
+                blog.getIcon(), blog.getName(), blog.getIsLike(), blog.getTitle(),
+                blog.getImages(), blog.getContent(), blog.getLiked(), blog.getComments(),
+                blog.getCreateTime(), blog.getUpdateTime());
+    }
+
+    private void enrich(List<Blog> blogs) {
+        if (blogs.isEmpty()) return;
+        Map<Long, UserDTO> authors = userService.findUserProfiles(blogs.stream().map(Blog::getUserId).distinct().toList())
+                .stream().collect(Collectors.toMap(UserDTO::getId, Function.identity()));
+        UserDTO viewer = UserHolder.getUser();
+        Set<Long> liked = viewer == null ? Set.of() : new HashSet<>(baseMapper.likedNotes(viewer.getId(),
+                blogs.stream().map(Blog::getId).toList()));
+        for (Blog blog : blogs) {
+            UserDTO author = authors.get(blog.getUserId());
+            if (author != null) {
+                blog.setName(author.getNickName());
+                blog.setIcon(author.getIcon());
+            }
+            blog.setIsLike(liked.contains(blog.getId()));
+        }
     }
 }

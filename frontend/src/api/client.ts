@@ -10,11 +10,15 @@ interface ApiResult<T> {
 
 export class ApiError extends Error {
   code?: string;
+  status?: number;
+  details?: unknown;
 
-  constructor(message: string, code?: string) {
+  constructor(message: string, code?: string, status?: number, details?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
+    this.status = status;
+    this.details = details;
   }
 }
 
@@ -38,8 +42,8 @@ api.interceptors.response.use(
       window.dispatchEvent(new CustomEvent('citycopilot:auth-expired'));
       return Promise.reject(new ApiError('请先登录', error.response?.data?.code || 'AUTH_REQUIRED'));
     }
-    const message = error.response?.data?.errorMsg || error.message || '服务暂时不可用';
-    return Promise.reject(new ApiError(message, error.response?.data?.code));
+    const message = error.response?.data?.errorMsg || error.response?.data?.message || error.message || '服务暂时不可用';
+    return Promise.reject(new ApiError(message, error.response?.data?.code, error.response?.status, error.response?.data));
   },
 );
 

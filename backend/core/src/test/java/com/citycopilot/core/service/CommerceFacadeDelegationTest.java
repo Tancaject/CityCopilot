@@ -1,5 +1,8 @@
 package com.citycopilot.core.service;
 
+import com.citycopilot.contract.commerce.CommerceContracts.ConsistencyRepairResult;
+import com.citycopilot.contract.commerce.CommerceContracts.DeadLetterView;
+import com.citycopilot.contract.commerce.CommerceContracts.DeadLetterReplayResult;
 import com.citycopilot.core.commerce.CommercePortClient;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.VoucherRequest;
@@ -92,12 +95,13 @@ class CommerceFacadeDelegationTest {
                 "conflicts", List.of(),
                 "evidenceHash", "hash-1"
         );
-        Map<String, Object> repair = Map.of("verified", true);
-        List<Map<String, Object>> deadLetters = List.of(Map.of("recordId", "1-0"));
-        Map<String, Object> replay = Map.of("status", "replayed");
+        ConsistencyRepairResult repair = new ConsistencyRepairResult(7L, 8, 2, 0, "hash-1", "hash-2", true);
+        Map<String, Object> verification = Map.of("verified", true);
+        List<DeadLetterView> deadLetters = List.of(new DeadLetterView("1-0", "error", 3, null, null, null));
+        DeadLetterReplayResult replay = new DeadLetterReplayResult("already_replayed", "1-0", null, null, null, null, null);
         when(port.consistency(7L)).thenReturn(snapshot);
         when(port.repairConsistency(7L, "hash-1")).thenReturn(repair);
-        when(port.verifyConsistency(7L)).thenReturn(repair);
+        when(port.verifyConsistency(7L)).thenReturn(verification);
         when(port.deadLetters(5)).thenReturn(deadLetters);
         when(port.replayDeadLetter("1-0")).thenReturn(replay);
 
@@ -113,7 +117,7 @@ class CommerceFacadeDelegationTest {
                 .containsEntry("currentRedisStock", null)
                 .containsEntry("targetRedisStock", 8);
         assertThat(consistency.repairStock(7L, "hash-1")).isSameAs(repair);
-        assertThat(consistency.verify(7L)).isSameAs(repair);
+        assertThat(consistency.verify(7L)).isSameAs(verification);
         assertThat(recovery.listDeadLetters(5)).isSameAs(deadLetters);
         assertThat(recovery.replayDeadLetter("1-0")).isSameAs(replay);
 

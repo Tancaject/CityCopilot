@@ -5,6 +5,7 @@ import { AlertCircle, ArrowLeft, Heart, Loader2, RefreshCw, Store, UserPlus } fr
 import { checkFollow, fetchBlog, fetchBlogLikes, followUser, likeBlog } from '../api/citycopilot';
 import { authState, initAuth } from '../composables/auth';
 import { assetUrl, blogContentText, firstImage } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
 import type { Blog, UserDTO } from '../types';
 
 const props = defineProps<{
@@ -35,7 +36,7 @@ async function loadBlog() {
     blog.value = await fetchBlog(props.id);
     await loadBlogMeta();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '笔记详情加载失败';
+    errorMessage.value = getErrorMessage(error, '笔记详情加载失败');
   } finally {
     loading.value = false;
   }
@@ -83,7 +84,7 @@ async function toggleLike() {
       secondaryMessage.value = '点赞用户暂时不可用';
     }
   } catch (error) {
-    actionMessage.value = error instanceof Error ? error.message : '点赞失败';
+    actionMessage.value = getErrorMessage(error, '点赞失败');
   }
 }
 
@@ -100,7 +101,7 @@ async function toggleFollow() {
     await followUser(blog.value.userId, !following.value);
     following.value = !following.value;
   } catch (error) {
-    actionMessage.value = error instanceof Error ? error.message : '关注失败';
+    actionMessage.value = getErrorMessage(error, '关注失败');
   }
 }
 

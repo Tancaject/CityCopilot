@@ -11,15 +11,15 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.annotation.Resource;
 
 /**
- * <p>
- *  前端控制器
- * </p>
+ * 前台优惠券查询及兼容创建接口。
  *
+ * <p>Core 只负责 HTTP 门面，优惠券权威写入和存储由 {@link IVoucherService} 转发到 Commerce。</p>
  */
 @RestController
 @RequestMapping("/voucher")
 public class VoucherController {
 
+    /** Commerce 优惠券端口的 Core 适配服务。 */
     @Resource
     private IVoucherService voucherService;
 
@@ -31,6 +31,7 @@ public class VoucherController {
     @PostMapping
     @RequirePermission(PermissionCodes.VOUCHER_WRITE)
     public Result addVoucher(@RequestBody VoucherRequest voucher) {
+        // 明确覆盖客户端 type，保证该路由只能创建普通券。
         voucher.setType(0);
         return voucherService.createVoucher(voucher);
     }
@@ -43,6 +44,7 @@ public class VoucherController {
     @PostMapping("seckill")
     @RequirePermission(PermissionCodes.VOUCHER_WRITE)
     public Result addSeckillVoucher(@RequestBody VoucherRequest voucher) {
+        // 明确覆盖客户端 type，保证该路由进入秒杀券创建合同。
         voucher.setType(1);
         return voucherService.createVoucher(voucher);
     }

@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { authState, initAuth } from '../composables/auth';
-import { hasAllPermissions } from '../utils/permissions';
+import { hasAllPermissions, hasPermission } from '../utils/permissions';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -53,6 +53,30 @@ const routes: RouteRecordRaw[] = [
     name: 'admin-dashboard',
     component: () => import('../views/AdminDashboardView.vue'),
     meta: { requiresAuth: true, requiredPermissions: ['admin:access'] },
+  },
+  {
+    path: '/bookings',
+    name: 'bookings',
+    component: () => import('../views/BookingsView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/booking/confirm/:id',
+    name: 'booking-confirmation',
+    component: () => import('../views/BookingConfirmationView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/bookings/:id',
+    name: 'booking-detail',
+    component: () => import('../views/BookingsView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/admin/bookings',
+    name: 'admin-bookings',
+    component: () => import('../views/AdminBookingsView.vue'),
+    meta: { requiresAuth: true, requiredAnyPermissions: ['booking:manage', 'booking:check-in'] },
   },
   {
     path: '/admin/geo-shops',
@@ -143,6 +167,10 @@ router.beforeEach(async (to) => {
     };
   }
   const requiredPermissions = Array.isArray(to.meta.requiredPermissions) ? to.meta.requiredPermissions : [];
+  const requiredAnyPermissions = Array.isArray(to.meta.requiredAnyPermissions) ? to.meta.requiredAnyPermissions : [];
+  if (requiredAnyPermissions.length && !requiredAnyPermissions.some((permission) => hasPermission(authState.user, permission))) {
+    return { name: 'forbidden' };
+  }
   if (requiredPermissions.length) {
     if (!hasAllPermissions(authState.user, requiredPermissions as string[])) {
       return { name: 'forbidden' };

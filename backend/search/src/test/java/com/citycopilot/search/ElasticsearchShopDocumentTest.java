@@ -1,6 +1,7 @@
 package com.citycopilot.search;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
@@ -9,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ElasticsearchShopDocumentTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+    private final ObjectMapper objectMapper = JsonMapper.builderWithJackson2Defaults().findAndAddModules().build();
 
     @Test
     void jacksonRoundTripPreservesGeoPointAndApiFields() throws Exception {

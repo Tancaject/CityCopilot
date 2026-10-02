@@ -1,0 +1,257 @@
+# Example thresholds; they are not a measured SLO or a configured notification channel.
+groups:
+  - name: citycopilot-rocketmq-consumer-lag
+    rules:
+      - alert: CityCopilotBrokerMetricsDown
+        expr: up{job="citycopilot-rocketmq-broker",broker_metrics_role="true"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: RocketMQ Broker 原生指标连续抓取失败
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#broker-consumer-lag
+
+      - alert: CityCopilotBrokerConsumerBacklog
+        expr: |
+          max by (job, cluster, node_id, topic, consumer_group, is_retry) (
+            rocketmq_consumer_lag_messages{job="citycopilot-rocketmq-broker",broker_metrics_role="true",node_type="broker",consumer_group=~"citycopilot-.+"}
+            and on (job, instance) (up{job="citycopilot-rocketmq-broker"} == 1)
+          ) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: RocketMQ 消费组在单个 Broker 的积压持续过高
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#broker-consumer-lag
+
+      - alert: CityCopilotBrokerConsumerLagAge
+        expr: |
+          max by (job, cluster, node_id, topic, consumer_group, is_retry) (
+            rocketmq_consumer_lag_latency_milliseconds{job="citycopilot-rocketmq-broker",broker_metrics_role="true",node_type="broker",consumer_group=~"citycopilot-.+"}
+            and on (job, instance) (up{job="citycopilot-rocketmq-broker"} == 1)
+          ) > 120000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: RocketMQ 消费组最老未确认消息持续超时
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#broker-consumer-lag
+
+  - name: citycopilot-ops-cases
+    rules:
+      - alert: CityCopilotOpsManualActionRequired
+        expr: |
+          max by (job) (
+            citycopilot_ops_case_manual_required{job="citycopilot-agent",ops_case_role="true"}
+            and on (job, instance) (up{job="citycopilot-agent"} == 1)
+            and on (job, instance) (citycopilot_ops_case_sample_timestamp_seconds > 0)
+            and on (job, instance) (time() - citycopilot_ops_case_sample_timestamp_seconds <= 90)
+          ) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Ops 存在待人工复核或失败待处置的 Case
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#ops-cases
+
+      - alert: CityCopilotOpsCaseSampleStale
+        expr: |
+          (
+            (citycopilot_ops_case_sample_timestamp_seconds{job="citycopilot-agent",ops_case_role="true"} == 0)
+            or (time() - citycopilot_ops_case_sample_timestamp_seconds{job="citycopilot-agent",ops_case_role="true"} > 90)
+            or (
+              up{job="citycopilot-agent",ops_case_role="true"}
+              unless on (job, instance) citycopilot_ops_case_sample_timestamp_seconds
+            )
+          )
+          and on (job, instance) (up{job="citycopilot-agent"} == 1)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Ops Case 数据库采样失鲜或缺失
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#ops-cases
+
+  - name: citycopilot-availability-and-queues
+    rules:
+      - alert: CityCopilotTargetDown
+        expr: up{job=~"citycopilot-(core|agent|commerce)"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: CityCopilot 服务指标连续抓取失败
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#target-down
+
+      - alert: CityCopilotCommerceOutboxAge
+        expr: |
+          max by (job) (
+            citycopilot_commerce_outbox_oldest_ready_age_seconds{job="citycopilot-commerce"}
+            and on (job, instance) (up{job="citycopilot-commerce"} == 1)
+          ) > 120
+        for: 5m
+        labels:
+          severity: warning
+          queue: commerce-outbox
+        annotations:
+          summary: Commerce 最老未发布事件持续超时
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#commerce-outbox
+
+      - alert: CityCopilotShopProjectionAge
+        expr: |
+          max by (job) (
+            citycopilot_shop_projection_oldest_age_seconds{job="citycopilot-core"}
+            and on (job, instance) (up{job="citycopilot-core"} == 1)
+            and on (job, instance) (citycopilot_shop_projection_sample_timestamp_seconds{job="citycopilot-core"} > 0)
+            and on (job, instance) (time() - citycopilot_shop_projection_sample_timestamp_seconds{job="citycopilot-core"} <= 90)
+          ) > 120
+        for: 5m
+        labels:
+          severity: warning
+          queue: shop-projection
+        annotations:
+          summary: 店铺搜索与 GEO 投影积压持续超时
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#shop-projection
+
+      - alert: CityCopilotProjectionSampleStale
+        expr: |
+          (
+            (citycopilot_shop_projection_sample_timestamp_seconds{job="citycopilot-core"} == 0)
+            or (time() - citycopilot_shop_projection_sample_timestamp_seconds{job="citycopilot-core"} > 90)
+            or (
+              up{job="citycopilot-core",projection_role="true"}
+              unless on (job, instance) citycopilot_shop_projection_sample_timestamp_seconds{job="citycopilot-core"}
+            )
+          )
+          and on (job, instance) (up{job="citycopilot-core"} == 1)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 店铺投影积压采样失鲜或缺失
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable
+
+      - alert: CityCopilotOutboxMetricUnavailable
+        expr: |
+          (
+            (
+              citycopilot_commerce_outbox_oldest_ready_age_seconds{job="citycopilot-commerce"}
+              != citycopilot_commerce_outbox_oldest_ready_age_seconds{job="citycopilot-commerce"}
+            )
+            or (
+              up{job="citycopilot-commerce",outbox_relay_role="true"}
+              unless on (job, instance) citycopilot_commerce_outbox_oldest_ready_age_seconds{job="citycopilot-commerce"}
+            )
+          )
+          and on (job, instance) (up{job="citycopilot-commerce"} == 1)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Commerce Outbox 指标缺失或采样失败
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable
+
+      - alert: CityCopilotOrderCompletionAge
+        expr: |
+          max by (job) (
+            citycopilot_commerce_order_pending_oldest_age_seconds{job="citycopilot-commerce"}
+            and on (job, instance) (up{job="citycopilot-commerce"} == 1)
+            and on (job, instance) (citycopilot_commerce_order_completion_sample_timestamp_seconds{job="citycopilot-commerce"} > 0)
+            and on (job, instance) (time() - citycopilot_commerce_order_completion_sample_timestamp_seconds{job="citycopilot-commerce"} <= 90)
+          ) > 120
+        for: 5m
+        labels:
+          severity: warning
+          queue: commerce-admission
+        annotations:
+          summary: 已受理订单持续未完成持久化
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#order-completion
+
+      - alert: CityCopilotAdmissionRepairRequired
+        expr: |
+          max by (job) (
+            citycopilot_commerce_order_repair_required{job="citycopilot-commerce"}
+            and on (job, instance) (up{job="citycopilot-commerce"} == 1)
+            and on (job, instance) (citycopilot_commerce_order_completion_sample_timestamp_seconds{job="citycopilot-commerce"} > 0)
+            and on (job, instance) (time() - citycopilot_commerce_order_completion_sample_timestamp_seconds{job="citycopilot-commerce"} <= 90)
+          ) > 0
+        for: 2m
+        labels:
+          severity: critical
+          queue: commerce-admission
+        annotations:
+          summary: 订单准入账本存在需要人工修复的记录
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#order-completion
+
+      - alert: CityCopilotOrderCompletionSampleStale
+        expr: |
+          (
+            (citycopilot_commerce_order_completion_sample_timestamp_seconds{job="citycopilot-commerce"} == 0)
+            or (time() - citycopilot_commerce_order_completion_sample_timestamp_seconds{job="citycopilot-commerce"} > 90)
+            or (
+              up{job="citycopilot-commerce"}
+              unless on (job, instance) citycopilot_commerce_order_completion_sample_timestamp_seconds{job="citycopilot-commerce"}
+            )
+          )
+          and on (job, instance) (up{job="citycopilot-commerce"} == 1)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 订单持久化完成指标采样失鲜或缺失
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#sample-unavailable
+
+      - alert: CityCopilotBookingProjectionConsumerUnavailable
+        expr: |
+          (up{job="citycopilot-core",booking_projection_role="true"} == 1)
+          unless on (job, instance) (
+            (citycopilot_booking_projection_consumer_active{job="citycopilot-core"} == 1)
+            and on (job, instance) citycopilot_booking_projection_last_commit_seconds{job="citycopilot-core"}
+          )
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 应运行预约业务投影的实例未启动消费者或指标缺失
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#booking-projection
+
+      - alert: CityCopilotBookingProjectionFailure
+        expr: |
+          sum by (job) (
+            increase(citycopilot_booking_business_consume_total{job="citycopilot-core",booking_projection_role="true",outcome=~"failure|quarantined"}[5m])
+            and on (job, instance) (up{job="citycopilot-core"} == 1)
+          ) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 预约业务事件近期消费失败或发生载荷冲突隔离
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#booking-projection
+
+      - alert: CityCopilotBookingProjectionDelay
+        expr: |
+          max by (job) (
+            citycopilot_booking_projection_last_delay_seconds{job="citycopilot-core",booking_projection_role="true"}
+            and on (job, instance) (up{job="citycopilot-core"} == 1)
+            and on (job, instance) (citycopilot_booking_projection_last_commit_seconds{job="citycopilot-core"} > 0)
+            and on (job, instance) (time() - citycopilot_booking_projection_last_commit_seconds{job="citycopilot-core"} <= 300)
+          ) > 120
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 新提交预约业务投影的事件发生至提交延迟过高
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#booking-projection
+
+      - alert: CityCopilotBookingProjectionClockSkew
+        expr: |
+          sum by (job) (
+            increase(citycopilot_booking_projection_clock_skew_total{job="citycopilot-core",booking_projection_role="true"}[5m])
+            and on (job, instance) (up{job="citycopilot-core"} == 1)
+          ) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 预约事件发生时间晚于投影提交观测时间
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#booking-projection

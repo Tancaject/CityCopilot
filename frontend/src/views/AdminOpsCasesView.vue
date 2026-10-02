@@ -8,6 +8,7 @@ import {
   fetchOpsCases,
   retryOpsCase,
 } from '../api/citycopilot';
+import { getErrorMessage } from '../utils/errors';
 import type { OpsCase, OpsCaseDetail, OpsPlanSubmission } from '../types';
 
 const cases = ref<OpsCase[]>([]);
@@ -41,7 +42,7 @@ async function loadCases(selectId?: string) {
     const id = selectId || selected.value?.case.id || cases.value[0]?.id;
     selected.value = id ? await fetchOpsCase(id) : null;
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Case 加载失败';
+    error.value = getErrorMessage(cause, 'Case 加载失败');
   } finally {
     loading.value = false;
   }
@@ -77,7 +78,7 @@ async function prepareRepair() {
     );
     await loadCases(item.case.id);
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '计划创建失败';
+    error.value = getErrorMessage(cause, '计划创建失败');
   } finally {
     busy.value = false;
   }
@@ -96,7 +97,7 @@ async function decide(approved: boolean) {
     pendingApproval.value = null;
     window.setTimeout(() => loadCases(caseId), approved ? 2500 : 300);
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : '审批失败';
+    error.value = getErrorMessage(cause, '审批失败');
   } finally {
     busy.value = false;
   }

@@ -10,12 +10,7 @@ import lombok.experimental.Accessors;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
-/**
- * <p>
- * 
- * </p>
- *
- */
+/** 对应 {@code user_account} 表的认证账户实体，包含密码摘要与角色。 */
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
@@ -36,7 +31,7 @@ public class User implements Serializable {
     private String phone;
 
     /**
-     * 密码，加密存储
+     * 密码摘要，不保存明文密码
      */
     private String password;
 
@@ -50,9 +45,7 @@ public class User implements Serializable {
      */
     private String icon = "";
 
-    /**
-     * 用户角色：admin/user
-     */
+    /** 权限策略使用的角色标识，例如 user、admin、merchant 等。 */
     private String role = "user";
 
     /**

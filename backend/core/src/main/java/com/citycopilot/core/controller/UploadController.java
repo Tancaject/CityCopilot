@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+/** 博客图片上传和删除接口；可通过配置整体关闭。 */
 @RestController
 @RequestMapping("upload")
 @ConditionalOnProperty(
@@ -16,9 +17,14 @@ import org.springframework.web.multipart.MultipartFile;
         matchIfMissing = true)
 public class UploadController {
 
+    /** 校验文件类型/大小并限制路径穿越的本地存储服务。 */
     @Resource
     private FileStorageService fileStorageService;
 
+    /**
+     * @param image multipart 图片文件
+     * @return 可公开访问的图片路径，或 UPLOAD_INVALID 失败
+     */
     @PostMapping("blog")
     public Result uploadImage(@RequestParam("file") MultipartFile image) {
         try {
@@ -28,6 +34,10 @@ public class UploadController {
         }
     }
 
+    /**
+     * @param filename 待删除图片的公开路径或文件名
+     * @return 删除结果；非法路径返回 UPLOAD_INVALID
+     */
     @GetMapping("/blog/delete")
     public Result deleteBlogImg(@RequestParam("name") String filename) {
         try {

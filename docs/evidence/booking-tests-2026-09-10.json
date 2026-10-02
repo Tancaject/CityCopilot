@@ -1,0 +1,357 @@
+{
+  "capturedAt": "2026-09-10T04:40:47.4771967Z",
+  "suites": [
+    {
+      "name": "com.citycopilot.commerce.booking.BookingLifecycleIT",
+      "tests": 17,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 13.86,
+      "sourceReport": "backend/commerce-service/target/failsafe-reports/TEST-com.citycopilot.commerce.booking.BookingLifecycleIT.xml",
+      "sourceReportSha256": "e8d013a499bf22856ea3b55e42ec593f5338315efa4e3c06bc5c412620b22e89",
+      "testCases": [
+        "heldCanCancelNearStartAndConfirmedCancellationHonorsCutoff",
+        "rescheduleKeepsOriginalOnFullTargetAndAppliesSameSlotPartyDelta",
+        "pricedRescheduleFailurePreservesOldCouponPriceAndBookingThenCheckinConsumesOnce",
+        "couponQuotaIncludesReservedCouponsAndClaimReplaySurvivesIssuanceStop",
+        "sameCouponCannotBindTwoConfirmedBookingsAndExpiryCannotTransferIt",
+        "unavailableHoldCommitsCancellationButStopNewHonorsExistingHold",
+        "reminderVersionInvalidationAndNoShowKeepHistoricalCapacity",
+        "outboxFailureRollsBackNewAndOldSlotsBookingAndCommandTogether",
+        "expiryRacesConfirmationAndUserCancellationReleasesOnlyOnce",
+        "stoppedNewEntryStillAllowsExistingConfirmationCancellationAndExpiry",
+        "couponRevocationBeforeConfirmationCommitsARecoverableCancellation",
+        "quoteAndCouponAreSingleUseAndHoldFreezesTheAcceptedPrice",
+        "twoInstancesRespectCourtAndDiningCapacityAndUserQuota",
+        "batchFiltersAllCandidateDiscountsBeforeTakingFiveAndDoesNotInventOnSitePrices",
+        "checkinUsesCurrentScheduleTokenAndDoesNotClaimPayment",
+        "committedCommandsReplayBeforeMutableVersionAndCutoffChecks",
+        "slotPublicationRejectsOverlapAndQuotaCountsConfirmedBookings"
+      ]
+    },
+    {
+      "name": "com.citycopilot.commerce.pricing.BookingPriceCalculatorTest",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 0.322,
+      "sourceReport": "backend/commerce-service/target/surefire-reports/TEST-com.citycopilot.commerce.pricing.BookingPriceCalculatorTest.xml",
+      "sourceReportSha256": "b893446f11fb478311ca1a2ec0cc17f233270b51090bfe31a0df4ccd07b33cff",
+      "testCases": [
+        "checksMoneyBoundsAndQuantityMultiplication",
+        "breaksTiesByCouponCountThenEarliestExpiryThenSortedIds",
+        "usesAllTwentyCandidatesAndRejectsOverflowRatherThanTruncating",
+        "roundsPayableHalfUpInCents(long, int, long)[1]",
+        "roundsPayableHalfUpInCents(long, int, long)[2]",
+        "roundsPayableHalfUpInCents(long, int, long)[3]",
+        "roundsPayableHalfUpInCents(long, int, long)[4]",
+        "roundsPayableHalfUpInCents(long, int, long)[5]",
+        "capsPercentageDiscountAndNeverMakesAmountNegative",
+        "comparesEveryCombinationAndUsesOriginalAmountForThreshold",
+        "requiresBothStackableFlagsDifferentTypesAndDistinctIds"
+      ]
+    },
+    {
+      "name": "com.citycopilot.core.booking.BookingFeedbackIT",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 11.107,
+      "sourceReport": "backend/core/target/failsafe-reports/TEST-com.citycopilot.core.booking.BookingFeedbackIT.xml",
+      "sourceReportSha256": "dd50ef8f1a1ffdbdd070e50d8ad3d68f6f03576890f8a5bd48ced27eb5559b20",
+      "testCases": [
+        "distinctUserShopPairsCanInsertInitialProjectionsConcurrently",
+        "differentPayloadUnderSameIdIsQuarantinedWithoutChangingFacts",
+        "concurrentDistinctEventsDoNotLoseFeatureCounts",
+        "factFailureRollsBackInboxAndVersionWatermarkThenRetryWorks",
+        "migrationRetainsRowsAndCleanupKeepsBusinessFactsOutsideFeatureWindow",
+        "expiredImpressionCannotAttributeNewBookingButVerifiedBookingKeepsFulfillmentAttribution",
+        "recordsRealBusinessWithoutAttributingUnissuedOrOtherUsersImpression",
+        "deduplicatesFeedbackAndClearedNegativeNeverReappearsOnRebuildOrReplay",
+        "lateConfirmedFactIsCountedWhileUsedProjectionStaysAtHigherVersion",
+        "rejectsForgedUserCandidateAndBusinessFeedback",
+        "consumesActualZeroBasedOutboxEnvelopeAndRejectsMissingOrNonIntegerVersions"
+      ]
+    },
+    {
+      "name": "com.citycopilot.core.booking.BookingConfirmationServiceIT",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 11.871,
+      "sourceReport": "backend/core/target/failsafe-reports/TEST-com.citycopilot.core.booking.BookingConfirmationServiceIT.xml",
+      "sourceReportSha256": "573dfb93b68e6bdfdbb83538af81b71d1c8a74b05f2ad0a81dd90e4a708c5de5",
+      "testCases": [
+        "tamperedPriceAndExpiredAtomicApprovalAreRejected",
+        "lostReplySurvivesASecondCoreInstanceAndKeepsOriginalCommerceKey",
+        "finalConfirmationUsesHeldDeadlineAndFrozenPriceWithoutFetchingExpiredQuote",
+        "modelToolsOnlyProposeAndWrongOwnerCannotReadOrApprove"
+      ]
+    },
+    {
+      "name": "com.citycopilot.core.booking.BookingPlanServiceTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 10.606,
+      "sourceReport": "backend/core/target/surefire-reports/TEST-com.citycopilot.core.booking.BookingPlanServiceTest.xml",
+      "sourceReportSha256": "1a7c5c6656eff05d2339bc5748da22ca274ea95b1725ae846e5d2edc46031867",
+      "testCases": [
+        "toolCatalogDescribesStructuredRequestAndInvalidCoordinatesCannotQuery",
+        "ambiguousBudgetAndMissingPeopleClarifyWithoutQueryingOrReserving",
+        "perPersonBudgetBecomesExactTotalAndDistanceConstraintReachesDiscovery"
+      ]
+    },
+    {
+      "name": "com.citycopilot.agent.executor.BookingConfirmationExecutionTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 8.184,
+      "sourceReport": "backend/agent/target/surefire-reports/TEST-com.citycopilot.agent.executor.BookingConfirmationExecutionTest.xml",
+      "sourceReportSha256": "e508afc1ebe65f60135ce82c761b6e292877abd2486ac2e77b7a67bbd2e9b8c9",
+      "testCases": [
+        "planIgnoresModelHighRiskForProposalAndStopsWithoutCreatingAgentCheckpoint",
+        "reactStopsAtCoreCardBeforeTheModelCanIssueFinalConfirmation"
+      ]
+    },
+    {
+      "name": "com.citycopilot.agent.executor.LlmUsageTrackerTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 0.029,
+      "sourceReport": "backend/agent/target/surefire-reports/TEST-com.citycopilot.agent.executor.LlmUsageTrackerTest.xml",
+      "sourceReportSha256": "82701a3e7f5c25f5da432f0e14a05c73e8552c691974f2408d2756153630cf44",
+      "testCases": [
+        "retainsExactProviderUsageAndSeparatesFallbackWithoutLeakingNextRequest"
+      ]
+    },
+    {
+      "name": "com.citycopilot.eval.BookingEvalAssertionsTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 0.13,
+      "sourceReport": "backend/eval/target/surefire-reports/TEST-com.citycopilot.eval.BookingEvalAssertionsTest.xml",
+      "sourceReportSha256": "ca69c50b2562280ab713615b7b062bbde91887c24d5633a3c2c0be81583b496c",
+      "testCases": [
+        "structuredConstraintsFailEvenWhenAnswerClaimsCorrectPeopleTimeAndBudget",
+        "modelSuccessClaimWithoutBusinessEvidenceCannotPass",
+        "heldStateAndProviderFallbackCannotBeReportedAsConfirmed"
+      ]
+    },
+    {
+      "name": "com.citycopilot.core.booking.BookingRankingEvaluationTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "durationSeconds": 0.248,
+      "sourceReport": "backend/core/target/surefire-reports/TEST-com.citycopilot.core.booking.BookingRankingEvaluationTest.xml",
+      "sourceReportSha256": "2f6c1d360d8573360c3a3ec29f46c5176965763dd06d21fdab7301e989f45a90",
+      "testCases": [
+        "evaluateFixedCandidatesAndExportNdcgAtTen"
+      ]
+    }
+  ],
+  "pendingSuites": [],
+  "scope": "Specific local tests only. Real provider, browser and RocketMQ subscription end-to-end acceptance are recorded separately.",
+  "rankingEvaluation": {
+    "sourceReport": "backend/core/target/booking-ranking-evaluation.json",
+    "sourceReportSha256": "feeef43664f03fcd567abebf2f327490449fa54eb5efa3ec69e33e6548f0c11b",
+    "scope": "Comparator only; real capacity and budget filtering are tested in BookingLifecycleIT",
+    "results": [
+      {
+        "ndcgAt10Before": 0.2890648263178878,
+        "query": "餐厅-冷启动距离",
+        "rankingOrder": [
+          10,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "baselineOrder": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "ndcgAt10After": 1.0,
+        "rankingNanos": 8138300
+      },
+      {
+        "ndcgAt10Before": 0.3010299956639812,
+        "query": "餐厅-明确偏好",
+        "rankingOrder": [
+          9,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          10
+        ],
+        "baselineOrder": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "ndcgAt10After": 1.0,
+        "rankingNanos": 1504700
+      },
+      {
+        "ndcgAt10Before": 0.3478453640009407,
+        "query": "餐厅-近期履约和负反馈",
+        "rankingOrder": [
+          10,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          1
+        ],
+        "baselineOrder": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "ndcgAt10After": 1.0,
+        "rankingNanos": 688300
+      },
+      {
+        "ndcgAt10Before": 0.2890648263178878,
+        "query": "运动馆-冷启动距离",
+        "rankingOrder": [
+          10,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "baselineOrder": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "ndcgAt10After": 1.0,
+        "rankingNanos": 190700
+      },
+      {
+        "ndcgAt10Before": 0.3010299956639812,
+        "query": "运动馆-明确偏好",
+        "rankingOrder": [
+          9,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          10
+        ],
+        "baselineOrder": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "ndcgAt10After": 1.0,
+        "rankingNanos": 636800
+      },
+      {
+        "ndcgAt10Before": 0.3478453640009407,
+        "query": "运动馆-近期履约和负反馈",
+        "rankingOrder": [
+          10,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          1
+        ],
+        "baselineOrder": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "ndcgAt10After": 1.0,
+        "rankingNanos": 577800
+      }
+    ],
+    "dataset": "6 fixed synthetic engineering cases, 10 candidates each; no online traffic",
+    "rankingVersion": "booking-rules-v2"
+  }
+}

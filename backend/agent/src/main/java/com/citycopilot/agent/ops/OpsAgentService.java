@@ -1,6 +1,8 @@
 package com.citycopilot.agent.ops;
 
 import com.citycopilot.agent.gateway.ToolCallContext;
+import com.citycopilot.agent.budget.AgentBudget;
+import com.citycopilot.agent.budget.AgentExecutionRuntime;
 import com.citycopilot.agent.gateway.ToolGatewayClient;
 import com.citycopilot.agent.gateway.ToolResult;
 import com.citycopilot.contract.security.PermissionCodes;
@@ -23,18 +25,34 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 旧版运维任务的入队、消费和工具执行服务。
+ *
+ * <p>任务通过 Redis Stream 解耦 HTTP 与后台处理，结果保存在有界 Redis List；地理校准仍只生成计划，其余只读任务可经 ToolGateway 调用 Core。新功能应优先使用 ops case v2。</p>
+ */
 @Service
 public class OpsAgentService {
+    /** 旧版运维任务 Stream。 */
     public static final String STREAM_KEY = "agent.ops.tasks";
+    /** 最近任务结果 List。 */
     public static final String RESULT_KEY = "agent.ops.results";
+    /** Redis Stream 消费组名。 */
     private static final String GROUP = "citycopilot-ops";
+    /** 当前旧版 worker 的消费者名。 */
     private static final String CONSUMER = "worker";
+    /** 工具返回值写入结果时的最大预览字符数。 */
     private static final int DATA_PREVIEW_LIMIT = 500;
     private static final int DEFAULT_RESULT_LIMIT = 20;
     private static final int MAX_RESULT_LIMIT = 100;
 
+    /** 负责队列、消费组和结果列表的 Redis 客户端。 */
     private final StringRedisTemplate redisTemplate;
+    /** 可选工具网关；缺失时仅输出执行计划。 */
     private final ToolGatewayClient toolGateway;
+    private AgentExecutionRuntime runtime = AgentExecutionRuntime.directUse();
+
+    @Autowired
+    void configureRuntime(AgentExecutionRuntime runtime) { this.runtime = runtime; }
 
     @Autowired
     public OpsAgentService(StringRedisTemplate redisTemplate, ObjectProvider<ToolGatewayClient> toolGateway) {
@@ -50,6 +68,13 @@ public class OpsAgentService {
         this.toolGateway = toolGateway;
     }
 
+    /**
+     * 将运维任务追加到 Redis Stream。
+     *
+     * @param type 受支持任务类型
+     * @param payload 可选任务参数
+     * @return 是否入队及 Stream recordId；Redis 异常以结构化失败返回
+     */
     public Map<String, Object> enqueue(String type, Map<String, Object> payload) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", type);
@@ -63,6 +88,11 @@ public class OpsAgentService {
         }
     }
 
+    /**
+     * 从消费组读取并处理一条新任务。
+     *
+     * <p>只有处理结果标记为成功才 ACK；未知或失败任务留在 PEL，供人工排查或后续恢复。</p>
+     */
     public Map<String, Object> pollOnce() {
         try {
             StreamOperations<String, Object, Object> streamOps = redisTemplate.opsForStream();
@@ -84,6 +114,7 @@ public class OpsAgentService {
                     String.valueOf(value.get("type")),
                     Map.of("raw", value.get("payload"))
             ));
+            // 处理成功后才确认消息，避免业务失败被永久从待处理列表移除。
             if (Boolean.TRUE.equals(result.get("processed"))) {
                 streamOps.acknowledge(STREAM_KEY, GROUP, record.getId());
                 recordResult(record.getId().getValue(), result);
@@ -94,6 +125,9 @@ public class OpsAgentService {
         }
     }
 
+    /**
+     * 查询最近处理结果，并把请求条数限制在固定上限。
+     */
     public Map<String, Object> recentResults(Integer limit) {
         int safeLimit = clampLimit(limit);
         if (redisTemplate == null) {
@@ -124,6 +158,7 @@ public class OpsAgentService {
         }
     }
 
+    /** 首次消费时创建组；已存在的 BUSYGROUP 属于正常并发启动。 */
     private void ensureConsumerGroup(StreamOperations<String, Object, Object> streamOps) {
         try {
             streamOps.createGroup(STREAM_KEY, ReadOffset.from("0-0"), GROUP);
@@ -135,7 +170,12 @@ public class OpsAgentService {
         }
     }
 
+    /**
+     * 按白名单分派任务类型，未知类型不执行任何工具。
+     */
     public Map<String, Object> process(OpsTaskRequest task) {
+        if (AgentBudget.current() == null) return runtime.call(() -> process(task));
+        AgentBudget.current().context(task);
         String type = task.type() == null ? "" : task.type();
         return switch (type) {
             case "geo_calibration" -> geoCalibration(task.payload());
@@ -216,6 +256,9 @@ public class OpsAgentService {
         return result;
     }
 
+    /**
+     * 尽力保存有界结果预览；保存失败不撤销已经完成的工具业务操作。
+     */
     private void recordResult(String recordId, Map<String, Object> result) {
         if (redisTemplate == null) {
             return;
@@ -237,6 +280,7 @@ public class OpsAgentService {
         return Math.max(1, Math.min(MAX_RESULT_LIMIT, limit));
     }
 
+    /** 有网关时执行预定义只读工具，无网关时明确标为仅计划模式。 */
     private void attachExecutions(Map<String, Object> result, List<OpsToolCall> calls) {
         if (toolGateway == null) {
             result.put("executionMode", "plan_only");
@@ -250,10 +294,12 @@ public class OpsAgentService {
         result.put("executionStatus", executionStatus(executions));
     }
 
+    /** 使用固定最小运维权限与确定性幂等键执行一个预定义工具。 */
     private Map<String, Object> executeTool(OpsToolCall call) {
         ToolCallContext context = opsContext().withIdempotencyKey(
                 "ops:" + call.toolName() + ":" + Integer.toHexString(call.args().hashCode())
         );
+        // 仍经统一网关执行，权限、限流、审计和错误标准化不会被后台任务绕过。
         ToolResult result = toolGateway.invoke(call.toolName(), call.args(), context);
         Map<String, Object> execution = new LinkedHashMap<>();
         execution.put("tool", call.toolName());
@@ -279,6 +325,7 @@ public class OpsAgentService {
         return successCount == 0 ? "failed" : "partial_success";
     }
 
+    /** @return 旧版只读诊断与地理维护所需的固定服务身份 */
     private ToolCallContext opsContext() {
         return new ToolCallContext("ops-agent", Set.of(
                 PermissionCodes.ADMIN_ACCESS,
@@ -335,6 +382,7 @@ public class OpsAgentService {
         return value instanceof Number number ? number.intValue() : fallback;
     }
 
+    /** 旧版任务内部预定义的工具名与参数。 */
     private record OpsToolCall(String toolName, Map<String, Object> args) {
     }
 }

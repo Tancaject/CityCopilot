@@ -1,81 +1,36 @@
 package com.citycopilot.core.service.impl;
 
-import cn.hutool.core.bean.BeanUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.citycopilot.core.dto.Result;
-import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.entity.Follow;
 import com.citycopilot.core.mapper.FollowMapper;
 import com.citycopilot.core.service.IFollowService;
-import com.citycopilot.core.service.IUserService;
 import com.citycopilot.core.utils.UserHolder;
-import jakarta.annotation.Resource;
-import org.springframework.data.redis.core.ReactiveSetOperations;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-/**
- * <p>
- *  服务实现类
- * </p>
- *
- */
+/** Follow commands and common-follow queries share the same durable relationship table. */
 @Service
 public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> implements IFollowService {
-    @Resource
-    private StringRedisTemplate stringRedisTemplate;
-    @Resource
-    private IUserService userService;
-
     @Override
     public Result follow(Long followUserId, Boolean isFollow) {
-        //获得登录用户信息
-        Long userId= UserHolder.getUser().getId();
-        String key="follow:"+userId;
-        if (isFollow){
-            //关注用户
-            Follow follow=new Follow();
-            follow.setUserId(userId);
-            follow.setFollowUserId(followUserId);
-            boolean isSuccess = save(follow);
-            if (isSuccess){
-                stringRedisTemplate.opsForSet().add(key,followUserId.toString());
-            }
-        }else {
-            //取关
-            boolean isSuccess=remove(new QueryWrapper<Follow>().eq("user_id",userId ).eq("follow_user_id",followUserId));
-            if (isSuccess){
-                stringRedisTemplate.opsForSet().remove(key,followUserId.toString());
-            }
+        if (followUserId == null || followUserId <= 0 || isFollow == null) {
+            return Result.fail("INVALID_FOLLOW", "关注操作需要有效的用户和目标状态");
         }
+        Long userId = UserHolder.getUser().getId();
+        if (isFollow) baseMapper.ensureFollow(userId, followUserId);
+        else remove(new QueryWrapper<Follow>().eq("user_id", userId).eq("follow_user_id", followUserId));
         return Result.ok();
     }
 
     @Override
     public Result isFollow(Long followUserId) {
-        Long userId= UserHolder.getUser().getId();
-        Long count = query().eq("user_id", userId).eq("follow_user_id", followUserId).count();
-        return Result.ok(count>0);
+        return Result.ok(query().eq("user_id", UserHolder.getUser().getId())
+                .eq("follow_user_id", followUserId).count() > 0);
     }
 
     @Override
     public Result followCommons(Long id) {
-        Long userId=UserHolder.getUser().getId();
-        String key="follow:"+userId;
-        String key2="follow:"+id;//目标用户的id
-        //取关注列表的交集
-        Set<String> intersect = stringRedisTemplate.opsForSet().intersect(key, key2);
-        if (intersect==null||intersect.isEmpty())return Result.ok();
-
-        List<Long> ids = intersect.stream().map(Long::valueOf).collect(Collectors.toList());
-        List<UserDTO> users = userService.listByIds(ids).stream().map(user -> BeanUtil.copyProperties(user, UserDTO.class)).collect(Collectors.toList());
-        return Result.ok(users);
+        return Result.ok(baseMapper.commonFollows(UserHolder.getUser().getId(), id));
     }
-
 }

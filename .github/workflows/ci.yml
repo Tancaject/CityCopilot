@@ -17,6 +17,67 @@ jobs:
           cache: maven
       - name: Verify backend
         run: mvn -q clean verify
+      - name: Seal backend candidate from this build
+        run: >-
+          python3 tools/release/release_bundle.py create
+          --release-id "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          --output "${RUNNER_TEMP}/backend-bundle"
+          > "${RUNNER_TEMP}/backend-release-record.json"
+      - name: Upload sealed backend candidate
+        id: backend-bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-bundle/
+          if-no-files-found: error
+      - name: Record external manifest digest and build source
+        env:
+          BUNDLE_ARTIFACT_ID: ${{ steps.backend-bundle.outputs.artifact-id }}
+          BUNDLE_ARTIFACT_URL: ${{ steps.backend-bundle.outputs.artifact-url }}
+          BUNDLE_ARTIFACT_SHA256: ${{ steps.backend-bundle.outputs.artifact-digest }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          directory = Path(os.environ["RUNNER_TEMP"])
+          record_path = directory / "backend-release-record.json"
+          record = json.loads(record_path.read_text(encoding="utf-8"))
+          manifest = json.loads((directory / "backend-bundle/manifest.json").read_text(encoding="utf-8"))
+          record.pop("bundle")  # The ephemeral runner path is not a downloadable release location.
+          run_url = f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}/attempts/{os.environ["GITHUB_RUN_ATTEMPT"]}'
+          record["source"] = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "checkoutCommit": manifest["checkout"]["commit"],
+              "eventSha": os.environ["GITHUB_SHA"],
+              "ref": os.environ["GITHUB_REF"],
+              "event": os.environ["GITHUB_EVENT_NAME"],
+              "workflowRef": os.environ["GITHUB_WORKFLOW_REF"],
+              "runId": os.environ["GITHUB_RUN_ID"],
+              "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runUrl": run_url,
+          }
+          record["artifact"] = {
+              "id": os.environ["BUNDLE_ARTIFACT_ID"],
+              "url": os.environ["BUNDLE_ARTIFACT_URL"],
+              "archiveSha256": os.environ["BUNDLE_ARTIFACT_SHA256"],
+          }
+          record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+              summary.write("## Backend candidate\n\n")
+              summary.write(f'- Manifest SHA-256: `{record["manifestSha256"]}`\n')
+              summary.write(f'- Checkout commit: `{record["source"]["checkoutCommit"]}`\n')
+              summary.write(f'- Build run: {run_url}\n')
+              summary.write(f'- Bundle artifact: {record["artifact"]["url"]}\n')
+              summary.write("\nThis candidate is not a release approval or signed provenance; inspect all CI jobs before promotion.\n")
+          PY
+      - name: Upload external backend release record
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-release-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-release-record.json
+          if-no-files-found: error
 
   frontend:
     runs-on: ubuntu-latest
@@ -32,6 +93,34 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run build
+
+  database-migrations:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4.10
+        env:
+          MYSQL_ROOT_PASSWORD: migration-test-only
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pmigration-test-only"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      CITYCOPILOT_MIGRATION_TEST_URL: jdbc:mysql://127.0.0.1:3306/
+      CITYCOPILOT_MIGRATION_TEST_PASSWORD: migration-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Verify fresh and adopted service schemas
+        run: >-
+          mvn -q -pl backend/core -am -Dit.test=DatabaseMigrationsIT,CommunityFactsIT,LegacyCommunityLikesMigrationIT
+          -Dfailsafe.failIfNoSpecifiedTests=false test-compile
+          failsafe:integration-test failsafe:verify
 
   contracts-and-eval:
     runs-on: ubuntu-latest

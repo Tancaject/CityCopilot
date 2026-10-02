@@ -7,6 +7,8 @@ import ConsumerLocationSelector from '../components/ConsumerLocationSelector.vue
 import { authState } from '../composables/auth';
 import { ensureDefaultCurrentLocation } from '../composables/location';
 import { assetUrl, blogCover } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
+import { getPaginationLabel } from '../utils/labels';
 import type { Blog, ShopType } from '../types';
 
 const router = useRouter();
@@ -58,7 +60,7 @@ async function loadHome() {
     currentPage.value = 1;
     hasMore.value = hotBlogs.length > 0;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '首页数据加载失败';
+    errorMessage.value = getErrorMessage(error, '首页数据加载失败');
   } finally {
     loading.value = false;
   }
@@ -90,7 +92,7 @@ async function loadMore() {
     blogs.value = blogs.value.concat(nextBlogs);
     currentPage.value = nextPage;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '加载更多失败';
+    errorMessage.value = getErrorMessage(error, '加载更多失败');
   } finally {
     loadingMore.value = false;
   }
@@ -109,7 +111,7 @@ async function toggleLike(blog: Blog) {
     blog.liked = fresh.liked;
     blog.isLike = fresh.isLike;
   } catch (error) {
-    authMessage.value = error instanceof Error ? error.message : '点赞失败';
+    authMessage.value = getErrorMessage(error, '点赞失败');
   }
 }
 
@@ -249,7 +251,7 @@ onMounted(() => {
 
       <button class="load-more" type="button" :disabled="loadingMore || loading || !hasMore" @click="loadMore">
         <Loader2 v-if="loadingMore" class="spin" :size="17" aria-hidden="true" />
-        {{ loadingMore ? '加载中' : hasMore ? '加载更多' : '没有更多了' }}
+        {{ getPaginationLabel(loadingMore, hasMore) }}
       </button>
     </section>
   </section>

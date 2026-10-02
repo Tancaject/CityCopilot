@@ -5,7 +5,7 @@ import com.citycopilot.core.config.GeoProperties;
 import com.citycopilot.core.dto.AmapPoiDTO;
 import com.citycopilot.core.dto.Result;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.test.util.ReflectionTestUtils;

@@ -1,5 +1,7 @@
 package com.citycopilot.core.tool;
 
+import tools.jackson.databind.json.JsonMapper;
+
 import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.contract.tool.ToolInvocationResponse;
 import com.citycopilot.core.config.InternalApiProperties;
@@ -8,7 +10,7 @@ import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.security.PermissionPolicy;
 import com.citycopilot.core.service.OperationLogService;
 import com.citycopilot.core.utils.UserHolder;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -72,7 +74,7 @@ class CoreToolInvocationServiceTest {
                 mock(OperationLogService.class),
                 redisTemplate,
                 properties,
-                new ObjectMapper()
+                JsonMapper.builderWithJackson2Defaults().build()
         );
         UserDTO user = new UserDTO();
         user.setId(42L);
@@ -95,6 +97,21 @@ class CoreToolInvocationServiceTest {
     }
 
     @Test
+    void rejectsChangedContractBeforeIdempotencyClaimAndExecutesOnlyReviewedVersion() {
+        for (Integer expected : new Integer[]{null, 0, 1, 3}) {
+            ToolInvocationResponse rejected = service.invoke("write_v2", Map.of("value", "same"), "original-key", null, expected);
+            assertFalse(rejected.ok());
+            assertEquals("tool_contract_mismatch", rejected.error().code());
+            assertFalse(rejected.error().retryable());
+        }
+        assertTrue(redis.isEmpty());
+        assertEquals(0, tools.calls);
+        assertTrue(service.invoke("write_v2", Map.of("value", "same"), "original-key", null, 2).ok());
+        assertTrue(service.invoke("write_v2", Map.of("value", "same"), "original-key", null, 2).ok());
+        assertEquals(1, tools.calls);
+    }
+
+    @Test
     void sameKeyReplaysResponseAndRejectsDifferentFingerprint() {
         ToolInvocationResponse first = service.invoke("write_demo", Map.of("arg0", "first"), "stable-key", null);
         ToolInvocationResponse replay = service.invoke("write_demo", Map.of("arg0", "first"), "stable-key", null);
@@ -106,6 +123,15 @@ class CoreToolInvocationServiceTest {
         assertEquals(1, tools.calls);
         assertFalse(conflict.ok());
         assertEquals("idempotency_conflict", conflict.error().code());
+    }
+
+    @Test
+    void invalidNumericArgumentKeepsTheNonRetryableInputError() {
+        ToolInvocationResponse response = service.invoke("numeric_demo", Map.of("arg0", "not-a-number"), null, null);
+        assertFalse(response.ok());
+        assertEquals("invalid_args", response.error().code());
+        assertFalse(response.error().retryable());
+        assertEquals(0, tools.calls);
     }
 
     @Test
@@ -129,6 +155,15 @@ class CoreToolInvocationServiceTest {
 
     static final class DemoTools {
         private int calls;
+
+        @AgentTool(name = "write_v2", description = "Versioned write", contractVersion = 2, idempotent = false)
+        public String writeV2(String value) { calls++; return value; }
+
+        @AgentTool(name = "numeric_demo", description = "Accepts an integer identifier")
+        public Long numeric(Long id) {
+            calls++;
+            return id;
+        }
 
         @AgentTool(
                 name = "write_demo",

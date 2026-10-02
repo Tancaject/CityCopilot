@@ -1,6 +1,7 @@
 package com.citycopilot.commerce;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -31,7 +32,7 @@ class CommerceRoutingOperatorLifecycleTest {
                 replicatedRedis,
                 runtimeLeases,
                 new CommerceRedisKeyspace(2, "v1"),
-                new ObjectMapper(),
+                JsonMapper.builderWithJackson2Defaults().build(),
                 "status",
                 "",
                 0

@@ -5,6 +5,8 @@ import { AlertCircle, Clock, CreditCard, Loader2, ReceiptText, RefreshCw, Store,
 import { cancelVoucherOrder, fetchMyVoucherOrders, fetchVoucherOrder, payVoucherOrder, refundVoucherOrder } from '../api/citycopilot';
 import ConfirmDialog from '../components/ConfirmDialog.vue';
 import { formatCents } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
+import { getPaginationLabel } from '../utils/labels';
 import type { VoucherOrder } from '../types';
 
 const route = useRoute();
@@ -113,7 +115,7 @@ async function loadOrders() {
     hasMore.value = firstPage.length > 0;
     await includeHighlightedOrder();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '订单加载失败';
+    errorMessage.value = getErrorMessage(error, '订单加载失败');
   } finally {
     loading.value = false;
   }
@@ -135,7 +137,7 @@ async function loadMore() {
     mergeOrders(nextOrders);
     currentPage.value = nextPage;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '加载更多订单失败';
+    errorMessage.value = getErrorMessage(error, '加载更多订单失败');
   } finally {
     loadingMore.value = false;
   }
@@ -168,7 +170,7 @@ async function cancelOrder(order: VoucherOrder) {
     updateOrder(updated);
     pendingOrderAction.value = null;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '取消订单失败';
+    errorMessage.value = getErrorMessage(error, '取消订单失败');
   } finally {
     cancelingId.value = null;
   }
@@ -184,7 +186,7 @@ async function handlePay(order: VoucherOrder) {
     const updated = await payVoucherOrder(order.id);
     updateOrder(updated);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '支付失败';
+    errorMessage.value = getErrorMessage(error, '支付失败');
   } finally {
     payingId.value = null;
   }
@@ -205,7 +207,7 @@ async function refundOrder(order: VoucherOrder) {
     updateOrder(updated);
     pendingOrderAction.value = null;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '退款失败';
+    errorMessage.value = getErrorMessage(error, '退款失败');
   } finally {
     refundingId.value = null;
   }
@@ -217,7 +219,7 @@ watch(
   () => route.query.highlight,
   () => {
     includeHighlightedOrder().catch((error) => {
-      errorMessage.value = error instanceof Error ? error.message : '订单状态同步失败';
+      errorMessage.value = getErrorMessage(error, '订单状态同步失败');
     });
   },
 );
@@ -311,7 +313,7 @@ watch(
 
       <button class="load-more" type="button" :disabled="loadingMore || !hasMore" @click="loadMore">
         <Loader2 v-if="loadingMore" class="spin" :size="17" aria-hidden="true" />
-        {{ loadingMore ? '加载中' : hasMore ? '加载更多' : '没有更多订单' }}
+        {{ getPaginationLabel(loadingMore, hasMore, '没有更多订单') }}
       </button>
     </section>
 

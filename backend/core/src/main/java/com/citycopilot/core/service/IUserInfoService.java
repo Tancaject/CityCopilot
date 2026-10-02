@@ -1,15 +1,13 @@
 package com.citycopilot.core.service;
 
-import com.baomidou.mybatisplus.extension.service.IService;
-import com.citycopilot.core.entity.UserInfo;
+import com.citycopilot.core.dto.UserProfileDTO;
 
 /**
- * <p>
- *  服务类
- * </p>
+ * 用户扩展资料服务。
  *
- * @since 2021-12-24
+ * <p>账号认证信息由 {@link IUserService} 管理，本接口只提供个人简介等非认证资料的公开视图。</p>
  */
-public interface IUserInfoService extends IService<UserInfo> {
-
+public interface IUserInfoService {
+    /** @return 用户公开扩展资料；未创建资料时返回 null */
+    UserProfileDTO profile(Long userId);
 }

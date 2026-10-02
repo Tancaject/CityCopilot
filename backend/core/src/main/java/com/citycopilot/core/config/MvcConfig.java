@@ -1,43 +1,90 @@
 package com.citycopilot.core.config;
 
 import com.citycopilot.core.security.PermissionPolicy;
-import com.citycopilot.core.security.InternalServiceTokenInterceptor;
+import com.citycopilot.core.security.InternalServiceTokenFilter;
 import com.citycopilot.core.utils.AdminInterceptor;
 import com.citycopilot.core.utils.LoginInterceptor;
 import com.citycopilot.core.utils.RefreshTokenInterceptor;
+import com.citycopilot.core.utils.UserContextFilter;
+import com.citycopilot.http.DeadlineHandlerInterceptor;
 import jakarta.annotation.Resource;
+import jakarta.servlet.DispatcherType;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.nio.file.Path;
+import java.time.Duration;
 
+/**
+ * Core 的 MVC 拦截器链和上传文件静态资源映射。
+ *
+ * <p>Servlet Filter 认证服务并限定身份作用域；MVC 在资源准入后恢复会话，再执行管理权限与登录校验。</p>
+ */
 @Configuration
 public class MvcConfig implements WebMvcConfigurer {
 
+    /** 恢复登录会话和刷新 TTL 使用的 Redis 客户端。 */
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+    /** 上传目录与公开 URL 配置。 */
     @Resource
     private UploadProperties uploadProperties;
+    /** 管理端角色权限判断策略。 */
     @Resource
     private PermissionPolicy permissionPolicy;
+    /** 内部 API 服务令牌配置。 */
     @Resource
     private InternalApiProperties internalApiProperties;
+    @Value("${citycopilot.http.request-timeout:8s}")
+    private Duration requestTimeout;
+    @Value("${citycopilot.http.max-concurrent:128}")
+    private int maxConcurrent;
+    @Value("${citycopilot.http.authority-max-concurrent:32}")
+    private int authorityMaxConcurrent;
 
+    @Bean
+    FilterRegistrationBean<InternalServiceTokenFilter> internalServiceAuthentication() {
+        var registration = new FilterRegistrationBean<>(new InternalServiceTokenFilter(internalApiProperties));
+        registration.setOrder(-100);
+        registration.addUrlPatterns("/*");
+        registration.setDispatcherTypes(java.util.EnumSet.allOf(DispatcherType.class));
+        registration.setAsyncSupported(true);
+        return registration;
+    }
+
+    @Bean
+    FilterRegistrationBean<UserContextFilter> sessionUserContext() {
+        var registration = new FilterRegistrationBean<>(new UserContextFilter());
+        registration.setOrder(-90);
+        registration.addUrlPatterns("/*");
+        registration.setDispatcherTypes(java.util.EnumSet.allOf(DispatcherType.class));
+        registration.setAsyncSupported(true);
+        return registration;
+    }
+
+    /** 方法权限依赖 HandlerMethod；保留原路径范围与公开白名单。 */
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         String uploadPublicPattern = normalizePublicPrefix(uploadProperties.getPublicPrefix()) + "**";
-        registry.addInterceptor(new InternalServiceTokenInterceptor(internalApiProperties))
-                .addPathPatterns("/internal/**")
-                .order(-1);
-        // 第一个拦截器：刷新 token，拦截所有请求
-        registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate))
+        registry.addInterceptor(new DeadlineHandlerInterceptor(requestTimeout, maxConcurrent,
+                        request -> request.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE) != null))
                 .addPathPatterns("/**")
-                .order(0); // 优先级最高，先执行
-
-        // 第二个拦截器：管理员校验，保护运营写接口
+                .excludePathPatterns("/internal/v1/place/**", "/actuator/**", "/health", uploadPublicPattern)
+                .order(0);
+        // Commerce may call back while the original Core request holds its admission slot.
+        registry.addInterceptor(new DeadlineHandlerInterceptor(requestTimeout, authorityMaxConcurrent,
+                        request -> request.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE) != null))
+                .addPathPatterns("/internal/v1/place/**").order(0);
+        // 会话 Redis 访问沿用同一请求预算，不在 Servlet Filter 中提前执行。
+        registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate))
+                .addPathPatterns("/**").order(0);
+        // 管理端和高风险写接口读取已恢复的用户并执行细粒度权限判断。
         registry.addInterceptor(new AdminInterceptor(permissionPolicy))
                 .addPathPatterns(
                         "/admin/**",
@@ -52,7 +99,7 @@ public class MvcConfig implements WebMvcConfigurer {
                 )
                 .order(1);
 
-        // 第三个拦截器：登录校验，只拦截需要登录的路径
+        // 最后为除公开白名单外的接口统一要求登录。
         registry.addInterceptor(new LoginInterceptor())
                 .excludePathPatterns(
                         "/blog/hot",
@@ -67,15 +114,21 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/internal/**",
                         "/user/code",
                         "/user/login",
+                        "/booking-rules",
+                        "/shops/*/booking-resources",
+                        "/shops/*/booking-coupon-rules",
+                        "/booking-resources/*/slots",
+                        "/booking-resources/*/offers",
                         "/shop/**",
                         "/shop-type/**",
                         "/voucher/**",
                         "/imgs/**",
                         uploadPublicPattern
                 )
-                .order(2); // 后执行
+                .order(2);
     }
 
+    /** 把配置的上传目录以只读静态资源方式映射到公开 URL 前缀。 */
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         String publicPrefix = normalizePublicPrefix(uploadProperties.getPublicPrefix());
@@ -84,6 +137,10 @@ public class MvcConfig implements WebMvcConfigurer {
                 .addResourceLocations(root.toUri().toString());
     }
 
+    /**
+     * @param prefix 配置的公开 URL 前缀
+     * @return 始终以斜杠开头和结尾的规范前缀
+     */
     private String normalizePublicPrefix(String prefix) {
         String normalized = prefix == null || prefix.isBlank() ? "/uploads" : prefix.replace('\\', '/');
         if (!normalized.startsWith("/")) {

@@ -5,7 +5,9 @@ import { AlertCircle, ArrowLeft, BadgeCheck, CheckCircle2, Clock, Loader2, MapPi
 import { fetchShop, fetchVoucherOrder, fetchVouchers, seckillVoucher } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import ShopMapPanel from '../components/ShopMapPanel.vue';
+import BookingChooser from '../components/BookingChooser.vue';
 import { firstImage, formatCents, formatPrice, formatScore } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
 import type { Shop, Voucher } from '../types';
 
 const props = defineProps<{
@@ -61,7 +63,7 @@ async function loadShop() {
     shop.value = await fetchShop(props.id);
     await loadVouchers();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '店铺详情加载失败';
+    errorMessage.value = getErrorMessage(error, '店铺详情加载失败');
   } finally {
     loading.value = false;
   }
@@ -82,7 +84,7 @@ async function loadVouchers() {
     vouchers.value = (await fetchVouchers(props.id)) || [];
   } catch (error) {
     vouchers.value = [];
-    voucherError.value = error instanceof Error ? error.message : '优惠活动加载失败';
+    voucherError.value = getErrorMessage(error, '优惠活动加载失败');
   } finally {
     voucherLoading.value = false;
   }
@@ -199,7 +201,7 @@ async function handleVoucher(voucher: Voucher) {
     pollOrder(orderId, voucher.id);
   } catch (error) {
     feedbackState.value = 'error';
-    orderMessage.value = error instanceof Error ? error.message : '抢购失败';
+    orderMessage.value = getErrorMessage(error, '抢购失败');
   } finally {
     orderingId.value = null;
   }
@@ -228,7 +230,7 @@ async function pollOrder(orderId: string, voucherId: number, attempt = 0) {
     orderPollTimer = undefined;
     orderPolling.value = false;
     feedbackState.value = 'error';
-    orderMessage.value = error instanceof Error ? error.message : '订单状态确认失败';
+    orderMessage.value = getErrorMessage(error, '订单状态确认失败');
   }
 }
 
@@ -312,6 +314,8 @@ watch(
         <div v-if="gallery.length > 1" class="detail-gallery">
           <img v-for="image in gallery" :key="image" :src="image" :alt="shop.name" />
         </div>
+
+        <BookingChooser :shop-id="String(id)" @booked="booking => router.push({ name: 'booking-detail', params: { id: booking.id } })" />
 
         <section id="voucher-section" class="voucher-section">
           <div class="section-heading">

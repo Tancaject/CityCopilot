@@ -14,6 +14,11 @@ spring:
     import: "optional:file:./.env[.properties]"
   application:
     name: citycopilot-core-service
+  sql:
+    init:
+      mode: never
+  flyway:
+    enabled: false
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: "${CITYCOPILOT_DB_URL:jdbc:mysql://127.0.0.1:3307/citycopilot?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}"
@@ -40,6 +45,7 @@ spring:
       max-file-size: 5MB
       max-request-size: 6MB
   jackson:
+    use-jackson2-defaults: true
     default-property-inclusion: non_null
 
 mybatis-plus:
@@ -62,6 +68,13 @@ citycopilot:
       ops-executor: "${CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN:}"
       mcp-server: "${CITYCOPILOT_INTERNAL_MCP_TOKEN:}"
       commerce-service: "${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:}"
+    previous-service-tokens:
+      agent-service: "${CITYCOPILOT_INTERNAL_AGENT_PREVIOUS_TOKEN:}"
+      ops-agent: "${CITYCOPILOT_INTERNAL_OPS_PREVIOUS_TOKEN:}"
+      ops-reader: "${CITYCOPILOT_INTERNAL_OPS_READER_PREVIOUS_TOKEN:}"
+      ops-executor: "${CITYCOPILOT_INTERNAL_OPS_EXECUTOR_PREVIOUS_TOKEN:}"
+      mcp-server: "${CITYCOPILOT_INTERNAL_MCP_PREVIOUS_TOKEN:}"
+      commerce-service: "${CITYCOPILOT_INTERNAL_COMMERCE_PREVIOUS_TOKEN:}"
     idempotency-ttl: "${CITYCOPILOT_INTERNAL_IDEMPOTENCY_TTL:24h}"
   audit:
     retention-days: "${CITYCOPILOT_AUDIT_RETENTION_DAYS:90}"
@@ -85,6 +98,8 @@ citycopilot:
         - shop:write
         - voucher:write
         - order:write
+        - booking:manage
+        - booking:check-in
   upload:
     root-dir: "${CITYCOPILOT_UPLOAD_ROOT:uploads}"
     public-prefix: "${CITYCOPILOT_UPLOAD_PUBLIC_PREFIX:/uploads}"
@@ -100,6 +115,13 @@ citycopilot:
       - image/png
       - image/webp
       - image/gif
+  projection:
+    cleanup:
+      enabled: "${CITYCOPILOT_PROJECTION_CLEANUP_ENABLED:false}"
+      retention: "${CITYCOPILOT_PROJECTION_CLEANUP_RETENTION:0s}"
+      reader-grace: "${CITYCOPILOT_PROJECTION_CLEANUP_READER_GRACE:0s}"
+      generation-batch-size: "${CITYCOPILOT_PROJECTION_CLEANUP_GENERATION_BATCH_SIZE:10}"
+      key-batch-size: "${CITYCOPILOT_PROJECTION_CLEANUP_KEY_BATCH_SIZE:500}"
   geo:
     auto-sync-shop-index: true
     nearby-radius-meters: 5000
@@ -137,6 +159,12 @@ citycopilot:
     model: "${CITYCOPILOT_AI_MODEL:qwen-plus}"
     timeout-seconds: 8
     max-message-length: 300
+  booking-feedback:
+    enabled: "${CITYCOPILOT_BOOKING_FEEDBACK_ENABLED:false}"
+    raw-retention-days: "${CITYCOPILOT_BOOKING_FEEDBACK_RAW_RETENTION_DAYS:30}"
+    cache-seconds: "${CITYCOPILOT_BOOKING_FEEDBACK_CACHE_SECONDS:60}"
+    cleanup-interval-ms: "${CITYCOPILOT_BOOKING_FEEDBACK_CLEANUP_INTERVAL_MS:3600000}"
+    consumer-group: citycopilot-booking-feedback-v1
   rocketmq:
     enabled: "${CITYCOPILOT_ROCKETMQ_ENABLED:true}"
     consumer-enabled: "${CITYCOPILOT_ROCKETMQ_CONSUMER_ENABLED:true}"

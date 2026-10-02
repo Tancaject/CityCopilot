@@ -12,6 +12,7 @@ import {
   type AmapPlaceSearch,
   type AmapPoiSearchItem,
 } from '../utils/amap';
+import { getErrorMessage } from '../utils/errors';
 import {
   locationState,
   requestBrowserLocationPoint,
@@ -130,7 +131,7 @@ async function initializeMap() {
       ensureMarker(selected.value.point);
     }
   } catch (error) {
-    mapError.value = error instanceof Error ? error.message : '地图加载失败';
+    mapError.value = getErrorMessage(error, '地图加载失败');
   } finally {
     loadingMap.value = false;
   }

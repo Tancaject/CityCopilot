@@ -1,6 +1,6 @@
 package com.citycopilot.commerce;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Range;
@@ -43,62 +43,62 @@ class CommerceStreamRecoveryTest {
     void streamGroupStartsAtBeginningAndBusyGroupIsTheOnlyIgnoredFailure() {
         Fixture fixture = fixture(true, 10);
         RecordId bootstrap = RecordId.of("1-0");
-        when(fixture.stream.add(eq(CommerceOrderService.STREAM), anyMap())).thenReturn(bootstrap);
+        when(fixture.stream.add(eq(CommerceRedisKeyspace.STREAM), anyMap())).thenReturn(bootstrap);
         when(fixture.stream.createGroup(
-                eq(CommerceOrderService.STREAM),
+                eq(CommerceRedisKeyspace.STREAM),
                 any(ReadOffset.class),
-                eq(CommerceOrderService.GROUP)
+                eq(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP)
         )).thenThrow(new IllegalStateException("BUSYGROUP Consumer Group name already exists"));
 
         assertThatCode(fixture.service::initializeStream).doesNotThrowAnyException();
 
         ArgumentCaptor<ReadOffset> offset = ArgumentCaptor.forClass(ReadOffset.class);
         verify(fixture.stream).createGroup(
-                eq(CommerceOrderService.STREAM),
+                eq(CommerceRedisKeyspace.STREAM),
                 offset.capture(),
-                eq(CommerceOrderService.GROUP)
+                eq(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP)
         );
         assertThat(offset.getValue().getOffset()).isEqualTo("0-0");
-        verify(fixture.stream).delete(CommerceOrderService.STREAM, bootstrap);
+        verify(fixture.stream).delete(CommerceRedisKeyspace.STREAM, bootstrap);
     }
 
     @Test
     void nonBusyGroupInitializationFailureStopsStartup() {
         Fixture fixture = fixture(true, 10);
         RecordId bootstrap = RecordId.of("1-0");
-        when(fixture.stream.add(eq(CommerceOrderService.STREAM), anyMap())).thenReturn(bootstrap);
+        when(fixture.stream.add(eq(CommerceRedisKeyspace.STREAM), anyMap())).thenReturn(bootstrap);
         when(fixture.stream.createGroup(
-                eq(CommerceOrderService.STREAM),
+                eq(CommerceRedisKeyspace.STREAM),
                 any(ReadOffset.class),
-                eq(CommerceOrderService.GROUP)
+                eq(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP)
         )).thenThrow(new IllegalStateException("connection refused"));
 
         assertThatThrownBy(fixture.service::initializeStream)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("connection refused");
-        verify(fixture.stream).delete(CommerceOrderService.STREAM, bootstrap);
+        verify(fixture.stream).delete(CommerceRedisKeyspace.STREAM, bootstrap);
     }
 
     @Test
     void pendingRecoveryScansEveryPageWithAnExclusiveCursor() {
         Fixture fixture = fixture(true, 2);
-        Consumer deadConsumer = Consumer.from(CommerceOrderService.GROUP, "dead-consumer");
-        PendingMessages first = new PendingMessages(CommerceOrderService.GROUP, List.of(
+        Consumer deadConsumer = Consumer.from(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP, "dead-consumer");
+        PendingMessages first = new PendingMessages(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP, List.of(
                 new PendingMessage(RecordId.of("1-0"), deadConsumer, Duration.ofMinutes(1), 1),
                 new PendingMessage(RecordId.of("2-0"), deadConsumer, Duration.ofMinutes(1), 1)
         ));
-        PendingMessages second = new PendingMessages(CommerceOrderService.GROUP, List.of(
+        PendingMessages second = new PendingMessages(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP, List.of(
                 new PendingMessage(RecordId.of("3-0"), deadConsumer, Duration.ofMinutes(1), 1)
         ));
         when(fixture.stream.pending(
-                eq(CommerceOrderService.STREAM),
-                eq(CommerceOrderService.GROUP),
+                eq(CommerceRedisKeyspace.STREAM),
+                eq(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP),
                 any(Range.class),
                 eq(2L)
         )).thenReturn(first, second);
         when(fixture.stream.claim(
-                eq(CommerceOrderService.STREAM),
-                eq(CommerceOrderService.GROUP),
+                eq(CommerceRedisKeyspace.STREAM),
+                eq(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP),
                 anyString(),
                 eq(Duration.ofSeconds(30)),
                 any(RecordId[].class)
@@ -109,8 +109,8 @@ class CommerceStreamRecoveryTest {
         @SuppressWarnings("rawtypes")
         ArgumentCaptor<Range> ranges = ArgumentCaptor.forClass(Range.class);
         verify(fixture.stream, times(2)).pending(
-                eq(CommerceOrderService.STREAM),
-                eq(CommerceOrderService.GROUP),
+                eq(CommerceRedisKeyspace.STREAM),
+                eq(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP),
                 ranges.capture(),
                 eq(2L)
         );
@@ -119,8 +119,8 @@ class CommerceStreamRecoveryTest {
         assertThat(secondRange.getLowerBound().getValue().map(String::valueOf)).contains("2-0");
         assertThat(secondRange.getLowerBound().isInclusive()).isFalse();
         verify(fixture.stream, times(2)).claim(
-                eq(CommerceOrderService.STREAM),
-                eq(CommerceOrderService.GROUP),
+                eq(CommerceRedisKeyspace.STREAM),
+                eq(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP),
                 anyString(),
                 eq(Duration.ofSeconds(30)),
                 any(RecordId[].class)
@@ -146,7 +146,7 @@ class CommerceStreamRecoveryTest {
         MapRecord<String, Object, Object> poison = mock(MapRecord.class);
         RecordId recordId = RecordId.of("1720000000000-0");
         when(poison.getId()).thenReturn(recordId);
-        when(poison.getStream()).thenReturn(CommerceOrderService.STREAM);
+        when(poison.getStream()).thenReturn(CommerceRedisKeyspace.STREAM);
         when(poison.getValue()).thenReturn(Map.of("voucherId", "100"));
         when(fixture.jdbc.update(
                 contains("INSERT INTO commerce_dead_letter"),
@@ -168,7 +168,7 @@ class CommerceStreamRecoveryTest {
         );
         verify(fixture.redis).execute(
                 any(DefaultRedisScript.class),
-                eq(List.of(CommerceOrderService.STREAM)),
+                eq(List.of(CommerceRedisKeyspace.STREAM)),
                 any(Object[].class)
         );
     }
@@ -180,7 +180,7 @@ class CommerceStreamRecoveryTest {
         MapRecord<String, Object, Object> poison = mock(MapRecord.class);
         RecordId recordId = RecordId.of("1720000000001-0");
         when(poison.getId()).thenReturn(recordId);
-        when(poison.getStream()).thenReturn(CommerceOrderService.STREAM);
+        when(poison.getStream()).thenReturn(CommerceRedisKeyspace.STREAM);
         when(poison.getValue()).thenReturn(Map.of(
                 "orderId", "300",
                 "voucherId", "100",
@@ -234,8 +234,8 @@ class CommerceStreamRecoveryTest {
                 contains("admission_compensated")
         );
         verify(fixture.stream, never()).acknowledge(
-                eq(CommerceOrderService.STREAM),
-                eq(CommerceOrderService.GROUP),
+                eq(CommerceRedisKeyspace.STREAM),
+                eq(CommerceRedisKeyspace.ORDER_CONSUMER_GROUP),
                 any(RecordId.class)
         );
     }
@@ -247,7 +247,7 @@ class CommerceStreamRecoveryTest {
         MapRecord<String, Object, Object> poison = mock(MapRecord.class);
         RecordId recordId = RecordId.of("1720000000002-0");
         when(poison.getId()).thenReturn(recordId);
-        when(poison.getStream()).thenReturn(CommerceOrderService.STREAM);
+        when(poison.getStream()).thenReturn(CommerceRedisKeyspace.STREAM);
         when(poison.getValue()).thenReturn(Map.of(
                 "orderId", "301",
                 "voucherId", "100",
@@ -321,18 +321,15 @@ class CommerceStreamRecoveryTest {
             return null;
         }).when(transactions).executeWithoutResult(any());
         when(redis.opsForStream()).thenReturn(stream);
-        CommerceOrderService service = new CommerceOrderService(
-                jdbc,
-                redis,
-                transactions,
-                new ObjectMapper(),
-                mock(CommerceOrderIdGenerator.class),
-                mock(CommerceAdmissionDurabilityService.class),
-                mock(CommerceRedisReplicationExecutor.class),
-                "test",
-                enabled,
-                batchSize
-        );
+        var json = JsonMapper.builderWithJackson2Defaults().build();
+        var keyspace = new CommerceRedisKeyspace(1, "0");
+        var durable = mock(CommerceAdmissionDurabilityService.class);
+        var recovery = new CommerceOrderRecoveryStore(jdbc);
+        var orders = new CommerceOrderService(jdbc, redis, transactions, json, durable,
+                keyspace, null, null, recovery);
+        CommerceOrderStreamWorker service = new CommerceOrderStreamWorker(jdbc, redis, transactions, json,
+                durable, keyspace, null, orders, mock(CommerceOrderAdmissionService.class), recovery,
+                "test", enabled, batchSize, 10);
         return new Fixture(jdbc, redis, stream, service);
     }
 
@@ -340,7 +337,7 @@ class CommerceStreamRecoveryTest {
             JdbcTemplate jdbc,
             StringRedisTemplate redis,
             StreamOperations<String, Object, Object> stream,
-            CommerceOrderService service
+            CommerceOrderStreamWorker service
     ) {
     }
 }

@@ -9,6 +9,16 @@ import java.util.Map;
 
 public final class JsonSchemaGeneratorSelfTest {
 
+    @org.junit.jupiter.api.Test
+    void remoteStructuredSchemaSurvivesMetadataConversion() {
+        var requestSchema = Map.<String, Object>of("type", "object", "properties",
+                Map.of("partySize", Map.of("type", "integer"), "date", Map.of("type", "string", "format", "date")));
+        var definition = new com.citycopilot.contract.tool.ToolDefinition("search_bookable_options", "booking", List.of(), 60, true,
+                List.of(new com.citycopilot.contract.tool.ToolParameterDefinition("request", "com.citycopilot.contract.booking.BookingPlanContracts$PlanRequest", false, requestSchema)));
+        var schema = JsonSchemaGenerator.parametersSchema(ToolMetadata.fromDefinition(definition));
+        assertEquals(requestSchema, ((Map<?, ?>) schema.get("properties")).get("request"), "structured request");
+    }
+
     public static void main(String[] args) {
         ToolMetadata tool = AgentToolRegistry.fromBeans(List.of(new ShopTools()))
                 .require("search_shops_by_type");

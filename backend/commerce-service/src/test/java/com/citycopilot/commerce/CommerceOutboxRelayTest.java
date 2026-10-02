@@ -7,8 +7,14 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
@@ -33,6 +39,33 @@ class CommerceOutboxRelayTest {
                 "",
                 ""
         );
+    }
+
+    @Test
+    void archivedMessageKeepsOriginalBytesAndRejectsMissingOrChangedHistory() throws Exception {
+        String payload = "{\"eventId\":\"event-1\", \"detail\":\"原始正文\\n保留格式\"}";
+        String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(payload.getBytes(StandardCharsets.UTF_8)));
+        Map<String, Object> row = new LinkedHashMap<>(Map.of(
+                "topic", "citycopilot-commerce-events-v1", "event_type", "commerce.booking.confirmed",
+                "payload_json", payload, "payload_archived_at", java.sql.Timestamp.from(java.time.Instant.now()),
+                "archived_payload_hash", hash));
+        when(jdbc.queryForMap(anyString(), any(Object[].class))).thenReturn(row);
+        var claim = new CommerceOutboxRelay.OutboxClaim("event-1", "claim-1", 7L);
+        var message = relay.claimedMessage(claim);
+        assertThat(StandardCharsets.UTF_8.decode(message.getBody()).toString()).isEqualTo(payload);
+        assertThat(message.getKeys()).containsExactly("event-1");
+        assertThat(message.getProperties()).containsEntry("payloadHash", hash);
+        verify(jdbc).queryForMap(contains("e.claim_token=? AND e.fencing_token=? AND e.status='CLAIMED'"),
+                eq("event-1"), eq("claim-1"), eq(7L));
+        row.put("payload_json", payload + " ");
+        assertThatThrownBy(() -> relay.claimedMessage(claim)).hasMessageContaining("archive hash mismatch");
+        row.put("payload_json", null);
+        assertThatThrownBy(() -> relay.claimedMessage(claim)).hasMessageContaining("payload missing");
+        row.put("payload_json", payload);
+        row.put("payload_archived_at", null);
+        row.put("archived_payload_hash", null);
+        assertThat(StandardCharsets.UTF_8.decode(relay.claimedMessage(claim).getBody()).toString()).isEqualTo(payload);
     }
 
     @Test
@@ -93,6 +126,14 @@ class CommerceOutboxRelayTest {
                 .contains("SET status='FAILED'")
                 .contains("LEAST(900")
                 .doesNotContain("THEN 'DEAD'");
+    }
+
+    @Test
+    void bookingEventsHaveTheirOwnTagWithoutChangingExistingConsumerTags() {
+        assertThat(CommerceOutboxRelay.eventTag("commerce.booking.confirmed")).isEqualTo("BookingEvent");
+        assertThat(CommerceOutboxRelay.eventTag("commerce.booking.rescheduled")).isEqualTo("BookingEvent");
+        assertThat(CommerceOutboxRelay.eventTag("commerce.order.created")).isEqualTo("CommerceOrderEvent");
+        assertThat(CommerceOutboxRelay.eventTag("commerce.stock.discrepancy-detected")).isEqualTo("StockDiscrepancyDetected");
     }
 
     @Test

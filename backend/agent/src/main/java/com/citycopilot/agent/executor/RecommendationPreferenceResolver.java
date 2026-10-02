@@ -7,13 +7,25 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 推荐类工具参数的偏好合并器。
+ *
+ * <p>优先采用当前轮明确表达，其次保留模型已给出的有效分类，最后才从长期偏好提示补全；当前轮明确排除项始终生效。</p>
+ */
 final class RecommendationPreferenceResolver {
+    /** 会话格式中标记当前用户消息起点的文本。 */
     private static final String CURRENT_USER_MARKER = "Current user:";
+    /** 附近店铺工具接收的规范分类参数名。 */
     private static final String PREFERRED_CATEGORY_ARG = "preferredCategory";
 
     private RecommendationPreferenceResolver() {
     }
 
+    /**
+     * 为支持偏好的工具补全参数，同时不修改模型传入的原始 Map。
+     *
+     * @return 合并后的可变参数副本
+     */
     static Map<String, Object> applyToolDefaults(
             String toolName,
             String message,
@@ -29,6 +41,7 @@ final class RecommendationPreferenceResolver {
         return resolved;
     }
 
+    /** 按“当前请求、已有参数、记忆偏好”的优先级解析附近店铺分类。 */
     static void applyNearbyCategory(String message, Map<String, Object> hints, Map<String, Object> args) {
         if (args == null) {
             return;
@@ -77,6 +90,7 @@ final class RecommendationPreferenceResolver {
                 .toList();
     }
 
+    /** @return 从格式化会话中截取最后一段当前用户请求 */
     static String currentRequest(String message) {
         if (message == null) {
             return "";

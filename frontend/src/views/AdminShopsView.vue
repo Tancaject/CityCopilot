@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue';
 import { AlertCircle, CheckCircle2, Loader2, Plus, RefreshCw, Save, Search, Store } from '@lucide/vue';
 import { createShop, fetchShop, fetchShopsByName, fetchShopTypes, updateShop } from '../api/citycopilot';
+import { getErrorMessage } from '../utils/errors';
 import type { Shop, ShopType } from '../types';
 
 interface ShopForm {
@@ -102,7 +103,7 @@ async function loadShops() {
       fillForm(shops.value[0]);
     }
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '店铺加载失败';
+    errorMessage.value = getErrorMessage(error, '店铺加载失败');
   } finally {
     loading.value = false;
   }
@@ -130,7 +131,7 @@ async function saveShop() {
     }
     successMessage.value = '店铺已保存';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '店铺保存失败';
+    errorMessage.value = getErrorMessage(error, '店铺保存失败');
   } finally {
     saving.value = false;
   }

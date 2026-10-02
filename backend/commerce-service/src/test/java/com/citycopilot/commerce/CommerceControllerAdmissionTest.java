@@ -1,11 +1,11 @@
 package com.citycopilot.commerce;
 
+import com.citycopilot.contract.commerce.CommerceContracts.AdmissionAccepted;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import java.net.URI;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -16,18 +16,13 @@ class CommerceControllerAdmissionTest {
 
     @Test
     void newlyAcceptedAdmissionUsesHttp202() {
-        CommerceOrderService orders = mock(CommerceOrderService.class);
+        CommerceOrderAdmissionService orders = mock(CommerceOrderAdmissionService.class);
         CommerceRoutingGuard routing = mock(CommerceRoutingGuard.class);
         CommerceController controller = controller(orders, routing);
-        Map<String, Object> body = Map.of(
-                "orderId", "300",
-                "state", "processing",
-                "code", "COMMERCE_ORDER_ACCEPTED",
-                "idempotencyKey", "request-1"
-        );
+        AdmissionAccepted body = new AdmissionAccepted("300", "processing", "COMMERCE_ORDER_ACCEPTED", "request-1");
         when(orders.seckill(100L, 200L, "request-1")).thenReturn(body);
 
-        ResponseEntity<Map<String, Object>> response =
+        ResponseEntity<AdmissionAccepted> response =
                 controller.seckill(100L, 200L, "request-1");
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
@@ -39,18 +34,13 @@ class CommerceControllerAdmissionTest {
 
     @Test
     void idempotentReplayUsesHttp200() {
-        CommerceOrderService orders = mock(CommerceOrderService.class);
+        CommerceOrderAdmissionService orders = mock(CommerceOrderAdmissionService.class);
         CommerceRoutingGuard routing = mock(CommerceRoutingGuard.class);
         CommerceController controller = controller(orders, routing);
-        Map<String, Object> body = Map.of(
-                "orderId", "300",
-                "state", "processing",
-                "code", "IDEMPOTENT_REPLAY",
-                "idempotencyKey", "request-1"
-        );
+        AdmissionAccepted body = new AdmissionAccepted("300", "processing", "IDEMPOTENT_REPLAY", "request-1");
         when(orders.seckill(100L, 200L, "request-1")).thenReturn(body);
 
-        ResponseEntity<Map<String, Object>> response =
+        ResponseEntity<AdmissionAccepted> response =
                 controller.seckill(100L, 200L, "request-1");
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -60,10 +50,11 @@ class CommerceControllerAdmissionTest {
     }
 
     private CommerceController controller(
-            CommerceOrderService orders,
+            CommerceOrderAdmissionService orders,
             CommerceRoutingGuard routing
     ) {
         return new CommerceController(
+                mock(CommerceOrderService.class),
                 orders,
                 mock(CommerceVoucherService.class),
                 mock(CommerceConsistencyService.class),

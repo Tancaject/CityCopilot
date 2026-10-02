@@ -1,0 +1,1132 @@
+{
+  "testOnly": true,
+  "runId": "api-acceptance-2681aa8afdfa4c5bba54a62be6e16bd9",
+  "observedAt": "2026-09-10T04:23:46.945869+00:00",
+  "environment": "Isolated loopback Core citycopilot_booking_core_test and Commerce citycopilot_booking_ui_test; MySQL 127.0.0.1:33319; real RocketMQ BookingEvent consumer",
+  "baseUrl": "http://127.0.0.1:8081",
+  "python": "3.12.14",
+  "fixture": {
+    "userId": "100298",
+    "otherUserId": "100000",
+    "shopId": "90002",
+    "resourceId": "3",
+    "slotId": "7",
+    "startAt": "2026-09-11T10:00:00Z"
+  },
+  "security": {
+    "anonymousForgedIdentity": {
+      "httpStatus": 401,
+      "code": "AUTH_REQUIRED",
+      "latencyMs": 3.131
+    },
+    "ownRead": {
+      "httpStatus": 200,
+      "code": null,
+      "latencyMs": 19.018
+    },
+    "otherRead": {
+      "httpStatus": 404,
+      "code": "BOOKING_NOT_FOUND",
+      "latencyMs": 31.209
+    },
+    "otherCommandRead": {
+      "httpStatus": 404,
+      "code": "BOOKING_NOT_FOUND",
+      "latencyMs": 7.991
+    },
+    "ordinaryUserMerchantWrite": {
+      "httpStatus": 403,
+      "code": "PERMISSION_DENIED",
+      "latencyMs": 20.038
+    },
+    "clientForgedConfirmedFeedback": {
+      "httpStatus": 400,
+      "code": "BOOKING_FEEDBACK_INVALID_REQUEST",
+      "latencyMs": 10.118
+    }
+  },
+  "lostResponse": {
+    "upstreamHttpStatus": 201,
+    "upstreamBookingStatus": "HELD",
+    "callerHttpStatus": 0,
+    "callerTransportError": "RemoteDisconnected",
+    "observedCommittedResponseBeforeDisconnect": true,
+    "bookingId": "22f9d71a-4b7c-4a5c-aadb-26fe0e253b76",
+    "commandReturnedSameBooking": true,
+    "retryReturnedSameBooking": true,
+    "capacityDeltaAfterReplay": 2,
+    "confirmed": true,
+    "cancelled": true
+  },
+  "cleanup": {
+    "completed": true,
+    "unreleasedBookingIds": [],
+    "capacityBefore": 0,
+    "capacityAfter": 0,
+    "createdBookingIds": [
+      "22f9d71a-4b7c-4a5c-aadb-26fe0e253b76"
+    ]
+  },
+  "limitations": [
+    "Local isolated test services; no production throughput or CTR claim.",
+    "Plan timings include Core HTTP, discovery, Commerce and quote persistence; no plan query performs HOLD."
+  ],
+  "capacityBefore": 0,
+  "personalQuote": {
+    "baseCents": 10000,
+    "totalCents": 10000,
+    "partySize": 2
+  },
+  "attribution": {
+    "quoteId": "e0698ecc-f8d3-4f38-bb6e-c0a694d34543",
+    "impressionId": "5dd9a77a-4875-4df0-aaa0-b5f38f4b2e0e",
+    "requestId": "bba2fe56-6d1d-4567-8945-59be4015b62a",
+    "preflightPlanOutsideTimedWorkload": true
+  },
+  "plans": {
+    "requests": 30,
+    "concurrency": 5,
+    "successCount": 30,
+    "successRate": 1.0,
+    "returnedOptions": 20,
+    "validOptions": 20,
+    "hardConstraintRate": 1.0,
+    "p50Ms": 38.015,
+    "p95Ms": 63.881,
+    "p99Ms": 68.771,
+    "samples": [
+      {
+        "index": 0,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 46.442,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "897957c7-fda8-4b4a-8fad-22595d7a6a32",
+            "impressionId": "fa473b82-dfda-4871-9c80-1c4834baa19c"
+          }
+        ]
+      },
+      {
+        "index": 1,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 43.902,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "ecbf159b-0610-49ae-9b7f-9619dff60626",
+            "impressionId": "47e6006a-d3fb-4d96-aee7-58ecf4e7129d"
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 26.642,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      },
+      {
+        "index": 3,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 38.53,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "2fa5d05b-0f20-4cbe-a396-7de497c0848f",
+            "impressionId": "a87b11b0-b437-4e40-b7b7-f34fc36b9fbe"
+          }
+        ]
+      },
+      {
+        "index": 4,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 45.982,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "e0e1b5e4-3255-4dbb-8267-bf85a714d3af",
+            "impressionId": "9848b41b-03e8-4bb9-b3f9-53bdf20f8e7b"
+          }
+        ]
+      },
+      {
+        "index": 5,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 23.531,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      },
+      {
+        "index": 6,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 38.127,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "446792f4-4e37-4c00-a78e-c245c38145d5",
+            "impressionId": "3523320e-9deb-46a2-bd2e-27047437d88c"
+          }
+        ]
+      },
+      {
+        "index": 7,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 36.359,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "a3d0c46f-9880-45e1-884e-687e92a83531",
+            "impressionId": "06fa0b38-c3d9-47e3-969e-5373f8e2e7f9"
+          }
+        ]
+      },
+      {
+        "index": 8,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 23.29,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      },
+      {
+        "index": 9,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 36.475,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "aaf7ddec-c80e-4230-8f3e-abcc5cb0c41e",
+            "impressionId": "866acf78-8c27-462e-b3a0-a224d3bd9b78"
+          }
+        ]
+      },
+      {
+        "index": 10,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 38.676,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "8ea583f1-caa6-4ed9-8cf2-d8f93fe6de5e",
+            "impressionId": "86115f66-dfd2-4aa5-8630-8858d88ff415"
+          }
+        ]
+      },
+      {
+        "index": 11,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 39.395,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      },
+      {
+        "index": 12,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 68.771,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "b1eabe64-9801-4309-9689-affc3dcf6816",
+            "impressionId": "8da65d9b-adb5-44dc-83b7-429c4208ee85"
+          }
+        ]
+      },
+      {
+        "index": 13,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 38.015,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "227bedfd-601f-4170-b0c8-f4934cb539f3",
+            "impressionId": "712d92a5-27bf-4ed4-bc36-46f6c999b203"
+          }
+        ]
+      },
+      {
+        "index": 14,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 47.291,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      },
+      {
+        "index": 15,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 54.968,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "a71c62e1-ee89-47a9-b0f3-9882f3938bdb",
+            "impressionId": "0bc7b867-b6f7-4bdc-b946-d2ad56f7b8eb"
+          }
+        ]
+      },
+      {
+        "index": 16,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 63.881,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "05f0e17c-fa2f-4ae9-8b49-ae8defd8a73c",
+            "impressionId": "faae185a-880f-4f44-935f-64216a6a1950"
+          }
+        ]
+      },
+      {
+        "index": 17,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 25.375,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      },
+      {
+        "index": 18,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 49.788,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "6051c79e-75b0-4a33-810c-1bf803e067d7",
+            "impressionId": "71570995-3738-4fea-8aa1-f3cfb6085494"
+          }
+        ]
+      },
+      {
+        "index": 19,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 35.709,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "f6e659c5-5f88-47a2-9844-55993346748b",
+            "impressionId": "df02ba9b-5ea6-46cc-a914-31da35b2db3e"
+          }
+        ]
+      },
+      {
+        "index": 20,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 33.762,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      },
+      {
+        "index": 21,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 40.106,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "a968f414-a134-44ef-a01b-a81f9cfc2ab8",
+            "impressionId": "d02e823b-f484-4e8b-befd-155a6ba92f38"
+          }
+        ]
+      },
+      {
+        "index": 22,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 48.806,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "cd59811e-aa0d-4159-a083-0626d1757bae",
+            "impressionId": "4254d814-da5f-42eb-a24e-f175e8d7cb9c"
+          }
+        ]
+      },
+      {
+        "index": 23,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 33.786,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      },
+      {
+        "index": 24,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 35.13,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "0d1e8338-3327-473c-9e52-e8cb7f96193b",
+            "impressionId": "0894f0c1-3b05-4e0b-bfa0-ac0d70838f79"
+          }
+        ]
+      },
+      {
+        "index": 25,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 31.648,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "bb9dcf9b-5dad-4ab5-ae11-7c1b0bcade1b",
+            "impressionId": "1dee4b24-3536-423d-b4b0-33bf44dfacfe"
+          }
+        ]
+      },
+      {
+        "index": 26,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 35.339,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      },
+      {
+        "index": 27,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 2,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 10000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 45.843,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 2,
+            "totalCents": 10000,
+            "quoteId": "433b50e8-ae37-487b-a652-af958c9913dd",
+            "impressionId": "e372b388-ccb8-4c45-af07-636cc84cde2b"
+          }
+        ]
+      },
+      {
+        "index": 28,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 3,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "PER_PERSON",
+          "budgetCents": 5000,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "OPTIONS",
+        "success": true,
+        "latencyMs": 35.423,
+        "optionCount": 1,
+        "validOptionCount": 1,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": [
+          {
+            "shopId": "90002",
+            "resourceId": "3",
+            "slotId": "7",
+            "partySize": 3,
+            "totalCents": 15000,
+            "quoteId": "20926ec7-2187-489b-8f01-a5a002de9955",
+            "impressionId": "a2a47393-0325-4365-8b47-a7ae49e4acce"
+          }
+        ]
+      },
+      {
+        "index": 29,
+        "request": {
+          "scenario": "DINING_POOL",
+          "date": "2026-09-11",
+          "timeFrom": "18:00",
+          "timeTo": "19:00",
+          "timezone": "Asia/Shanghai",
+          "partySize": 4,
+          "keyword": "预约验收餐厅",
+          "budgetBasis": "TOTAL",
+          "budgetCents": 1,
+          "preferences": []
+        },
+        "httpStatus": 200,
+        "status": "NO_MATCH",
+        "success": true,
+        "latencyMs": 18.593,
+        "optionCount": 0,
+        "validOptionCount": 0,
+        "hardConstraintsPassed": true,
+        "rankingVersion": "booking-rules-v2",
+        "sampleOptions": []
+      }
+    ]
+  },
+  "passed": true,
+  "messageDelivery": {
+    "verifiedAt": "2026-09-10T04:28:55.311500+00:00",
+    "verification": "read-only MySQL join and bidirectional eventId set comparison",
+    "coreDatabase": "citycopilot_booking_core_test",
+    "commerceDatabase": "citycopilot_booking_ui_test",
+    "consumerGroup": "booking-test-ui-v1",
+    "eventIdSetsEqual": true,
+    "outbox": [
+      {
+        "status": "PUBLISHED",
+        "eventId": "b44ddfdf-78dd-4342-9703-5f74e7229e88",
+        "attempts": 1,
+        "eventType": "commerce.booking.held",
+        "aggregateVersion": 0
+      },
+      {
+        "status": "PUBLISHED",
+        "eventId": "85ec554a-fe0b-487b-bc18-4d0b05d0af15",
+        "attempts": 1,
+        "eventType": "commerce.booking.confirmed",
+        "aggregateVersion": 1
+      },
+      {
+        "status": "PUBLISHED",
+        "eventId": "1acf8dc8-7712-4249-9391-0645d6e20f33",
+        "attempts": 1,
+        "eventType": "commerce.booking.cancelled",
+        "aggregateVersion": 2
+      }
+    ],
+    "inbox": [
+      {
+        "status": "STALE",
+        "eventId": "b44ddfdf-78dd-4342-9703-5f74e7229e88",
+        "aggregateVersion": 0
+      },
+      {
+        "status": "PROCESSED",
+        "eventId": "85ec554a-fe0b-487b-bc18-4d0b05d0af15",
+        "aggregateVersion": 1
+      },
+      {
+        "status": "PROCESSED",
+        "eventId": "1acf8dc8-7712-4249-9391-0645d6e20f33",
+        "aggregateVersion": 2
+      }
+    ],
+    "behaviorFacts": [
+      {
+        "origin": "COMMERCE",
+        "shopId": 90002,
+        "userId": 100298,
+        "eventId": "b44ddfdf-78dd-4342-9703-5f74e7229e88",
+        "eventType": "HELD",
+        "attributed": 1,
+        "impressionId": "5dd9a77a-4875-4df0-aaa0-b5f38f4b2e0e",
+        "rankingVersion": "booking-rules-v2",
+        "aggregateVersion": 0,
+        "candidatePosition": 1
+      },
+      {
+        "origin": "COMMERCE",
+        "shopId": 90002,
+        "userId": 100298,
+        "eventId": "85ec554a-fe0b-487b-bc18-4d0b05d0af15",
+        "eventType": "CONFIRMED",
+        "attributed": 1,
+        "impressionId": "5dd9a77a-4875-4df0-aaa0-b5f38f4b2e0e",
+        "rankingVersion": "booking-rules-v2",
+        "aggregateVersion": 1,
+        "candidatePosition": 1
+      },
+      {
+        "origin": "COMMERCE",
+        "shopId": 90002,
+        "userId": 100298,
+        "eventId": "1acf8dc8-7712-4249-9391-0645d6e20f33",
+        "eventType": "CANCELLED",
+        "attributed": 1,
+        "impressionId": "5dd9a77a-4875-4df0-aaa0-b5f38f4b2e0e",
+        "rankingVersion": "booking-rules-v2",
+        "aggregateVersion": 2,
+        "candidatePosition": 1
+      }
+    ],
+    "projection": {
+      "status": "CANCELLED",
+      "bookingId": "22f9d71a-4b7c-4a5c-aadb-26fe0e253b76",
+      "attributed": 1,
+      "impressionId": "5dd9a77a-4875-4df0-aaa0-b5f38f4b2e0e",
+      "scheduleVersion": 1,
+      "aggregateVersion": 2
+    },
+    "impression": {
+      "userId": 100298,
+      "candidateIds": [
+        "90002"
+      ],
+      "impressionId": "5dd9a77a-4875-4df0-aaa0-b5f38f4b2e0e",
+      "rankingVersion": "booking-rules-v2"
+    },
+    "shopFeature": {
+      "used": 0,
+      "noShows": 0,
+      "negative": 0,
+      "cancelled": 1,
+      "confirmed": 1
+    },
+    "forgedClientConfirmedFacts": 0,
+    "passed": true
+  }
+}

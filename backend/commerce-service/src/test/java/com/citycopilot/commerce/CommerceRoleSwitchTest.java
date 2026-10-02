@@ -5,12 +5,50 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.mockingDetails;
 
 class CommerceRoleSwitchTest {
+    @Test
+    void splitOrderServicesWireWithoutCyclesAndDisabledWorkerDoesNotTouchRedis() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        new ApplicationContextRunner()
+                .withUserConfiguration(CommerceOrderService.class, CommerceOrderAdmissionService.class,
+                        CommerceOrderStreamWorker.class, CommerceOrderRecoveryStore.class)
+                .withPropertyValues("citycopilot.commerce.stream-worker-enabled=false")
+                .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
+                .withBean(StringRedisTemplate.class, () -> redis)
+                .withBean(TransactionTemplate.class, () -> mock(TransactionTemplate.class))
+                .withBean(ObjectMapper.class, () -> JsonMapper.builderWithJackson2Defaults().build())
+                .withBean(CommerceAdmissionDurabilityService.class, () -> mock(CommerceAdmissionDurabilityService.class))
+                .withBean(CommerceOrderIdGenerator.class, () -> mock(CommerceOrderIdGenerator.class))
+                .withBean(CommerceRedisReplicationExecutor.class, () -> mock(CommerceRedisReplicationExecutor.class))
+                .withBean(CommerceRedisKeyspace.class, () -> new CommerceRedisKeyspace(1, "v1"))
+                .withBean(CommerceRuntimeMutationLeases.class, () -> mock(CommerceRuntimeMutationLeases.class))
+                .withBean(CommerceRoutingGuard.class, () -> mock(CommerceRoutingGuard.class))
+                .run(context -> {
+                    assertThat(context).hasSingleBean(CommerceOrderService.class)
+                            .hasSingleBean(CommerceOrderAdmissionService.class)
+                            .hasSingleBean(CommerceOrderStreamWorker.class);
+                    context.getBean(CommerceOrderStreamWorker.class).recoverDurableAdmissions();
+                    assertThat(mockingDetails(redis).getInvocations())
+                            .extracting(invocation -> invocation.getMethod().getName())
+                            .containsOnly("setBeanClassLoader", "afterPropertiesSet");
+                    verifyNoInteractions(context.getBean(CommerceAdmissionDurabilityService.class));
+                });
+    }
+
     @Test
     void independentlyConditionsApiRelayAndReconciliationRoles() {
         assertSwitch(CommerceController.class, "api-enabled");

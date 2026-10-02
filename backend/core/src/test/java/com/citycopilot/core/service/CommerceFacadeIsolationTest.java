@@ -1,6 +1,6 @@
 package com.citycopilot.core.service;
 
-import com.baomidou.mybatisplus.extension.service.IService;
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.citycopilot.core.CityCopilotCoreApplication;
 import com.citycopilot.core.commerce.CommercePortClient;
 import com.citycopilot.core.service.impl.VoucherOrderServiceImpl;
@@ -44,7 +44,7 @@ class CommerceFacadeIsolationTest {
     @Test
     void defaultCoreSchemaDoesNotCreateLegacyCommerceTables() throws IOException {
         Path projectRoot = findProjectRoot();
-        String defaultSchema = Files.readString(projectRoot.resolve("citycopilot-v2.sql"), StandardCharsets.UTF_8);
+        String defaultSchema = Files.readString(projectRoot.resolve("deploy/mysql/core/V1__core_schema.sql"), StandardCharsets.UTF_8);
         List<String> legacyTables = List.of(
                 "coupon",
                 "seckill_coupon",
@@ -81,11 +81,11 @@ class CommerceFacadeIsolationTest {
 
     private Path findProjectRoot() {
         Path candidate = Path.of("").toAbsolutePath();
-        while (candidate != null && !Files.isRegularFile(candidate.resolve("citycopilot-v2.sql"))) {
+        while (candidate != null && !Files.isRegularFile(candidate.resolve("compose.yaml"))) {
             candidate = candidate.getParent();
         }
         assertThat(candidate)
-                .as("project root containing citycopilot-v2.sql")
+                .as("project root containing compose.yaml")
                 .isNotNull();
         return candidate;
     }

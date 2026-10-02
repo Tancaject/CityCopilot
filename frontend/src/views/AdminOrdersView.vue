@@ -5,6 +5,7 @@ import { AlertCircle, AlertTriangle, BadgeCheck, Clock, Database, Loader2, Recei
 import { fetchAdminVoucherOrder, fetchOperationLogs, useVoucherOrder } from '../api/citycopilot';
 import { authState } from '../composables/auth';
 import { formatCents } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
 import { hasPermission } from '../utils/permissions';
 import type { OperationLog, VoucherOrder } from '../types';
 
@@ -66,7 +67,7 @@ async function loadOrder() {
   } catch (error) {
     order.value = null;
     auditLogs.value = [];
-    errorMessage.value = error instanceof Error ? error.message : '订单查询失败';
+    errorMessage.value = getErrorMessage(error, '订单查询失败');
   } finally {
     loading.value = false;
   }
@@ -102,7 +103,7 @@ async function handleUseOrder() {
     confirmUseOpen.value = false;
     await loadOrderAudit(order.value.id);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '核销失败';
+    errorMessage.value = getErrorMessage(error, '核销失败');
   } finally {
     usingOrder.value = false;
   }

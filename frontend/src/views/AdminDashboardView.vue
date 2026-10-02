@@ -20,6 +20,7 @@ import {
 import { RouterLink } from 'vue-router';
 import { fetchOpsSummary } from '../api/citycopilot';
 import { authState } from '../composables/auth';
+import { getErrorMessage } from '../utils/errors';
 import { hasPermission } from '../utils/permissions';
 import type { OpsSummary } from '../types';
 
@@ -157,7 +158,7 @@ async function loadSummary() {
   try {
     summary.value = await fetchOpsSummary();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '运营概览加载失败';
+    errorMessage.value = getErrorMessage(error, '运营概览加载失败');
   } finally {
     loading.value = false;
   }

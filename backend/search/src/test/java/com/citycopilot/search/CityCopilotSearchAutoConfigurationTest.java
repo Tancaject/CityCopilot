@@ -1,8 +1,12 @@
 package com.citycopilot.search;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.json.JsonpMapper;
+import co.elastic.clients.json.jackson.Jackson3JsonpMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.elasticsearch.autoconfigure.ElasticsearchClientAutoConfiguration;
+import org.springframework.boot.elasticsearch.autoconfigure.ElasticsearchRestClientAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,6 +59,21 @@ class CityCopilotSearchAutoConfigurationTest {
                             .isInstanceOf(ElasticsearchShopSearchGateway.class);
                     assertThat(context.getBean(CityCopilotSearchProperties.class).getIndexAlias())
                             .isEqualTo("custom-shop-alias");
+                });
+    }
+
+    @Test
+    void bootFourCreatesJacksonThreeClientBeforeSelectingSearchGateway() {
+        contextRunner
+                .withConfiguration(AutoConfigurations.of(
+                        ElasticsearchRestClientAutoConfiguration.class, ElasticsearchClientAutoConfiguration.class))
+                .withPropertyValues("citycopilot.search.enabled=true", "spring.elasticsearch.uris=http://127.0.0.1:1")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(ElasticsearchClient.class);
+                    assertThat(context.getBean(JsonpMapper.class)).isInstanceOf(Jackson3JsonpMapper.class);
+                    assertThat(context).hasSingleBean(ShopSearchGateway.class);
+                    assertThat(context.getBean(ShopSearchGateway.class))
+                            .isInstanceOf(ElasticsearchShopSearchGateway.class);
                 });
     }
 }

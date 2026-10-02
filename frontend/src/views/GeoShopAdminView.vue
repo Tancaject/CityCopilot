@@ -39,6 +39,8 @@ import {
 } from '../api/citycopilot';
 import ConfirmDialog from '../components/ConfirmDialog.vue';
 import { authState } from '../composables/auth';
+import { getErrorMessage } from '../utils/errors';
+import { getPaginationLabel } from '../utils/labels';
 import { hasPermission } from '../utils/permissions';
 import type { AmapPoi, AmapServiceStatus, AuditStatus, GeoBatchJob, GeoBatchJobItem, OpsSummary, Shop } from '../types';
 import type { OperationLog } from '../types';
@@ -321,7 +323,7 @@ async function loadFirstPage() {
     }
   } catch (error) {
     if (currentRequest === requestId) {
-      errorMessage.value = error instanceof Error ? error.message : '店铺列表加载失败';
+      errorMessage.value = getErrorMessage(error, '店铺列表加载失败');
     }
   } finally {
     if (currentRequest === requestId) {
@@ -346,7 +348,7 @@ async function loadMore() {
     shops.value = shops.value.concat(result);
     currentPage.value = nextPage;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '加载更多店铺失败';
+    errorMessage.value = getErrorMessage(error, '加载更多店铺失败');
   } finally {
     loadingMore.value = false;
   }
@@ -366,7 +368,7 @@ async function loadCandidates(shop = selectedShop.value) {
       candidateError.value = '没有找到高德 POI 候选，可以换一个关键词再试';
     }
   } catch (error) {
-    candidateError.value = error instanceof Error ? error.message : 'POI 候选加载失败';
+    candidateError.value = getErrorMessage(error, 'POI 候选加载失败');
   } finally {
     candidatesLoading.value = false;
     void loadAmapStatus();
@@ -395,7 +397,7 @@ async function confirmCandidate(poi: AmapPoi) {
     await loadAuditLogs(updated.id);
     successMessage.value = `已确认 ${updated.name} 的高德 POI`;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'POI 确认失败';
+    errorMessage.value = getErrorMessage(error, 'POI 确认失败');
   } finally {
     savingShopId.value = null;
     void loadAmapStatus();
@@ -416,7 +418,7 @@ async function handleGeocode(shop = selectedShop.value, verified = false) {
     await loadAuditLogs(updated.id);
     successMessage.value = verified ? '地址解析已写入并标记为已验证' : '地址解析已写入，状态为待确认';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '地址解析失败';
+    errorMessage.value = getErrorMessage(error, '地址解析失败');
   } finally {
     geocodingShopId.value = null;
     void loadAmapStatus();
@@ -449,7 +451,7 @@ async function saveManualGeo() {
     await loadAuditLogs(updated.id);
     successMessage.value = '坐标已手动写回';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '手动保存失败';
+    errorMessage.value = getErrorMessage(error, '手动保存失败');
   } finally {
     savingShopId.value = null;
   }
@@ -464,7 +466,7 @@ async function handleSyncIndex() {
     await loadAuditLogs();
     successMessage.value = `Redis GEO 索引已重建，共同步 ${count || 0} 家店`;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'GEO 索引同步失败';
+    errorMessage.value = getErrorMessage(error, 'GEO 索引同步失败');
   } finally {
     syncing.value = false;
   }
@@ -475,7 +477,7 @@ async function loadAmapStatus() {
   try {
     amapStatus.value = await fetchAmapStatus();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '高德服务状态加载失败';
+    errorMessage.value = getErrorMessage(error, '高德服务状态加载失败');
   } finally {
     amapStatusLoading.value = false;
   }
@@ -501,7 +503,7 @@ async function handleExportAudit() {
     URL.revokeObjectURL(url);
     successMessage.value = '审计日志已导出';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '审计日志导出失败';
+    errorMessage.value = getErrorMessage(error, '审计日志导出失败');
   } finally {
     auditExporting.value = false;
   }
@@ -533,7 +535,7 @@ async function handleCleanupAudit() {
     cleanupAuditOpen.value = false;
     await Promise.all([loadAuditLogs(selectedShop.value?.id), loadAuditStatus()]);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '审计日志清理失败';
+    errorMessage.value = getErrorMessage(error, '审计日志清理失败');
   } finally {
     auditCleaning.value = false;
   }
@@ -557,7 +559,7 @@ async function handleStartBatch() {
     successMessage.value = batchJob.value.total ? '批量校准任务已进入队列' : '没有需要批量处理的店铺';
     startBatchPolling();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '批量校准任务创建失败';
+    errorMessage.value = getErrorMessage(error, '批量校准任务创建失败');
   } finally {
     batchLoading.value = false;
   }
@@ -579,7 +581,7 @@ async function refreshBatchJob() {
     }
   } catch (error) {
     stopBatchPolling();
-    errorMessage.value = error instanceof Error ? error.message : '批量任务状态获取失败';
+    errorMessage.value = getErrorMessage(error, '批量任务状态获取失败');
   }
 }
 
@@ -665,7 +667,7 @@ async function handleCancelBatch(job = batchJob.value) {
     stopBatchPolling();
     successMessage.value = '批量任务已取消';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '取消批量任务失败';
+    errorMessage.value = getErrorMessage(error, '取消批量任务失败');
   }
 }
 
@@ -684,7 +686,7 @@ async function handleRetryBatch(job = batchJob.value) {
     startBatchPolling();
     successMessage.value = '失败明细已创建重试任务';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '重试批量任务失败';
+    errorMessage.value = getErrorMessage(error, '重试批量任务失败');
   } finally {
     batchLoading.value = false;
   }
@@ -714,7 +716,7 @@ async function loadAuditLogs(targetId = selectedShop.value?.id) {
       targetId,
     });
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '审计日志加载失败';
+    errorMessage.value = getErrorMessage(error, '审计日志加载失败');
   } finally {
     auditLoading.value = false;
   }
@@ -998,7 +1000,7 @@ onBeforeUnmount(() => {
 
         <button class="load-more" type="button" :disabled="loading || loadingMore || !hasMore" @click="loadMore">
           <Loader2 v-if="loadingMore" class="spin" :size="17" aria-hidden="true" />
-          {{ loadingMore ? '加载中' : hasMore ? '加载更多' : '没有更多了' }}
+          {{ getPaginationLabel(loadingMore, hasMore) }}
         </button>
       </section>
 

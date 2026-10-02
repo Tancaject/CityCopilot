@@ -4,6 +4,7 @@ import { AlertCircle, Loader2, RefreshCw, Search, Trash2 } from '@lucide/vue';
 import { deleteAdminBlog, fetchAdminBlogs } from '../api/citycopilot';
 import ConfirmDialog from '../components/ConfirmDialog.vue';
 import { blogContentText, blogCover } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
 import type { Blog } from '../types';
 
 const blogs = ref<Blog[]>([]);
@@ -26,7 +27,7 @@ async function loadBlogs() {
   try {
     blogs.value = await fetchAdminBlogs(1, keyword.value.trim() || undefined);
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '笔记加载失败';
+    errorMessage.value = getErrorMessage(error, '笔记加载失败');
   } finally {
     loading.value = false;
   }
@@ -48,7 +49,7 @@ async function confirmDelete() {
     blogs.value = blogs.value.filter((item) => item.id !== blog.id);
     pendingDelete.value = null;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '删除失败';
+    errorMessage.value = getErrorMessage(error, '删除失败');
   } finally {
     deletingId.value = null;
   }

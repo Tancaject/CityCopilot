@@ -1,7 +1,6 @@
 package com.citycopilot.core.utils;
 
-/**
- */
+/** 集中保存登录与账户字段的格式校验正则。 */
 public abstract class RegexPatterns {
     /**
      * 手机号正则

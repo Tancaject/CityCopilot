@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { AlertCircle, CheckCircle2, Loader2, Plus, Save, Search, Ticket, ToggleLeft, ToggleRight } from '@lucide/vue';
 import { createAdminVoucher, fetchAdminVouchers, updateAdminVoucher, updateAdminVoucherStatus } from '../api/citycopilot';
 import { formatCents } from '../utils/assets';
+import { getErrorMessage } from '../utils/errors';
 import type { Voucher } from '../types';
 
 interface VoucherForm {
@@ -167,7 +168,7 @@ async function loadVouchers() {
       fillForm(vouchers.value[0]);
     }
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '优惠券加载失败';
+    errorMessage.value = getErrorMessage(error, '优惠券加载失败');
   } finally {
     loading.value = false;
   }
@@ -196,7 +197,7 @@ async function saveVoucher() {
     }
     successMessage.value = '优惠券已保存';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '优惠券保存失败';
+    errorMessage.value = getErrorMessage(error, '优惠券保存失败');
   } finally {
     saving.value = false;
   }
@@ -215,7 +216,7 @@ async function toggleVoucherStatus(voucher: Voucher) {
     }
     successMessage.value = nextStatus === 1 ? '优惠券已上架' : '优惠券已下架';
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '状态更新失败';
+    errorMessage.value = getErrorMessage(error, '状态更新失败');
   } finally {
     statusChangingId.value = null;
   }

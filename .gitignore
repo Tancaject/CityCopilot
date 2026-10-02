@@ -81,6 +81,8 @@ Thumbs.db
 
 ### Local tools ###
 .tools/
+__pycache__/
+*.pyc
 
 ### Load-test runtime artifacts ###
 tools/loadtest/results/

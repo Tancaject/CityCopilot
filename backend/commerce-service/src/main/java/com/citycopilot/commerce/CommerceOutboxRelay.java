@@ -27,6 +27,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * 将 MySQL Outbox 中已提交的领域事件可靠转发到 RocketMQ。
+ *
+ * <p>多个 Relay 可并发运行：数据库条件更新负责抢占，{@code claim_token + fencing_token}
+ * 防止过期 Worker 覆盖新所有者状态。发布和标记成功不是同一事务，因此下游仍须按 eventId 幂等。</p>
+ */
 @Component
 @ConditionalOnProperty(
         prefix = "citycopilot.commerce",
@@ -36,14 +42,23 @@ import java.util.UUID;
 )
 public class CommerceOutboxRelay {
     private static final Logger log = LoggerFactory.getLogger(CommerceOutboxRelay.class);
+    /** 读取、抢占并更新 Outbox 行。 */
     private final JdbcTemplate jdbc;
+    /** 是否建立 RocketMQ Producer；关闭时保留 Outbox 数据。 */
     private final boolean enabled;
+    /** RocketMQ gRPC 接入端点。 */
     private final String endpoints;
+    /** 是否启用 RocketMQ TLS。 */
     private final boolean sslEnabled;
+    /** 可选的 RocketMQ AccessKey。 */
     private final String accessKey;
+    /** 与 AccessKey 配对的 RocketMQ SecretKey。 */
     private final String secretKey;
+    /** 记录积压、发布结果和耗时。 */
     private final MeterRegistry metrics;
+    /** RocketMQ 客户端 SPI 入口，用于创建消息和 Producer。 */
     private final ClientServiceProvider provider = ClientServiceProvider.loadService();
+    /** 启动后创建、关闭前释放的 Producer。 */
     private Producer producer;
 
     public CommerceOutboxRelay(
@@ -68,6 +83,7 @@ public class CommerceOutboxRelay {
                 .register(metrics);
     }
 
+    /** 根据配置创建 Producer；禁用时调度任务保持空操作。 */
     @PostConstruct
     void start() throws Exception {
         if (!enabled) return;
@@ -78,6 +94,11 @@ public class CommerceOutboxRelay {
                 .build();
     }
 
+    /**
+     * 构造 RocketMQ 客户端配置，并要求 accessKey/secretKey 成对出现。
+     *
+     * @return 可交给 ProducerBuilder 的客户端配置
+     */
     static ClientConfiguration clientConfiguration(
             String endpoints,
             boolean sslEnabled,
@@ -98,6 +119,7 @@ public class CommerceOutboxRelay {
         return builder.build();
     }
 
+    /** 周期扫描可发布或租约已过期的 Outbox 行，单条失败不阻断后续事件。 */
     @Scheduled(fixedDelayString = "${citycopilot.commerce.outbox-relay-ms:1000}")
     void relay() {
         if (producer == null) return;
@@ -110,6 +132,11 @@ public class CommerceOutboxRelay {
         }
     }
 
+    /**
+     * 按创建时间选取一小批可重试事件；过期 CLAIMED 行也允许被新 Worker 接管。
+     *
+     * @return 候选 eventId，最终所有权仍由 {@link #claim(String)} 决定
+     */
     List<String> relayCandidates() {
         return jdbc.queryForList("""
                 SELECT event_id FROM commerce_outbox_event
@@ -122,27 +149,18 @@ public class CommerceOutboxRelay {
                 """, String.class);
     }
 
+    /**
+     * 抢占并发布一个 Outbox 事件，再以同一 fencing token 标记结果。
+     *
+     * @param eventId Outbox 事件 ID，同时作为 MQ 消息键
+     */
     void publish(String eventId) {
         OutboxClaim claim = claim(eventId);
         if (claim == null) return;
         Timer.Sample sample = Timer.start(metrics);
         try {
-            Map<String, Object> row = jdbc.queryForMap("""
-                    SELECT topic,event_type,payload_json FROM commerce_outbox_event
-                    WHERE event_id=? AND claim_token=? AND fencing_token=? AND status='CLAIMED'
-                    """, eventId, claim.token(), claim.fencingToken());
-            String payload = String.valueOf(row.get("payload_json"));
-            Message message = provider.newMessageBuilder()
-                    .setTopic(String.valueOf(row.get("topic")))
-                    .setTag(String.valueOf(row.get("event_type")).contains("discrepancy")
-                            ? "StockDiscrepancyDetected"
-                            : "CommerceOrderEvent")
-                    .setKeys(eventId)
-                    .addProperty("eventType", String.valueOf(row.get("event_type")))
-                    .addProperty("payloadHash", sha256(payload))
-                    .setBody(payload.getBytes(StandardCharsets.UTF_8))
-                    .build();
-            producer.send(message);
+            producer.send(claimedMessage(claim));
+            // 发送成功后仍用 claim token + fencing token 条件更新；过期所有者不能篡改新租约状态。
             if (markPublished(claim)) {
                 count("published");
             } else {
@@ -162,6 +180,45 @@ public class CommerceOutboxRelay {
         }
     }
 
+    /** 重投也读取同一原文；归档不能改变 eventId、正文编码或内容摘要。 */
+    Message claimedMessage(OutboxClaim claim) throws Exception {
+        Map<String, Object> row = jdbc.queryForMap("""
+                SELECT e.topic,e.event_type,e.payload_archived_at,
+                       CASE WHEN e.payload_archived_at IS NULL THEN e.payload_json ELSE a.payload_json END AS payload_json,
+                       a.payload_sha256 AS archived_payload_hash
+                FROM commerce_outbox_event e
+                LEFT JOIN commerce_outbox_payload_archive a ON a.event_id=e.event_id
+                WHERE e.event_id=? AND e.claim_token=? AND e.fencing_token=? AND e.status='CLAIMED'
+                """, claim.eventId(), claim.token(), claim.fencingToken());
+        String payload = (String) row.get("payload_json");
+        if (payload == null) throw new IllegalStateException(
+                "Outbox payload missing for " + claim.eventId() + "; restore the original payload before retrying publication");
+        String payloadHash = sha256(payload);
+        if (row.get("payload_archived_at") != null && !payloadHash.equals(row.get("archived_payload_hash"))) {
+            throw new IllegalStateException("Outbox archive hash mismatch for " + claim.eventId()
+                    + "; restore the verified original payload before retrying publication");
+        }
+        return provider.newMessageBuilder()
+                .setTopic(String.valueOf(row.get("topic")))
+                .setTag(eventTag(String.valueOf(row.get("event_type"))))
+                .setKeys(claim.eventId())
+                .addProperty("eventType", String.valueOf(row.get("event_type")))
+                .addProperty("payloadHash", payloadHash)
+                .setBody(payload.getBytes(StandardCharsets.UTF_8))
+                .build();
+    }
+
+    static String eventTag(String eventType) {
+        if (eventType.startsWith("commerce.booking.")) return "BookingEvent";
+        return eventType.contains("discrepancy") ? "StockDiscrepancyDetected" : "CommerceOrderEvent";
+    }
+
+    /**
+     * 以单条条件更新取得短租约，并递增单调 fencing token。
+     *
+     * @param eventId 待抢占事件 ID
+     * @return 本 Worker 的所有权凭据；竞争失败返回 {@code null}
+     */
     OutboxClaim claim(String eventId) {
         String claim = UUID.randomUUID().toString();
         int claimed = jdbc.update("""
@@ -186,6 +243,7 @@ public class CommerceOutboxRelay {
         return new OutboxClaim(eventId, claim, fencingToken);
     }
 
+    /** 仅由仍持有同一 claim/fencing token 的 Worker 标记发布成功。 */
     boolean markPublished(OutboxClaim claim) {
         return jdbc.update("""
                 UPDATE commerce_outbox_event
@@ -195,6 +253,9 @@ public class CommerceOutboxRelay {
                 """, claim.eventId(), claim.token(), claim.fencingToken()) == 1;
     }
 
+    /**
+     * 记录发布失败并按 attempts 指数退避；所有权已变化时不更新任何状态。
+     */
     boolean markFailed(OutboxClaim claim, Exception error) {
         return jdbc.update("""
                 UPDATE commerce_outbox_event
@@ -244,11 +305,19 @@ public class CommerceOutboxRelay {
         return safe.substring(0, Math.min(1024, safe.length()));
     }
 
+    /** 关闭 RocketMQ Producer，释放网络线程和连接。 */
     @PreDestroy
     void close() throws Exception {
         if (producer != null) producer.close();
     }
 
+    /**
+     * 一次 Outbox 抢占的不可转移所有权凭据。
+     *
+     * @param eventId 事件 ID
+     * @param token 本次随机 claim token
+     * @param fencingToken 数据库单调递增的隔离令牌
+     */
     record OutboxClaim(String eventId, String token, long fencingToken) {
     }
 }
