@@ -3,13 +3,11 @@ package com.citycopilot.core.service;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import cn.hutool.json.JSONUtil;
-import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.core.config.AmapProperties;
 import com.citycopilot.core.config.GeoProperties;
 import com.citycopilot.core.dto.AmapPoiDTO;
 import com.citycopilot.core.dto.GeoPointDTO;
 import com.citycopilot.core.dto.Result;
-import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.utils.RedisGeoCoordinates;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -81,11 +79,6 @@ public class AmapGeoService {
      * @param city 可选城市范围；空值使用 GEO 默认城市
      * @return 地理点或稳定业务错误
      */
-    @AgentTool(
-            name = "geocode_address",
-            description = "Geocode an address into coordinates",
-            requiredPermissions = {PermissionCodes.GEO_READ}
-    )
     public Result geocode(String address, String city) {
         String operation = "geocode";
         if (StrUtil.isBlank(address)) {
@@ -141,11 +134,6 @@ public class AmapGeoService {
      * @param adcode 可选行政区编码，优先于城市名称
      * @return 标准化 POI DTO 列表或稳定业务错误
      */
-    @AgentTool(
-            name = "search_geo_poi",
-            description = "Search map POI candidates by keyword and city",
-            requiredPermissions = {PermissionCodes.GEO_READ}
-    )
     public Result searchPoi(String keywords, String city, String adcode) {
         String operation = "poi";
         if (StrUtil.isBlank(keywords)) {
@@ -284,11 +272,6 @@ public class AmapGeoService {
      *
      * @return 运维状态映射
      */
-    @AgentTool(
-            name = "get_geo_provider_status",
-            description = "Get Amap provider health, rate-limit, and circuit status",
-            requiredPermissions = {PermissionCodes.GEO_READ}
-    )
     public Map<String, Object> getStatus() {
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("circuitOpen", isAmapCircuitOpen());

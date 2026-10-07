@@ -1,12 +1,11 @@
--- 原子目的：完成秒杀准入的门禁/维护/活动/时间窗/库存/一人一单/幂等检查，并一次性预扣库存、标记买家、写 Stream 与在途集合。
+-- 原子目的：完成秒杀准入的维护/活动/时间窗/库存/一人一单/幂等检查，并一次性预扣库存、标记买家、写 Stream 与在途集合。
 -- 以下键必须共享同一个 Voucher Cluster hash tag：
 -- KEYS[1] 活动元数据 Hash；KEYS[2] 库存；KEYS[3] 买家集合；KEYS[4] 分片订单 Stream；
--- KEYS[5] 用户+幂等键的准入身份；KEYS[6] 库存维护 fence；KEYS[7] 在途集合；KEYS[8] 分片路由门禁。
--- ARGV[1] userId；ARGV[2] orderId；ARGV[3] voucherId；ARGV[4] idempotencyKey；ARGV[5] 请求指纹；ARGV[6] 预期 ACTIVE 门禁值。
+-- KEYS[5] 用户+幂等键的准入身份；KEYS[6] 库存维护 fence；KEYS[7] 在途集合。
+-- ARGV[1] userId；ARGV[2] orderId；ARGV[3] voucherId；ARGV[4] idempotencyKey；ARGV[5] 请求指纹。
 -- 返回值：0=新准入成功；1=库存不足；2=用户已购买；3=同身份幂等重放；4=幂等键冲突；5=库存缺失/非法；
---         6=库存维护中；7=活动元数据缺失/非法；8=非可用秒杀活动；9=尚未开始；10=已结束；11=分片路由未激活。
--- 先验证路由代际与维护 fence，再读取或修改业务键，避免迁移/修复期间产生新的准入。
-if redis.call('get', KEYS[8]) ~= ARGV[6] then return 11 end
+--         6=库存维护中；7=活动元数据缺失/非法；8=非可用秒杀活动；9=尚未开始；10=已结束。
+-- 先验证维护 fence，再读取或修改业务键，避免修复期间产生新的准入。
 if redis.call('exists', KEYS[6]) == 1 then return 6 end
 
 local metadata = redis.call(

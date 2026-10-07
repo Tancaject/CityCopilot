@@ -18,7 +18,7 @@ public class ShopProjectionMetrics {
     public ShopProjectionMetrics(JdbcTemplate jdbc, MeterRegistry registry) {
         this.jdbc = jdbc;
         Gauge.builder("citycopilot.shop.projection.backlog", this, value -> value.snapshot.backlog())
-                .description("Committed shop changes not yet projected to both search and GEO").register(registry);
+                .description("Committed shop changes not yet projected to GEO").register(registry);
         Gauge.builder("citycopilot.shop.projection.oldest.age", this, value -> value.snapshot.oldestAge())
                 .baseUnit("seconds").description("Age of the oldest unprocessed shop change").register(registry);
         Gauge.builder("citycopilot.shop.projection.sample.timestamp", this, value -> value.snapshot.sampleTime())

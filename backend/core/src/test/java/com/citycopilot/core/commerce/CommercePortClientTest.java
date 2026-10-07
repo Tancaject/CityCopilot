@@ -79,7 +79,7 @@ class CommercePortClientTest {
 
     @Test
     void sendsTypedActionAndRepairWithoutChangingWireFields() {
-        server.expect(requestTo("http://commerce.test/commerce/v1/orders/300/actions?admin=false"))
+        server.expect(requestTo("http://commerce.test/commerce/v1/orders/300/actions?admin=false&merchant=false"))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(content().json("""
                         {"action":"pay","payType":1}
@@ -116,6 +116,7 @@ class CommercePortClientTest {
 
     @Test
     void queriesTypedOrdersPreservingLargeIdsTimesAndAdditionalFields() {
+        UserHolder.getUser().setRole("admin");
         String summary = """
                 {"id":"9007199254740993","userId":7,"voucherId":10,"shopId":20,
                  "shopName":"店铺","voucherTitle":"双人券","status":4,"version":2,
@@ -129,7 +130,7 @@ class CommercePortClientTest {
         server.expect(requestTo("http://commerce.test/commerce/v1/orders?page=1"))
                 .andExpect(header("X-CityCopilot-User-Id", "7"))
                 .andRespond(withStatus(HttpStatus.OK).contentType(MediaType.APPLICATION_JSON).body("[" + summary + "]"));
-        server.expect(requestTo("http://commerce.test/commerce/v1/orders/9007199254740993?admin=true"))
+        server.expect(requestTo("http://commerce.test/commerce/v1/orders/9007199254740993?admin=true&merchant=false"))
                 .andExpect(header("X-CityCopilot-Service-Token", "service-secret"))
                 .andExpect(header("X-CityCopilot-User-Id", "7"))
                 .andRespond(withStatus(HttpStatus.OK).contentType(MediaType.APPLICATION_JSON).body(detail));
@@ -150,8 +151,7 @@ class CommercePortClientTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "COMMERCE_ADMISSION_OUTCOME_UNKNOWN",
-            "COMMERCE_DURABLE_ADMISSION_UNAVAILABLE",
-            "COMMERCE_ROUTING_MUTATION_LEASE_LOST"
+            "COMMERCE_DURABLE_ADMISSION_UNAVAILABLE"
     })
     void exposesRetryableAdmissionFailures(String code) {
         expectSeckill().andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE)
@@ -246,5 +246,21 @@ class CommercePortClientTest {
         } finally {
             release.countDown(); downstream.stop(0); workers.shutdownNow();
         }
+    }
+
+    @Test
+    void merchantManagementViewIsSentAsMerchantScopeNotPlatformAdmin() {
+        UserHolder.getUser().setRole("merchant");
+        server.expect(requestTo("http://commerce.test/commerce/v1/orders/300/actions?admin=false&merchant=true"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN).contentType(MediaType.APPLICATION_JSON)
+                        .body("""
+                                {"success":false,"code":"COMMERCE_SHOP_FORBIDDEN","message":"Actor does not own the shop"}
+                                """));
+
+        Result result = client.transition(300L, "use", null, true);
+
+        assertThat(result.getSuccess()).isFalse();
+        assertThat(result.getCode()).isEqualTo("COMMERCE_SHOP_FORBIDDEN");
     }
 }

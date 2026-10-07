@@ -6,6 +6,7 @@ import com.citycopilot.core.utils.AdminInterceptor;
 import com.citycopilot.core.utils.LoginInterceptor;
 import com.citycopilot.core.utils.RefreshTokenInterceptor;
 import com.citycopilot.core.utils.UserContextFilter;
+import com.citycopilot.core.utils.UserRateLimitInterceptor;
 import com.citycopilot.http.DeadlineHandlerInterceptor;
 import jakarta.annotation.Resource;
 import jakarta.servlet.DispatcherType;
@@ -84,28 +85,15 @@ public class MvcConfig implements WebMvcConfigurer {
         // 会话 Redis 访问沿用同一请求预算，不在 Servlet Filter 中提前执行。
         registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate))
                 .addPathPatterns("/**").order(0);
-        // 管理端和高风险写接口读取已恢复的用户并执行细粒度权限判断。
+        // 按 @RequirePermission 注解执行细粒度权限判断；/admin 下无注解时默认要求 admin:access。
         registry.addInterceptor(new AdminInterceptor(permissionPolicy))
-                .addPathPatterns(
-                        "/admin/**",
-                        "/agent/traces",
-                        "/agent/traces/**",
-                        "/geo/**",
-                        "/shop",
-                        "/shop/*/geo",
-                        "/voucher",
-                        "/voucher/seckill",
-                        "/voucher-order/*/use"
-                )
+                .addPathPatterns("/**")
                 .order(1);
 
         // 最后为除公开白名单外的接口统一要求登录。
         registry.addInterceptor(new LoginInterceptor())
                 .excludePathPatterns(
                         "/blog/hot",
-                        "/agent/ping",
-                        "/agent/chat",
-                        "/mcp/tools/list",
                         "/actuator/**",
                         "/v3/api-docs/**",
                         "/swagger-ui/**",
@@ -122,10 +110,11 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/shop/**",
                         "/shop-type/**",
                         "/voucher/**",
-                        "/imgs/**",
                         uploadPublicPattern
                 )
                 .order(2);
+        registry.addInterceptor(new UserRateLimitInterceptor(stringRedisTemplate))
+                .addPathPatterns("/voucher-order/seckill/*").order(3);
     }
 
     /** 把配置的上传目录以只读静态资源方式映射到公开 URL 前缀。 */

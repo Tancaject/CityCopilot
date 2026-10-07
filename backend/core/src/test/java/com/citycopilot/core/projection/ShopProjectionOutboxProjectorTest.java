@@ -4,7 +4,7 @@ import com.citycopilot.core.config.ShopProjectionProperties;
 import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.mapper.ShopMapper;
 import com.citycopilot.core.service.ShopGeoIndexService;
-import com.citycopilot.core.service.discovery.ShopSearchProjectionService;
+import com.citycopilot.core.utils.CacheClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +29,6 @@ class ShopProjectionOutboxProjectorTest {
     private ShopProjectionLeaseService.Lease lease;
     private ShopMapper shopMapper;
     private ShopGeoIndexService geoIndex;
-    private ShopSearchProjectionService searchProjection;
     private ShopProjectionOutboxProjector projector;
     private ShopProjectionOutboxRepository.ClaimedEvent event;
 
@@ -40,11 +39,10 @@ class ShopProjectionOutboxProjectorTest {
         lease = mock(ShopProjectionLeaseService.Lease.class);
         shopMapper = mock(ShopMapper.class);
         geoIndex = mock(ShopGeoIndexService.class);
-        searchProjection = mock(ShopSearchProjectionService.class);
         ShopProjectionProperties properties = new ShopProjectionProperties();
         properties.setMaintenanceLeaseTtl(Duration.ofMinutes(1));
         projector = new ShopProjectionOutboxProjector(
-                outbox, leases, shopMapper, geoIndex, searchProjection, properties);
+                outbox, leases, shopMapper, geoIndex, properties, mock(CacheClient.class));
         event = new ShopProjectionOutboxRepository.ClaimedEvent(
                 1L, "event-1", 7L, 3L, 1, "claim-1");
         when(lease.fencingToken()).thenReturn(9L);
@@ -60,7 +58,6 @@ class ShopProjectionOutboxProjectorTest {
 
         projector.projectReadyEvents();
 
-        verify(searchProjection).upsertVersioned(current);
         verify(geoIndex).refreshShopGeoIndexVersioned(current, 5L);
         verify(lease).assertHeld();
         verify(outbox).complete(event);
@@ -71,13 +68,12 @@ class ShopProjectionOutboxProjectorTest {
     void leavesFailedExternalWriteRetryable() {
         Shop current = new Shop().setId(7L).setProjectionVersion(3L);
         when(shopMapper.selectById(7L)).thenReturn(current);
-        doThrow(new IllegalStateException("elasticsearch unavailable"))
-                .when(searchProjection).upsertVersioned(current);
+        doThrow(new IllegalStateException("redis unavailable"))
+                .when(geoIndex).refreshShopGeoIndexVersioned(current, 3L);
 
         projector.projectReadyEvents();
 
         verify(outbox).fail(any(), any(IllegalStateException.class), any(Duration.class));
         verify(outbox, never()).complete(any());
-        verify(geoIndex, never()).refreshShopGeoIndexVersioned(any(), anyLong());
     }
 }

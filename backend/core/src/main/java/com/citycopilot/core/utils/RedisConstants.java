@@ -40,8 +40,6 @@ public class RedisConstants {
     /** 缓存重建竞争者的基础重试间隔，单位毫秒。 */
     public static final Long CACHE_REBUILD_RETRY_MILLIS = 25L;
 
-    /** 仅用于导入旧版点赞事实；运行时点赞关系由 MySQL 持有。 */
-    public static final String BLOG_LIKED_KEY = "blog:liked:";
     /** 按店铺分类拆分的 Redis GEO 键前缀。 */
     public static final String SHOP_GEO_KEY = "shop:geo:";
     /** 全部店铺 Redis GEO 索引键。 */
@@ -58,10 +56,4 @@ public class RedisConstants {
     public static final String AMAP_FAILURE_STREAK_KEY = "metrics:amap:failure-streak";
     /** 高德调用指标键前缀。 */
     public static final String AMAP_METRIC_KEY = "metrics:amap:";
-    /** AI 接口限流键前缀。 */
-    public static final String AI_RATE_LIMIT_KEY = "limit:ai:";
-    /** 用户每日签到 Bitmap 键前缀。 */
-    public static final String USER_SIGN_KEY = "sign:";
-    /** 每日 UV HyperLogLog 键前缀。 */
-    public static final String UV_KEY = "uv:";
 }

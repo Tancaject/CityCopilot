@@ -51,25 +51,6 @@ public class LocalFileStorageService implements FileStorageService {
         }
     }
 
-    @Override
-    public boolean deletePublicPath(String publicPath) {
-        String relativePath = normalizeInputPath(publicPath);
-        if (StrUtil.isBlank(relativePath)) {
-            throw new IllegalArgumentException("错误的文件名称");
-        }
-        Path root = uploadRoot();
-        Path target = root.resolve(stripLeadingSlash(relativePath)).normalize();
-        // 删除同样限制在上传根目录内，并拒绝把目录当成单个博客文件删除。
-        if (!target.startsWith(root) || Files.isDirectory(target)) {
-            throw new IllegalArgumentException("错误的文件名称");
-        }
-        try {
-            return Files.deleteIfExists(target);
-        } catch (IOException e) {
-            throw new RuntimeException("文件删除失败", e);
-        }
-    }
-
     /**
      * 从大小、扩展名、MIME 类型和文件头四个维度校验上传内容。
      *
@@ -184,24 +165,6 @@ public class LocalFileStorageService implements FileStorageService {
 
     private String publicPath(String relativePath) {
         return normalizePrefix(uploadProperties.getPublicPrefix()) + stripLeadingSlash(relativePath);
-    }
-
-    /**
-     * 将公开路径或兼容的旧图片路径还原成上传根目录下的相对路径。
-     *
-     * @param path 对外公开路径
-     * @return 去除公开前缀后的相对路径
-     */
-    private String normalizeInputPath(String path) {
-        String normalized = StrUtil.blankToDefault(path, "").replace('\\', '/');
-        String publicPrefix = normalizePrefix(uploadProperties.getPublicPrefix());
-        if (normalized.startsWith(publicPrefix)) {
-            normalized = normalized.substring(publicPrefix.length() - 1);
-        }
-        if (normalized.startsWith("/imgs/")) {
-            normalized = normalized.substring("/imgs".length());
-        }
-        return normalized;
     }
 
     private String normalizePrefix(String prefix) {

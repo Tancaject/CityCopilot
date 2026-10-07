@@ -1,7 +1,7 @@
 package com.citycopilot.core.controller;
 
 import com.citycopilot.core.dto.Result;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IVoucherOrderService;
 import jakarta.annotation.Resource;

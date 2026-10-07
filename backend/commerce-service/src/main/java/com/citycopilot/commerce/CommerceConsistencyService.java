@@ -38,8 +38,6 @@ public class CommerceConsistencyService {
     private static final DefaultRedisScript<Long> REPAIR_SCRIPT =
             CommerceRedisScripts.longScript("lua/commerce_repair_inventory.lua");
     /** 仅由令牌持有者删除库存 fence。 */
-    private static final DefaultRedisScript<Long> RELEASE_FENCE_SCRIPT =
-            CommerceRedisScripts.longScript("lua/commerce_release_fence.lua");
     /** 后台巡检建立的固定 fence 所有者标识。 */
     static final String RECONCILIATION_FENCE_TOKEN = "commerce-reconciliation:v1";
     /** 人工修复 fence 的令牌前缀，后接每次修复的唯一标识。 */
@@ -53,12 +51,8 @@ public class CommerceConsistencyService {
     private final ObjectMapper objectMapper;
     /** 生成当前路由代际的同槽键。 */
     private final CommerceRedisKeyspace keyspace;
-    /** 对关键 fence 写执行 Redis 副本确认；测试构造可为空。 */
+    /** 对关键 fence 写执行 Redis 副本确认。 */
     private final CommerceRedisReplicationExecutor replicatedRedis;
-    /** 让修复与路由迁移互斥；测试构造可为空。 */
-    private final CommerceRuntimeMutationLeases runtimeLeases;
-    /** 修复前确认当前路由仍允许业务写。 */
-    private final CommerceRoutingGuard routing;
 
     @Autowired
     public CommerceConsistencyService(
@@ -66,22 +60,15 @@ public class CommerceConsistencyService {
             StringRedisTemplate redis,
             ObjectMapper objectMapper,
             CommerceRedisKeyspace keyspace,
-            CommerceRedisReplicationExecutor replicatedRedis,
-            CommerceRuntimeMutationLeases runtimeLeases,
-            CommerceRoutingGuard routing
+            CommerceRedisReplicationExecutor replicatedRedis
     ) {
         this.jdbc = jdbc;
         this.redis = redis;
         this.objectMapper = objectMapper;
         this.keyspace = keyspace;
         this.replicatedRedis = replicatedRedis;
-        this.runtimeLeases = runtimeLeases;
-        this.routing = routing;
     }
 
-    CommerceConsistencyService(JdbcTemplate jdbc, StringRedisTemplate redis, ObjectMapper objectMapper) {
-        this(jdbc, redis, objectMapper, new CommerceRedisKeyspace(1, "0"), null, null, null);
-    }
 
     /**
      * 采集指定 Voucher 的完整一致性证据，并附全局 Stream 诊断。
@@ -112,7 +99,7 @@ public class CommerceConsistencyService {
         String raw = redis.opsForValue().get(keyspace.stock(voucherId));
         Integer redisStock = parseStock(raw);
         List<Long> databaseBuyerIds = jdbc.queryForList("""
-                SELECT user_id FROM commerce_order WHERE voucher_id=?
+                SELECT user_id FROM commerce_order WHERE voucher_id=? AND status<>4
                 UNION
                 SELECT user_id FROM commerce_reservation
                 WHERE voucher_id=? AND status='RESERVED'
@@ -136,7 +123,7 @@ public class CommerceConsistencyService {
                        CASE WHEN o.id IS NULL THEN 0 ELSE 1 END order_exists
                 FROM commerce_reservation r
                 LEFT JOIN commerce_order o ON o.id=r.order_id
-                WHERE r.voucher_id=? AND r.status IN ('RESERVED','RELEASE_REQUIRED','ORDER_CREATED')
+                WHERE r.voucher_id=? AND r.status IN ('RESERVED','ORDER_CREATED')
                 ORDER BY r.order_id
                 """, voucherId);
         List<Map<String, Object>> recoveryRows = jdbc.queryForList("""
@@ -233,13 +220,7 @@ public class CommerceConsistencyService {
      * @return 修复目标和前后证据摘要
      */
     public ConsistencyRepairResult repair(long voucherId, String evidenceHash) {
-        if (runtimeLeases == null) return repairWithLease(voucherId, evidenceHash, null);
-        try (CommerceRuntimeMutationLeases.MutationLease lease = runtimeLeases.acquireMutation()) {
-            routing.requireRuntimeMutationActive();
-            ConsistencyRepairResult result = repairWithLease(voucherId, evidenceHash, lease);
-            lease.renewAndAssert();
-            return result;
-        }
+        return repairWithFence(voucherId, evidenceHash);
     }
 
     /**
@@ -249,10 +230,6 @@ public class CommerceConsistencyService {
      */
     void ensureReconciliationFence(long voucherId) {
         String fenceKey = keyspace.fence(voucherId);
-        if (replicatedRedis == null) {
-            redis.opsForValue().setIfAbsent(fenceKey, RECONCILIATION_FENCE_TOKEN);
-            return;
-        }
         replicatedRedis.setIfAbsent(
                 "reconciliation_inventory_fence",
                 fenceKey,
@@ -263,11 +240,7 @@ public class CommerceConsistencyService {
     /**
      * 执行修复主流程：取得 fence、重验快照、Lua 重建、终态化恢复行、验证后解 fence。
      */
-    private ConsistencyRepairResult repairWithLease(
-            long voucherId,
-            String evidenceHash,
-            CommerceRuntimeMutationLeases.MutationLease runtimeLease
-    ) {
+    private ConsistencyRepairResult repairWithFence(long voucherId, String evidenceHash) {
         RepairFence repairFence = acquireRepairFence(voucherId, evidenceHash);
         boolean repairCompleted = false;
         try {
@@ -308,7 +281,6 @@ public class CommerceConsistencyService {
             arguments.add(repairFence.token());
             arguments.add(String.valueOf(target));
             buyers.forEach(userId -> arguments.add(String.valueOf(userId)));
-            renewAndAssert(runtimeLease);
             // Lua 同时校验 fence 令牌并替换库存/买家集合，不向准入暴露半修复状态。
             Long repaired = redis.execute(
                     REPAIR_SCRIPT,
@@ -334,7 +306,6 @@ public class CommerceConsistencyService {
                         409
                 );
             }
-            renewAndAssert(runtimeLease);
             // 只有 Redis 库存已验证后，才能把等待人工修复的恢复行标为 RESTORED。
             int restoredRecoveryRows = jdbc.update("""
                     UPDATE commerce_order_recovery
@@ -350,7 +321,6 @@ public class CommerceConsistencyService {
                         409
                 );
             }
-            renewAndAssert(runtimeLease);
             releaseVerifiedRepairFence(repairFence);
             repairCompleted = true;
             return new ConsistencyRepairResult(voucherId, target, buyers.size(), restoredRecoveryRows,
@@ -368,26 +338,19 @@ public class CommerceConsistencyService {
     private RepairFence acquireRepairFence(long voucherId, String evidenceHash) {
         String fenceKey = keyspace.fence(voucherId);
         String repairToken = REPAIR_FENCE_TOKEN_PREFIX + UUID.randomUUID();
-        if (replicatedRedis == null) {
-            Boolean acquired = redis.opsForValue().setIfAbsent(fenceKey, repairToken);
-            if (Boolean.TRUE.equals(acquired)) {
-                return new RepairFence(fenceKey, repairToken);
-            }
-        } else {
-            CommerceRedisReplicationExecutor.ReplicatedMutation acquired;
-            try {
-                acquired = replicatedRedis.setIfAbsent(
-                        "consistency_repair_fence",
-                        fenceKey,
-                        repairToken
-                );
-            } catch (RuntimeException failure) {
-                retainAutomaticFence(new RepairFence(fenceKey, repairToken));
-                throw failure;
-            }
-            if (acquired != CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT) {
-                return new RepairFence(fenceKey, repairToken);
-            }
+        CommerceRedisReplicationExecutor.ReplicatedMutation acquired;
+        try {
+            acquired = replicatedRedis.setIfAbsent(
+                    "consistency_repair_fence",
+                    fenceKey,
+                    repairToken
+            );
+        } catch (RuntimeException failure) {
+            retainAutomaticFence(new RepairFence(fenceKey, repairToken));
+            throw failure;
+        }
+        if (acquired != CommerceRedisReplicationExecutor.ReplicatedMutation.CONFLICT) {
+            return new RepairFence(fenceKey, repairToken);
         }
 
         String currentOwner = redis.opsForValue().get(fenceKey);
@@ -398,9 +361,6 @@ public class CommerceConsistencyService {
         // 自动 fence 已封住新准入；接管前校验哈希，接管后的主流程再校验一次，
         // 从而覆盖交接期间 Worker 或恢复任务推进状态的竞态。
         requireEvidenceHash(capture(voucherId, false).evidence(), evidenceHash);
-        if (replicatedRedis == null) {
-            throw inventoryMaintenance();
-        }
         CommerceRedisReplicationExecutor.ReplicatedMutation takeover;
         try {
             takeover = replicatedRedis.compareAndSet(
@@ -421,17 +381,6 @@ public class CommerceConsistencyService {
 
     /** 仅在修复结果验证通过后，以令牌匹配删除 fence。 */
     private void releaseVerifiedRepairFence(RepairFence repairFence) {
-        if (replicatedRedis == null) {
-            Long released = redis.execute(
-                    RELEASE_FENCE_SCRIPT,
-                    List.of(repairFence.key()),
-                    repairFence.token()
-            );
-            if (released == null || released == 0L) {
-                throw inventoryMaintenance();
-            }
-            return;
-        }
         CommerceRedisReplicationExecutor.ReplicatedMutation released =
                 replicatedRedis.deleteIfEquals(
                         "consistency_repair_release",
@@ -447,7 +396,6 @@ public class CommerceConsistencyService {
      * 修复失败时把人工令牌恢复为巡检 fence；无法恢复时至少保留现有令牌继续失败关闭。
      */
     private void retainAutomaticFence(RepairFence repairFence) {
-        if (replicatedRedis == null) return;
         try {
             CommerceRedisReplicationExecutor.ReplicatedMutation restored =
                     replicatedRedis.compareAndSet(
@@ -491,10 +439,6 @@ public class CommerceConsistencyService {
                 "Voucher inventory is already under maintenance",
                 409
         );
-    }
-
-    private void renewAndAssert(CommerceRuntimeMutationLeases.MutationLease runtimeLease) {
-        if (runtimeLease != null) runtimeLease.renewAndAssert();
     }
 
     /**

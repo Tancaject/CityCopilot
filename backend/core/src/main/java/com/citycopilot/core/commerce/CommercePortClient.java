@@ -17,6 +17,7 @@ import com.citycopilot.contract.commerce.CommerceContracts.VoucherCreated;
 import com.citycopilot.contract.commerce.CommerceContracts.OperationsSummary;
 import com.citycopilot.contract.commerce.CommerceContracts.DeadLetterView;
 import com.citycopilot.contract.commerce.CommerceContracts.DeadLetterReplayResult;
+import com.citycopilot.contract.commerce.CommerceContracts.PaymentReview;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.config.CrossServiceHttpConfig.CommerceHttpFactories;
@@ -164,7 +165,8 @@ public class CommercePortClient {
         try {
             OrderView response = client.get()
                     .uri(builder -> builder.path("/commerce/v1/orders/{id}")
-                            .queryParam("admin", admin)
+                            .queryParam("admin", admin && admin())
+                            .queryParam("merchant", admin && !admin())
                             .build(orderId))
                     .headers(headers -> headers(headers, userId()))
                     .retrieve()
@@ -190,7 +192,8 @@ public class CommercePortClient {
         try {
             OrderView response = client.post()
                     .uri(builder -> builder.path("/commerce/v1/orders/{id}/actions")
-                            .queryParam("admin", admin)
+                            .queryParam("admin", admin && admin())
+                            .queryParam("merchant", admin && !admin())
                             .build(orderId))
                     .headers(headers -> headers(headers, userId()))
                     .body(new OrderActionRequest(action, payType == null ? 1 : payType))
@@ -327,6 +330,21 @@ public class CommercePortClient {
                 .headers(headers -> headers(headers, userId()))
                 .retrieve()
                 .body(new ParameterizedTypeReference<>() {});
+    }
+
+    public List<PaymentReview> paymentIssues() {
+        return client.get().uri("/commerce/v1/ops/payments").headers(this::opsHeaders)
+                .retrieve().body(new ParameterizedTypeReference<>() {});
+    }
+
+    public PaymentReview paymentReview(String paymentId) {
+        return client.get().uri("/commerce/v1/ops/payments/{paymentId}", paymentId).headers(this::opsHeaders)
+                .retrieve().body(PaymentReview.class);
+    }
+
+    public PaymentReview repairPayment(String paymentId, String evidenceHash) {
+        return client.post().uri("/commerce/v1/ops/payments/{paymentId}/repair", paymentId).headers(this::opsHeaders)
+                .body(new ConsistencyRepairRequest(evidenceHash)).retrieve().body(PaymentReview.class);
     }
 
     /**

@@ -3,7 +3,7 @@ package com.citycopilot.core.utils;
 import cn.hutool.json.JSONUtil;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.UserDTO;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.security.PermissionPolicy;
 import com.citycopilot.core.security.RequirePermission;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,12 +36,16 @@ public class AdminInterceptor implements HandlerInterceptor {
      */
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        RequirePermission permission = resolvePermission(handler);
+        // 全局注册：只检查声明了权限的接口，以及 /admin 下默认要求 admin:access 的接口。
+        if (permission == null && !request.getRequestURI().substring(request.getContextPath().length()).startsWith("/admin/")) {
+            return true;
+        }
         UserDTO user = UserHolder.getUser();
         if (user == null) {
             writeError(response, 401, "AUTH_REQUIRED", "请先登录");
             return false;
         }
-        RequirePermission permission = resolvePermission(handler);
         boolean allowed = permission == null
                 ? permissionPolicy.hasPermission(user.getRole(), PermissionCodes.ADMIN_ACCESS)
                 : permissionPolicy.hasPermissions(user.getRole(), permission.value(), permission.anyOf());

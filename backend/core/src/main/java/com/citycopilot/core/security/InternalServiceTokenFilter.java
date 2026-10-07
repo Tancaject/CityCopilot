@@ -80,16 +80,12 @@ public final class InternalServiceTokenFilter extends HttpFilter {
         boolean namedCredentialsConfigured = credentials.values().stream()
                 .anyMatch(token -> token != null && !token.isBlank())
                 || previousCredentials.values().stream().anyMatch(token -> token != null && !token.isBlank());
-        String legacyToken = properties.getServiceToken();
-        if (!namedCredentialsConfigured && (legacyToken == null || legacyToken.isBlank())) {
+        if (!namedCredentialsConfigured) {
             writeError(response, HttpStatus.SERVICE_UNAVAILABLE, "INTERNAL_API_DISABLED",
                     "Core 内部服务凭据未配置；请配置 citycopilot.internal-api.service-tokens 并重新发布接收实例");
             return false;
         }
-        String provided = request.getHeader(SERVICE_TOKEN_HEADER);
-        String actor = namedCredentialsConfigured
-                ? authenticatedActor(credentials, previousCredentials, provided)
-                : provided != null && constantTimeEquals(legacyToken, provided) ? "legacy-service" : null;
+        String actor = authenticatedActor(credentials, previousCredentials, request.getHeader(SERVICE_TOKEN_HEADER));
         if (actor == null) {
             writeError(response, HttpStatus.UNAUTHORIZED, "SERVICE_AUTH_REQUIRED",
                     "Core 内部服务认证失败；请核对调用方与接收实例的凭据版本及 actor 绑定，修正后再重试");

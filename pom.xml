@@ -19,12 +19,8 @@
     <modules>
         <module>backend/contracts</module>
         <module>backend/http-support</module>
-        <module>backend/search</module>
         <module>backend/commerce-service</module>
         <module>backend/core</module>
-        <module>backend/agent</module>
-        <module>backend/mcp-server</module>
-        <module>backend/eval</module>
     </modules>
 
     <properties>
@@ -32,37 +28,14 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <spring-ai.version>2.0.1</spring-ai.version>
-        <resilience4j.version>2.4.0</resilience4j.version>
         <testcontainers.version>1.21.4</testcontainers.version>
         <flyway.version>10.20.1</flyway.version>
         <rocketmq.server.version>5.5.0</rocketmq.server.version>
         <rocketmq.client.java.version>5.2.0</rocketmq.client.java.version>
     </properties>
 
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>io.github.resilience4j</groupId>
-                <artifactId>resilience4j-bom</artifactId>
-                <version>${resilience4j.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-
     <build>
         <plugins>
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>3.6.3</version>
-                <configuration>
-                    <skip>true</skip>
-                    <mainClass>com.citycopilot.eval.EvalRunner</mainClass>
-                </configuration>
-            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>

@@ -6,7 +6,6 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.server.RequestPath;
 import org.springframework.web.util.ServletRequestPathUtils;
 import org.springframework.web.util.pattern.PathPattern;
@@ -27,10 +26,7 @@ public class CommerceSecurityFilter extends HttpFilter {
     private final byte[] expected;
     private final byte[] previous;
 
-    public CommerceSecurityFilter(
-            @Value("${citycopilot.commerce.service-token:}") String token,
-            @Value("${citycopilot.commerce.previous-service-token:}") String previousToken
-    ) {
+    public CommerceSecurityFilter(String token, String previousToken) {
         expected = token == null || token.isBlank() ? new byte[0] : token.getBytes(StandardCharsets.UTF_8);
         previous = previousToken == null || previousToken.isBlank() ? new byte[0]
                 : previousToken.getBytes(StandardCharsets.UTF_8);

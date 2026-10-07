@@ -107,26 +107,16 @@ public class ShopDiscoveryService {
     }
 
     /**
-     * 构建稳定排序器：搜索引擎排名优先，其次距离带、本地来源、实际距离和名称。
+     * 构建稳定排序器：距离带、本地来源、实际距离和名称。
      *
      * @return 候选比较器
      */
     private Comparator<ShopDiscoveryItemDTO> discoveryComparator() {
         return Comparator
-                .comparingInt(this::searchRankBand)
-                .thenComparingInt(this::searchRank)
-                .thenComparingInt(this::distanceBand)
+                .comparingInt(this::distanceBand)
                 .thenComparingInt(this::sourceWeight)
                 .thenComparingDouble(this::distanceValue)
                 .thenComparing(item -> StrUtil.blankToDefault(item.getName(), ""));
-    }
-
-    private int searchRankBand(ShopDiscoveryItemDTO item) {
-        return item.getSearchRank() == null ? 1 : 0;
-    }
-
-    private int searchRank(ShopDiscoveryItemDTO item) {
-        return item.getSearchRank() == null ? Integer.MAX_VALUE : item.getSearchRank();
     }
 
     private int distanceBand(ShopDiscoveryItemDTO item) {

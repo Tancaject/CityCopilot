@@ -4,7 +4,6 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.citycopilot.core.config.GeoProperties;
-import com.citycopilot.core.config.ShopProjectionProperties;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.ShopGeoUpdateDTO;
 import com.citycopilot.core.dto.ShopViewDTO;
@@ -14,8 +13,6 @@ import com.citycopilot.core.projection.ShopProjectionOutboxRepository;
 import com.citycopilot.core.service.IShopService;
 import com.citycopilot.core.service.IShopTypeService;
 import com.citycopilot.core.service.OperationLogService;
-import com.citycopilot.core.service.ShopGeoIndexService;
-import com.citycopilot.core.service.discovery.ShopSearchProjectionService;
 import com.citycopilot.core.utils.CacheClient;
 import com.citycopilot.core.utils.RedisGeoCoordinates;
 import com.citycopilot.core.utils.SystemConstants;
@@ -23,11 +20,8 @@ import com.citycopilot.core.utils.UserHolder;
 import com.citycopilot.core.security.ShopOwnershipPolicy;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -39,15 +33,11 @@ import static com.citycopilot.core.utils.RedisConstants.*;
 /**
  * 店铺主数据服务实现，协调 MySQL、详情缓存、Redis GEO 和搜索投影。
  *
- * <p>数据库是店铺事实源。写入成功后通过投影 Outbox 推进派生索引；兼容模式下则在事务提交后直接刷新。</p>
+ * <p>数据库是店铺事实源。写入与投影 Outbox 共用事务，由投影器更新 GEO 并失效两级详情缓存。</p>
  */
 @Slf4j
 @Service
 public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IShopService {
-
-    /** Redis 客户端，用于删除发生变更的店铺详情缓存。 */
-    @Resource
-    private StringRedisTemplate stringRedisTemplate;
 
     /** Cache Aside 工具，提供空值缓存、互斥重建和 TTL 抖动。 */
     @Resource
@@ -69,21 +59,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Resource
     private ShopOwnershipPolicy shopOwnershipPolicy;
 
-    /** Redis GEO 投影服务，提供附近店铺索引。 */
-    @Resource
-    private ShopGeoIndexService shopGeoIndexService;
-
-    /** 全文搜索投影服务，维护搜索引擎中的店铺文档。 */
-    @Resource
-    private ShopSearchProjectionService shopSearchProjectionService;
-
     /** 店铺投影 Outbox 仓储，在业务事务内记录待投影变更。 */
     @Resource
     private ShopProjectionOutboxRepository shopProjectionOutboxRepository;
-
-    /** 投影模式配置，控制可靠 Outbox 与旧提交后刷新路径。 */
-    @Resource
-    private ShopProjectionProperties shopProjectionProperties;
 
     @Override
     public ShopViewDTO findAuthoritativeShop(Long shopId) {
@@ -177,8 +155,6 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             }
         }
         updateById(shop);
-        // Cache Aside 写路径：提交新事实后删除旧缓存，让下一次读取按需重建。
-        stringRedisTemplate.delete(CACHE_SHOP_KEY + id);
         Shop after = getById(id);
         recordShopChanged(before, after);
         operationLogService.record("shop", "shop_update", "shop", id, String.valueOf(id), before, after, true, null);
@@ -290,19 +266,10 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
                 .setGeoUpdatedAt(LocalDateTime.now());
 
         updateById(update);
-        stringRedisTemplate.delete(CACHE_SHOP_KEY + request.getId());
-
         Shop after = getById(request.getId());
         recordShopChanged(before, after);
         operationLogService.record("geo", "shop_geo_update", "shop", request.getId(), String.valueOf(request.getId()), before, after, true, null);
         return Result.ok(after);
-    }
-
-    @Override
-    public Result queryShopByType(Integer typeId, Integer current, Integer size) {
-        int pageSize = shopPageSize(size);
-        Page<Shop> page = query().eq("type_id", typeId).page(new Page<>(current, pageSize));
-        return Result.ok(page.convert(this::view));
     }
 
     @Override
@@ -321,129 +288,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
                 shop.getProjectionVersion(), shop.getDistance());
     }
 
-    /**
-     * 在当前事务成功提交后刷新派生索引。
-     *
-     * <p>刷新不能早于提交，否则其他线程可能从索引读到数据库尚不可见的数据。</p>
-     *
-     * @param before 变更前的地理快照，删除旧 GEO 成员时使用
-     * @param after 变更后的地理快照，写入新 GEO 成员时使用
-     */
-    void refreshShopIndexesAfterCommit(Shop before, Shop after) {
-        Shop beforeSnapshot = geoIndexSnapshot(before);
-        Shop afterSnapshot = geoIndexSnapshot(after);
-        Long searchShopId = after == null ? null : after.getId();
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            if (TransactionSynchronizationManager.isSynchronizationActive()) {
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    /** 数据库提交成功后再发布到 Redis GEO 和搜索投影。 */
-                    @Override
-                    public void afterCommit() {
-                        refreshShopIndexesSafely(beforeSnapshot, afterSnapshot, searchShopId);
-                    }
-                });
-            } else {
-                Long shopId = afterSnapshot != null
-                        ? afterSnapshot.getId()
-                        : beforeSnapshot == null ? null : beforeSnapshot.getId();
-                if (shopSearchProjectionService != null) {
-                    shopSearchProjectionService.markReconciliationRequired();
-                }
-                log.warn("Shop {} index refresh skipped because transaction synchronization is unavailable", shopId);
-            }
-            return;
-        }
-        refreshShopIndexesSafely(beforeSnapshot, afterSnapshot, searchShopId);
-    }
-
-    /**
-     * 记录一次店铺事实变更，并按配置选择可靠投影路径。
-     *
-     * @param before 变更前店铺；创建时为 {@code null}
-     * @param after 变更后店铺；当前创建和更新路径必须提供
-     */
+    /** Outbox 与店铺写入共用事务，保证“事实已变更”必然对应一条可重试投影事件。 */
     private void recordShopChanged(Shop before, Shop after) {
-        if (shopProjectionProperties != null && shopProjectionProperties.isOutboxEnabled()) {
-            // Outbox 与店铺写入共用事务，保证“事实已变更”必然对应一条可重试投影事件。
-            shopProjectionOutboxRepository.append(before, after);
-            return;
-        }
-        // 单元测试和显式启用的旧部署保留提交后直刷路径；生产配置默认关闭该逃生口。
-        if (shopProjectionProperties == null || shopProjectionProperties.isLegacyAfterCommitEnabled()) {
-            refreshShopIndexesAfterCommit(before, after);
-        }
-    }
-
-    /**
-     * 兼容旧调用点的 GEO 刷新入口，实际同时维护 GEO 与搜索投影。
-     *
-     * @param before 变更前快照
-     * @param after 变更后快照
-     */
-    void refreshShopGeoIndexAfterCommit(Shop before, Shop after) {
-        refreshShopIndexesAfterCommit(before, after);
-    }
-
-    /**
-     * 顺序刷新两个派生索引；单个索引失败不会回滚已提交的店铺事实。
-     *
-     * @param before 变更前地理快照
-     * @param after 变更后地理快照
-     * @param searchShopId 需要重建搜索文档的店铺主键
-     */
-    private void refreshShopIndexesSafely(Shop before, Shop after, Long searchShopId) {
-        refreshShopGeoIndexSafely(before, after);
-        refreshShopSearchProjectionSafely(searchShopId);
-    }
-
-    /**
-     * 尝试刷新 Redis GEO；失败只记录告警，后续由对账任务修复。
-     *
-     * @param before 变更前地理快照
-     * @param after 变更后地理快照
-     */
-    private void refreshShopGeoIndexSafely(Shop before, Shop after) {
-        try {
-            shopGeoIndexService.refreshShopGeoIndex(before, after);
-        } catch (RuntimeException error) {
-            Long shopId = after != null ? after.getId() : before == null ? null : before.getId();
-            log.warn("Shop {} committed but Redis GEO index refresh failed: {}", shopId, error.getMessage());
-        }
-    }
-
-    /**
-     * 尝试按事实源重建单个搜索文档，失败时标记全量对账需求。
-     *
-     * @param shopId 店铺主键
-     */
-    private void refreshShopSearchProjectionSafely(Long shopId) {
-        if (shopSearchProjectionService == null || shopId == null) {
-            return;
-        }
-        try {
-            shopSearchProjectionService.upsertLatestBestEffort(shopId);
-        } catch (RuntimeException error) {
-            shopSearchProjectionService.markReconciliationRequired();
-            log.warn("Shop {} committed but search projection refresh failed: {}", shopId, error.getMessage());
-        }
-    }
-
-    /**
-     * 提取事务外刷新所需的最小不可变地理快照，避免后续对象被继续修改。
-     *
-     * @param shop 原始店铺对象
-     * @return 仅含主键、分类、坐标和核验状态的副本
-     */
-    private Shop geoIndexSnapshot(Shop shop) {
-        if (shop == null) {
-            return null;
-        }
-        return new Shop()
-                .setId(shop.getId())
-                .setTypeId(shop.getTypeId())
-                .setX(shop.getX())
-                .setY(shop.getY())
-                .setGeoStatus(shop.getGeoStatus());
+        shopProjectionOutboxRepository.append(before, after);
     }
 
     private boolean isValidGeoStatus(String status) {

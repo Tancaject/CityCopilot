@@ -32,8 +32,9 @@ class CommerceFacadeIsolationTest {
     void currentCommerceFacadesDependOnlyOnTheRemotePort() {
         assertOnlyCommercePort(VoucherOrderServiceImpl.class);
         assertOnlyCommercePort(VoucherServiceImpl.class);
-        assertOnlyCommercePort(SeckillConsistencyService.class);
-        assertOnlyCommercePort(SeckillRecoveryService.class);
+        // 运维门面额外写 Core 自己的审计日志，但仍不触碰任何交易存储。
+        assertOnlyCommercePort(SeckillConsistencyService.class, OperationLogService.class);
+        assertOnlyCommercePort(SeckillRecoveryService.class, OperationLogService.class);
     }
 
     @Test
@@ -65,17 +66,20 @@ class CommerceFacadeIsolationTest {
         assertThat(projectRoot.resolve("tools/legacy")).doesNotExist();
     }
 
-    private void assertOnlyCommercePort(Class<?> type) {
+    private void assertOnlyCommercePort(Class<?> type, Class<?>... audit) {
+        Class<?>[] allowed = new Class<?>[audit.length + 1];
+        allowed[0] = CommercePortClient.class;
+        System.arraycopy(audit, 0, allowed, 1, audit.length);
         Set<Class<?>> dependencies = Arrays.stream(type.getDeclaredFields())
                 .filter(field -> !field.isSynthetic())
                 .map(Field::getType)
                 .collect(Collectors.toSet());
 
         assertThat(type.getSuperclass()).isEqualTo(Object.class);
-        assertThat(dependencies).containsExactly(CommercePortClient.class);
+        assertThat(dependencies).containsExactlyInAnyOrder(allowed);
         assertThat(type.getDeclaredConstructors()).singleElement().satisfies(constructor ->
                 assertThat(constructor.getParameterTypes())
-                        .containsExactly(CommercePortClient.class)
+                        .containsExactly(allowed)
         );
     }
 

@@ -51,7 +51,6 @@ public class BookingService {
         requiredKey(key);
         if (request == null) invalid("缺少暂留请求");
         bounded(request.source(), 32, "source");
-        bounded(request.impressionId(), 128, "impressionId");
         bounded(request.requestId(), 128, "requestId");
         String hash = requestHash("HOLD", request);
         MutationResult replay = replay(userId, key, hash);
@@ -83,11 +82,11 @@ public class BookingService {
             }
             changed(jdbc.update("""
                     INSERT INTO commerce_booking(id,user_id,shop_id,resource_id,slot_id,resource_name,resource_kind,
-                    party_size,units,status,start_at,end_at,hold_expires_at,price_snapshot,source,impression_id,request_id)
-                    VALUES (?,?,?,?,?,?,?,?,?,'HELD',?,?,?,?,?,?,?)
+                    party_size,units,status,start_at,end_at,hold_expires_at,price_snapshot,source,request_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,'HELD',?,?,?,?,?,?)
                     """, bookingId, userId, number(resource, "shop_id"), resourceId, slotId, text(resource, "name"), text(resource, "kind"),
                     target.partySize(), units, slot.get("start_at"), slot.get("end_at"), time(expires), quote == null ? onSite() : write(pricing.snapshot(quote)),
-                    quote == null ? request.source() : quote.source(), quote == null ? request.impressionId() : quote.impressionId(), quote == null ? request.requestId() : quote.requestId()));
+                    quote == null ? request.source() : quote.source(), quote == null ? request.requestId() : quote.requestId()));
             if (quote != null) pricing.applyQuote(quote, bookingId, current);
             Map<String, Object> booking = row(bookingId, false);
             event(booking, "held", userId);
@@ -293,14 +292,14 @@ public class BookingService {
         });
     }
 
-    public void expireDue() {
+    public void expireDue(java.util.function.Consumer<Runnable> execute) {
         List<String> ids = jdbc.queryForList("""
                 SELECT id FROM commerce_booking WHERE status='HELD' AND hold_expires_at<=UTC_TIMESTAMP(3)
                 UNION ALL
                 SELECT id FROM commerce_booking WHERE status='CONFIRMED' AND end_at<=UTC_TIMESTAMP(3)
                 LIMIT 100
                 """, String.class);
-        for (String bookingId : ids) expireOne(bookingId);
+        for (String bookingId : ids) execute.accept(() -> expireOne(bookingId));
     }
 
     public void expireOne(String bookingId) {
@@ -320,11 +319,11 @@ public class BookingService {
         });
     }
 
-    public void deliverDueReminders() {
+    public void deliverDueReminders(java.util.function.Consumer<Runnable> execute) {
         List<String> ids = jdbc.queryForList("SELECT DISTINCT booking_id FROM commerce_booking_reminder WHERE status='PENDING' AND due_at<=UTC_TIMESTAMP(3) LIMIT 100", String.class);
         for (String bookingId : ids) {
             Map<String, Object> located = row(bookingId, false);
-            transactions.executeWithoutResult(tx -> {
+            execute.accept(() -> transactions.executeWithoutResult(tx -> {
                 guard(number(located, "user_id"));
                 Map<String, Object> booking = row(bookingId, true);
                 Instant current = now();
@@ -334,7 +333,7 @@ public class BookingService {
                         delivered_at=CASE WHEN schedule_version=? AND ? THEN UTC_TIMESTAMP(3) ELSE NULL END
                         WHERE booking_id=? AND status='PENDING' AND due_at<=UTC_TIMESTAMP(3)
                         """, number(booking, "schedule_version"), visible, number(booking, "schedule_version"), visible, bookingId);
-            });
+            }));
         }
     }
 
@@ -522,7 +521,7 @@ public class BookingService {
                 text(booking, "user_id"), text(booking, "resource_id"), text(booking, "slot_id"), integer(booking, "party_size"),
                 integer(booking, "units"), text(booking, "status"), number(booking, "schedule_version"),
                 instant(booking.get("start_at")), instant(booking.get("end_at")), snapshot(booking), nullableText(booking, "source"),
-                nullableText(booking, "impression_id"), nullableText(booking, "request_id"), actorId);
+                nullableText(booking, "request_id"), actorId);
         EventEnvelope<BookingChangedEvent> event = new EventEnvelope<>(
                 eventId, "commerce.booking." + action, BookingChangedEvent.SCHEMA_VERSION,
                 "commerce_booking", text(booking, "id"), number(booking, "version"), "commerce-service",

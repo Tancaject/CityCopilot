@@ -51,13 +51,6 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     }
 
     @Override
-    public Result queryBlogsByUser(Long userId, Integer current) {
-        List<Blog> blogs = query().eq("user_id", userId)
-                .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE)).getRecords();
-        return Result.ok(blogs.stream().map(BlogServiceImpl::toView).toList());
-    }
-
-    @Override
     public Result queryAdminBlogs(Integer current, String keyword) {
         int pageNo = current == null || current < 1 ? 1 : current;
         Page<Blog> page = query()

@@ -1,5 +1,6 @@
 package com.citycopilot.core.security;
 
+import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.config.InternalApiProperties;
 import com.citycopilot.core.config.MvcConfig;
 import com.citycopilot.core.config.UploadProperties;
@@ -54,13 +55,18 @@ class CoreAuthenticationChainTest {
             mvc.perform(get("/internal/no-handler")).andExpect(status().isUnauthorized())
                     .andExpect(content().string(org.hamcrest.Matchers.containsString("SERVICE_AUTH_REQUIRED")));
             mvc.perform(get("/internal/probe").header("X-CityCopilot-Service-Token", "old")
-                            .header("X-CityCopilot-Service-Actor", "ops-executor"))
-                    .andExpect(status().isOk()).andExpect(content().string("ops-reader"));
+                            .header("X-CityCopilot-Service-Actor", "batch-service"))
+                    .andExpect(status().isOk()).andExpect(content().string("commerce-service"));
             mvc.perform(get("/private/probe")).andExpect(status().isUnauthorized());
             mvc.perform(get("/private/probe").header("authorization", "reader"))
                     .andExpect(status().isOk()).andExpect(content().string("7"));
             mvc.perform(get("/admin/probe").header("authorization", "reader")).andExpect(status().isForbidden());
             mvc.perform(get("/admin/probe").header("authorization", "merchant")).andExpect(status().isOk());
+            // 注解在任何路径上都生效，不依赖手写路径清单；/admin 下无注解时默认要求 admin:access。
+            mvc.perform(get("/private/guarded").header("authorization", "reader")).andExpect(status().isForbidden());
+            mvc.perform(get("/private/guarded").header("authorization", "merchant")).andExpect(status().isOk());
+            mvc.perform(get("/admin/plain").header("authorization", "consumer")).andExpect(status().isForbidden());
+            mvc.perform(get("/admin/plain").header("authorization", "reader")).andExpect(status().isOk());
             for (String path : java.util.List.of("/health", "/uploads/probe")) {
                 mvc.perform(get(path)).andExpect(status().isOk());
             }
@@ -147,6 +153,8 @@ class CoreAuthenticationChainTest {
                 .thenReturn(Map.of("id", "7", "role", "auditor"));
         when(redis.opsForHash().entries("login:token:merchant"))
                 .thenReturn(Map.of("id", "8", "role", "merchant"));
+        when(redis.opsForHash().entries("login:token:consumer"))
+                .thenReturn(Map.of("id", "9", "role", "user"));
         return redis;
     }
 
@@ -162,8 +170,8 @@ class CoreAuthenticationChainTest {
         }
         @Bean InternalApiProperties internalApiProperties() {
             var properties = new InternalApiProperties();
-            properties.setServiceTokens(Map.of("ops-reader", "new"));
-            properties.setPreviousServiceTokens(Map.of("ops-reader", "old"));
+            properties.setServiceTokens(Map.of("commerce-service", "new"));
+            properties.setPreviousServiceTokens(Map.of("commerce-service", "old"));
             return properties;
         }
     }
@@ -184,5 +192,8 @@ class CoreAuthenticationChainTest {
         String admin() { return "allowed"; }
         @GetMapping({"/health", "/uploads/probe"}) String publicRoute() { return "public"; }
         @GetMapping("/private/fail") String failRequest() { throw new IllegalStateException("business failure"); }
+        @GetMapping("/private/guarded") @RequirePermission(PermissionCodes.BOOKING_MANAGE)
+        String guarded() { return "guarded"; }
+        @GetMapping("/admin/plain") String adminPlain() { return "plain"; }
     }
 }

@@ -5,13 +5,11 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.citycopilot.core.config.GeoProperties;
-import com.citycopilot.core.config.ShopSearchProperties;
 import com.citycopilot.core.dto.ShopDiscoveryItemDTO;
 import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.mapper.ShopMapper;
 import com.citycopilot.core.utils.RedisGeoCoordinates;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -27,7 +25,7 @@ import java.util.stream.Collectors;
 /**
  * 本地可下单店铺发现数据源。
  *
- * <p>按配置在 Elasticsearch、Redis GEO 和 MySQL 之间选择主路径，并始终以 MySQL 校验店铺属性与资格。</p>
+ * <p>按配置在 Redis GEO 和 MySQL 之间选择主路径，并始终以 MySQL 校验店铺属性与资格。</p>
  */
 @Slf4j
 @Component
@@ -45,39 +43,7 @@ public class LocalShopDiscoveryProvider implements ShopDiscoveryProvider {
     /** Redis GEO 只读候选查询服务。 */
     private final RedisShopGeoSearchService redisGeoSearchService;
 
-    /** 可选 Elasticsearch 店铺搜索投影。 */
-    private final ShopSearchProjectionService searchProjectionService;
-
-    /** 搜索引擎主读或影子比对模式配置。 */
-    private final ShopSearchProperties searchProperties;
-
     /**
-     * 生产构造器。
-     *
-     * @param shopMapper MySQL 店铺服务
-     * @param geoProperties GEO 发现配置
-     * @param redisGeoSearchService Redis GEO 查询服务
-     * @param searchProjectionService 搜索投影服务
-     * @param searchProperties 搜索模式配置
-     */
-    @Autowired
-    public LocalShopDiscoveryProvider(
-            ShopMapper shopMapper,
-            GeoProperties geoProperties,
-            RedisShopGeoSearchService redisGeoSearchService,
-            ShopSearchProjectionService searchProjectionService,
-            ShopSearchProperties searchProperties
-    ) {
-        this.shopMapper = shopMapper;
-        this.geoProperties = geoProperties;
-        this.redisGeoSearchService = redisGeoSearchService;
-        this.searchProjectionService = searchProjectionService;
-        this.searchProperties = searchProperties;
-    }
-
-    /**
-     * 不启用搜索投影的兼容构造器，主要供旧调用链和测试使用。
-     *
      * @param shopMapper MySQL 店铺服务
      * @param geoProperties GEO 发现配置
      * @param redisGeoSearchService Redis GEO 查询服务
@@ -87,57 +53,15 @@ public class LocalShopDiscoveryProvider implements ShopDiscoveryProvider {
             GeoProperties geoProperties,
             RedisShopGeoSearchService redisGeoSearchService
     ) {
-        this(shopMapper, geoProperties, redisGeoSearchService, null, new ShopSearchProperties());
+        this.shopMapper = shopMapper;
+        this.geoProperties = geoProperties;
+        this.redisGeoSearchService = redisGeoSearchService;
     }
 
     @Override
     public List<ShopDiscoveryItemDTO> discover(ShopDiscoveryQuery query) {
         ShopDiscoveryQuery actualQuery = query == null ? new ShopDiscoveryQuery() : query;
-        if (searchProjectionService == null || !searchProjectionService.shouldSearch(actualQuery)) {
-            return discoverLegacy(actualQuery);
-        }
-
-        if (searchProperties.resolveMode() == ShopSearchProperties.Mode.ELASTICSEARCH) {
-            // 搜索主读模式下若投影未就绪或漂移，立即退回 Redis GEO/MySQL 链路。
-            ShopSearchProjectionService.SearchCandidates searchResult = searchProjectionService.search(actualQuery);
-            return searchResult.available() ? toItems(searchResult) : discoverLegacy(actualQuery);
-        }
-
-        // 影子模式不改变用户结果，只比较搜索投影与旧链路的主键顺序以观察差异。
-        List<ShopDiscoveryItemDTO> legacyItems = discoverLegacy(actualQuery);
-        ShopSearchProjectionService.SearchCandidates searchResult = searchProjectionService.search(actualQuery);
-        if (searchResult.available()) {
-            List<ShopDiscoveryItemDTO> searchItems = toItems(searchResult);
-            List<Long> legacyIds = itemIds(legacyItems);
-            List<Long> searchIds = itemIds(searchItems);
-            if (!legacyIds.equals(searchIds)) {
-                log.info("Elasticsearch shop shadow mismatch: legacyIds={}, searchIds={}", legacyIds, searchIds);
-            }
-        }
-        return legacyItems;
-    }
-
-    /**
-     * 选择未启用全文搜索时的本地发现路径。
-     *
-     * @param query 查询条件
-     * @return 有坐标时走 GEO，其他场景走普通分页
-     */
-    private List<ShopDiscoveryItemDTO> discoverLegacy(ShopDiscoveryQuery query) {
-        return query.hasValidPoint() ? discoverByPoint(query) : discoverByPage(query);
-    }
-
-    /**
-     * 将已由 MySQL 权威补水的搜索候选转为统一 DTO。
-     *
-     * @param result 搜索投影候选
-     * @return 保留搜索排名的发现 DTO
-     */
-    private List<ShopDiscoveryItemDTO> toItems(ShopSearchProjectionService.SearchCandidates result) {
-        return result.candidates().stream()
-                .map(candidate -> toItem(candidate.shop(), candidate.distanceMeters())
-                        .setSearchRank(candidate.searchRank()))
-                .toList();
+        return actualQuery.hasValidPoint() ? discoverByPoint(actualQuery) : discoverByPage(actualQuery);
     }
 
     /**
@@ -285,7 +209,7 @@ public class LocalShopDiscoveryProvider implements ShopDiscoveryProvider {
             }
         }
         return items.stream()
-                .sorted(preferenceComparator(query))
+                .sorted(BY_DISTANCE)
                 .toList();
     }
 
@@ -319,7 +243,7 @@ public class LocalShopDiscoveryProvider implements ShopDiscoveryProvider {
                         DiscoveryGeoUtils.distanceMeters(query.getX(), query.getY(), shop.getX(), shop.getY())
                 ))
                 .filter(item -> item.getDistance() != null && item.getDistance() <= radius)
-                .sorted(preferenceComparator(query))
+                .sorted(BY_DISTANCE)
                 .limit(resolveGeoFetchLimit(query))
                 .toList();
     }
@@ -354,36 +278,13 @@ public class LocalShopDiscoveryProvider implements ShopDiscoveryProvider {
         Page<Shop> page = baseQuery(query).page(new Page<>(1, query.resolveCandidateLimit(geoProperties)));
         return page.getRecords().stream()
                 .map(shop -> toItem(shop, null))
-                .sorted(preferenceComparator(query))
+                .sorted(BY_DISTANCE)
                 .toList();
     }
 
-    /**
-     * 构建偏好排序器；偏好只提升名称命中的店铺，不过滤其他候选。
-     *
-     * @param query 含可选偏好分类的查询
-     * @return 偏好优先、距离次之的比较器
-     */
-    private Comparator<ShopDiscoveryItemDTO> preferenceComparator(ShopDiscoveryQuery query) {
-        return Comparator
-                .comparingInt((ShopDiscoveryItemDTO item) -> preferredCategoryWeight(query, item))
-                .thenComparingDouble(item -> Objects.requireNonNullElse(item.getDistance(), Double.MAX_VALUE));
-    }
-
-    private int preferredCategoryWeight(ShopDiscoveryQuery query, ShopDiscoveryItemDTO item) {
-        if (query == null || !query.hasPreferredCategory() || item == null) {
-            return 0;
-        }
-        String category = DiscoveryGeoUtils.normalize(query.normalizedPreferredCategory());
-        if (StrUtil.isBlank(category)) {
-            return 0;
-        }
-        return containsNormalized(item.getName(), category) ? 0 : 1;
-    }
-
-    private boolean containsNormalized(String value, String expected) {
-        return DiscoveryGeoUtils.normalize(value).contains(expected);
-    }
+    /** 按距离由近到远排序，缺少距离的候选排在最后。 */
+    private static final Comparator<ShopDiscoveryItemDTO> BY_DISTANCE =
+            Comparator.comparingDouble(item -> Objects.requireNonNullElse(item.getDistance(), Double.MAX_VALUE));
 
     private QueryChainWrapper<Shop> baseQuery(ShopDiscoveryQuery query) {
         QueryChainWrapper<Shop> wrapper = new QueryChainWrapper<>(shopMapper);

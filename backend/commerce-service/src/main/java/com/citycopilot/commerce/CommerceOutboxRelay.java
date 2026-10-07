@@ -140,7 +140,7 @@ public class CommerceOutboxRelay {
     List<String> relayCandidates() {
         return jdbc.queryForList("""
                 SELECT event_id FROM commerce_outbox_event
-                 WHERE (status IN ('READY','FAILED','DEAD')
+                 WHERE (status IN ('READY','FAILED')
                        AND next_attempt_at <= CURRENT_TIMESTAMP(3))
                    OR (status='CLAIMED'
                        AND claimed_until < CURRENT_TIMESTAMP(3))
@@ -227,7 +227,7 @@ public class CommerceOutboxRelay {
                     claimed_until=TIMESTAMPADD(SECOND,30,CURRENT_TIMESTAMP(3)),
                     attempts=attempts+1
                 WHERE event_id=?
-                   AND ((status IN ('READY','FAILED','DEAD')
+                   AND ((status IN ('READY','FAILED')
                         AND next_attempt_at <= CURRENT_TIMESTAMP(3))
                        OR (status='CLAIMED'
                            AND claimed_until < CURRENT_TIMESTAMP(3)))
@@ -281,7 +281,7 @@ public class CommerceOutboxRelay {
 
     private double oldestReadyAgeSeconds() {
         Timestamp oldest = jdbc.queryForObject(
-            "SELECT MIN(created_at) FROM commerce_outbox_event WHERE status IN ('READY','FAILED','CLAIMED','DEAD')",
+            "SELECT MIN(created_at) FROM commerce_outbox_event WHERE status IN ('READY','FAILED','CLAIMED')",
                 Timestamp.class
         );
         return oldest == null ? 0 : Math.max(0, (System.currentTimeMillis() - oldest.getTime()) / 1000.0);

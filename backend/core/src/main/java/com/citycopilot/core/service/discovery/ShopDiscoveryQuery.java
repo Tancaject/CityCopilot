@@ -20,9 +20,6 @@ public class ShopDiscoveryQuery {
     /** 可选名称或地址关键词。 */
     private String keyword;
 
-    /** Agent 偏好提示，仅用于本地候选优先级，不作为硬过滤条件。 */
-    private String preferredCategory;
-
     /** 从 1 开始的页码。 */
     private Integer current;
 
@@ -104,15 +101,5 @@ public class ShopDiscoveryQuery {
     /** @return 去除首尾空白后的关键词 */
     public String normalizedKeyword() {
         return StrUtil.blankToDefault(keyword, "").trim();
-    }
-
-    /** @return 是否提供了非空偏好分类提示 */
-    public boolean hasPreferredCategory() {
-        return StrUtil.isNotBlank(preferredCategory);
-    }
-
-    /** @return 去除首尾空白后的偏好分类提示 */
-    public String normalizedPreferredCategory() {
-        return StrUtil.blankToDefault(preferredCategory, "").trim();
     }
 }

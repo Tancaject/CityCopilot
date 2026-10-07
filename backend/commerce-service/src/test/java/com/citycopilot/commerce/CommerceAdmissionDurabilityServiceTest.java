@@ -13,31 +13,27 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CommerceAdmissionDurabilityServiceTest {
     private JdbcTemplate jdbc;
-    private CommerceRoutingGuard routingGuard;
     private SimpleMeterRegistry metrics;
     private CommerceAdmissionDurabilityService service;
 
     @BeforeEach
     void setUp() {
         jdbc = mock(JdbcTemplate.class);
-        routingGuard = mock(CommerceRoutingGuard.class);
         metrics = new SimpleMeterRegistry();
         service = new CommerceAdmissionDurabilityService(
                 jdbc,
                 mock(CommerceOrderIdGenerator.class),
                 new CommerceRedisKeyspace(4, "v7"),
-                routingGuard,
                 metrics,
                 100,
                 5_000,
@@ -47,7 +43,7 @@ class CommerceAdmissionDurabilityServiceTest {
                 50_000,
                 300_000,
                 1_000,
-                "test"
+                "test", mock(CommerceReadCache.class)
         );
     }
 
@@ -107,100 +103,20 @@ class CommerceAdmissionDurabilityServiceTest {
     }
 
     @Test
-    void preparedFromPreviousRoutingIsConditionallyReboundWhileLocalRoutingIsActive() {
-        when(jdbc.queryForList(
-                contains("WHERE user_id=? AND idempotency_key=?"),
-                eq(200L),
-                eq("request-1")
-        )).thenReturn(
-                List.of(row("PREPARED", null, 0, "v6", 2)),
-                List.of(row("PREPARED", null, 0, "v7", 4))
-        );
-        when(jdbc.update(
-                org.mockito.ArgumentMatchers.argThat(sql ->
-                        sql.contains("SET routing_generation=?,physical_shard_count=?")
-                                && sql.contains("status='PREPARED'")
-                                && sql.contains("routing_generation=?")
-                                && sql.contains("physical_shard_count=?")
-                ),
-                any(Object[].class)
-        )).thenReturn(1);
-        when(jdbc.queryForMap(contains("accepted_backlog"))).thenReturn(Map.of(
-                "accepted_backlog", 0L,
-                "oldest_accepted_age_ms", 0L,
-                "repair_required", 0L
-        ));
-        ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
-
-        CommerceAdmissionDurabilityService.Admission rebound = service.prepare(
-                100L, 200L, "request-1", "seckill:v1:100", null
-        );
-
-        assertThat(rebound.status()).isEqualTo(CommerceAdmissionDurabilityService.Status.PREPARED);
-        assertThat(rebound.routingGeneration()).isEqualTo("v7");
-        assertThat(rebound.routingShardCount()).isEqualTo(4);
-        verify(routingGuard, times(2)).requireAdmissionActive(100L);
-        verify(jdbc).update(
-                org.mockito.ArgumentMatchers.argThat(sql ->
-                        sql.contains("SET routing_generation=?,physical_shard_count=?")
-                ),
-                arguments.capture()
-        );
-        assertThat(arguments.getValue()).containsExactly(
-                "v7", 4, 300L, 200L, 100L, "request-1", "seckill:v1:100", "v6", 2
-        );
-    }
-
-    @Test
-    void routingDrainFailurePreventsPreparedRebind() {
+    void preparedIdentityFromAnotherKeyspaceConfigurationFailsClosed() {
         when(jdbc.queryForList(
                 contains("WHERE user_id=? AND idempotency_key=?"),
                 eq(200L),
                 eq("request-1")
         )).thenReturn(List.of(row("PREPARED", null, 0, "v6", 2)));
-        doThrow(new CommerceApiException(
-                "COMMERCE_ROUTING_DRAINING",
-                "Commerce admission is draining",
-                503
-        )).when(routingGuard).requireAdmissionActive(100L);
 
         assertThatThrownBy(() -> service.prepare(
                 100L, 200L, "request-1", "seckill:v1:100", null
         )).isInstanceOfSatisfying(
                 CommerceApiException.class,
-                error -> assertThat(error.code()).isEqualTo("COMMERCE_ROUTING_DRAINING")
+                error -> assertThat(error.code()).isEqualTo("COMMERCE_ADMISSION_ROUTING_CONFLICT")
         );
-        verify(jdbc, never()).update(
-                org.mockito.ArgumentMatchers.argThat(sql -> sql.contains("SET routing_generation=?")),
-                any(Object[].class)
-        );
-    }
-
-    @Test
-    void concurrentAcceptanceWinsWithoutMovingItsRoutingOwnership() {
-        when(jdbc.queryForList(
-                contains("WHERE user_id=? AND idempotency_key=?"),
-                eq(200L),
-                eq("request-1")
-        )).thenReturn(
-                List.of(row("PREPARED", null, 0, "v6", 2)),
-                List.of(row("ACCEPTED", null, 0, "v6", 2))
-        );
-        when(jdbc.update(
-                org.mockito.ArgumentMatchers.argThat(sql ->
-                        sql.contains("SET routing_generation=?,physical_shard_count=?")
-                ),
-                any(Object[].class)
-        )).thenReturn(0);
-
-        CommerceAdmissionDurabilityService.Admission accepted = service.prepare(
-                100L, 200L, "request-1", "seckill:v1:100", null
-        );
-
-        assertThat(accepted.status()).isEqualTo(CommerceAdmissionDurabilityService.Status.ACCEPTED);
-        assertThat(accepted.routingGeneration()).isEqualTo("v6");
-        assertThat(accepted.routingShardCount()).isEqualTo(2);
-        verify(routingGuard, times(1)).requireAdmissionActive(100L);
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
     }
 
     @Test
@@ -232,69 +148,28 @@ class CommerceAdmissionDurabilityServiceTest {
     }
 
     @Test
-    void prepareMaterializesAnExistingLegacyOrderBeforeCreatingPreparedIdentity() {
+    void newPreparedIdentityNeverQueriesTheOrderFactTable() {
         when(jdbc.queryForList(
                 contains("FROM commerce_admission_ledger"),
                 eq(200L),
                 eq("request-1")
         )).thenReturn(
                 List.of(),
-                List.of(row("ORDER_CREATED", null, 0))
+                List.of(row("PREPARED", null, 0))
         );
-        when(jdbc.queryForList(
-                contains("FROM commerce_order"),
-                eq(200L),
-                eq("request-1")
-        )).thenReturn(List.of(Map.of("id", 300L, "voucher_id", 100L)));
-        when(jdbc.update(
-                contains("INSERT INTO commerce_admission_ledger"),
-                any(Object[].class)
-        )).thenReturn(1);
+        when(jdbc.queryForMap(contains("accepted_backlog"))).thenReturn(Map.of(
+                "accepted_backlog", 0L,
+                "oldest_accepted_age_ms", 0L,
+                "repair_required", 0L
+        ));
 
-        CommerceAdmissionDurabilityService.Admission replay = service.prepare(
-                100L,
-                200L,
-                "request-1",
-                "seckill:v1:100",
-                null
+        CommerceAdmissionDurabilityService.Admission prepared = service.prepare(
+                100L, 200L, "request-1", "seckill:v1:100", 300L
         );
 
-        assertThat(replay.status())
-                .isEqualTo(CommerceAdmissionDurabilityService.Status.ORDER_CREATED);
-        assertThat(replay.orderId()).isEqualTo(300L);
-        verify(jdbc, never()).update(contains("INSERT IGNORE"), any(Object[].class));
-    }
-
-    @Test
-    void legacyOrderWithSameOpaqueKeyForAnotherVoucherRemainsAConflict() {
-        when(jdbc.queryForList(
-                contains("FROM commerce_admission_ledger"),
-                eq(200L),
-                eq("request-1")
-        )).thenReturn(List.of());
-        when(jdbc.queryForList(
-                contains("FROM commerce_order"),
-                eq(200L),
-                eq("request-1")
-        )).thenReturn(List.of(Map.of("id", 299L, "voucher_id", 99L)));
-
-        assertThatThrownBy(() -> service.prepare(
-                100L,
-                200L,
-                "request-1",
-                "seckill:v1:100",
-                null
-        )).isInstanceOfSatisfying(
-                CommerceApiException.class,
-                error -> {
-                    assertThat(error.code()).isEqualTo("COMMERCE_IDEMPOTENCY_CONFLICT");
-                    assertThat(error.status()).isEqualTo(409);
-                }
-        );
-        verify(jdbc, never()).update(
-                contains("INSERT INTO commerce_admission_ledger"),
-                any(Object[].class)
-        );
+        assertThat(prepared.status()).isEqualTo(CommerceAdmissionDurabilityService.Status.PREPARED);
+        verify(jdbc).update(contains("INSERT IGNORE INTO commerce_admission_ledger"), any(Object[].class));
+        verify(jdbc, never()).queryForList(contains("FROM commerce_order\n"), any(Object[].class));
     }
 
     @Test

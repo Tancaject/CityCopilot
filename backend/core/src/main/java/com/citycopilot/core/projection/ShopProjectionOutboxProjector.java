@@ -4,7 +4,7 @@ import com.citycopilot.core.config.ShopProjectionProperties;
 import com.citycopilot.core.entity.Shop;
 import com.citycopilot.core.mapper.ShopMapper;
 import com.citycopilot.core.service.ShopGeoIndexService;
-import com.citycopilot.core.service.discovery.ShopSearchProjectionService;
+import com.citycopilot.core.utils.CacheClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -15,7 +15,7 @@ import java.util.List;
 /**
  * ShopChanged 至少一次增量投影器。
  *
- * <p>共享 MySQL fencing 租约将本写者与所有 Core 副本上的搜索/GEO 全量重建串行化。</p>
+ * <p>共享 MySQL fencing 租约将本写者与所有 Core 副本上的 GEO 全量重建串行化。</p>
  */
 @Slf4j
 @Component
@@ -38,18 +38,15 @@ public class ShopProjectionOutboxProjector {
     /** Redis GEO 版本化投影目标。 */
     private final ShopGeoIndexService geoIndex;
 
-    /** 搜索引擎版本化投影目标。 */
-    private final ShopSearchProjectionService searchProjection;
-
     /** 轮询批量、claim TTL、租约 TTL 和最大重试延迟配置。 */
     private final ShopProjectionProperties properties;
+    private final CacheClient cache;
 
     /**
      * @param outbox 投影 Outbox 仓储
      * @param leases 投影租约服务
      * @param shopMapper 店铺 Mapper
      * @param geoIndex GEO 投影服务
-     * @param searchProjection 搜索投影服务
      * @param properties 投影配置
      */
     public ShopProjectionOutboxProjector(
@@ -57,15 +54,15 @@ public class ShopProjectionOutboxProjector {
             ShopProjectionLeaseService leases,
             ShopMapper shopMapper,
             ShopGeoIndexService geoIndex,
-            ShopSearchProjectionService searchProjection,
-            ShopProjectionProperties properties
+            ShopProjectionProperties properties,
+            CacheClient cache
     ) {
         this.outbox = outbox;
         this.leases = leases;
         this.shopMapper = shopMapper;
         this.geoIndex = geoIndex;
-        this.searchProjection = searchProjection;
         this.properties = properties;
+        this.cache = cache;
     }
 
     /**
@@ -96,7 +93,7 @@ public class ShopProjectionOutboxProjector {
     }
 
     /**
-     * 将一条事件的最新店铺事实幂等写入搜索和 GEO 投影。
+     * 将一条事件的最新店铺事实幂等写入 GEO 投影。
      *
      * @param event 当前已抢占事件
      * @param lease 当前投影写租约
@@ -119,10 +116,10 @@ public class ShopProjectionOutboxProjector {
                         "Shop source version is behind outbox event: " + event.eventId());
             }
 
-            // 两个目标均可安全重试：搜索使用 external_gte，GEO 在活跃代际保存最后应用的源版本。
-            searchProjection.upsertVersioned(current);
+            // 可安全重试：GEO 在活跃代际保存最后应用的源版本，旧版本不会覆盖新版本。
             geoIndex.refreshShopGeoIndexVersioned(current, currentVersion);
             lease.assertHeld();
+            cache.invalidateShop(event.shopId());
             outbox.complete(event);
         } catch (ShopProjectionOutboxRepository.ClaimLostException error) {
             throw error;

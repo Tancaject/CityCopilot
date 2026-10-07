@@ -627,33 +627,6 @@ async function selectBatchJob(job: GeoBatchJob) {
   }
 }
 
-async function handleExternalBatchUpdate(event: Event) {
-  const job = (event as CustomEvent<GeoBatchJob>).detail;
-  if (!job?.jobId) {
-    return;
-  }
-  batchJob.value = job;
-  successMessage.value = `AI 助手已更新批量任务：${job.processed}/${job.total}，当前状态 ${job.status}`;
-  await loadBatchItems();
-  await loadBatchJobs();
-  await loadAmapStatus();
-  if (batchRunning.value) {
-    startBatchPolling();
-  } else {
-    stopBatchPolling();
-    await loadFirstPage();
-    await loadAuditLogs(selectedShop.value?.id);
-  }
-}
-
-async function handleExternalGeoIndexSynced(event: Event) {
-  const count = Number((event as CustomEvent<number>).detail || 0);
-  successMessage.value = `AI 助手已重建 Redis GEO 索引，共同步 ${count} 家店`;
-  await loadFirstPage();
-  await loadAuditLogs(selectedShop.value?.id);
-  await loadAmapStatus();
-}
-
 async function handleCancelBatch(job = batchJob.value) {
   if (!job) {
     return;
@@ -723,8 +696,6 @@ async function loadAuditLogs(targetId = selectedShop.value?.id) {
 }
 
 onMounted(() => {
-  window.addEventListener('citycopilot:geo-batch-updated', handleExternalBatchUpdate);
-  window.addEventListener('citycopilot:geo-index-synced', handleExternalGeoIndexSynced);
   loadFirstPage();
   loadAuditLogs();
   loadBatchJobs(route.query.focus === 'failed-jobs');
@@ -743,8 +714,6 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  window.removeEventListener('citycopilot:geo-batch-updated', handleExternalBatchUpdate);
-  window.removeEventListener('citycopilot:geo-index-synced', handleExternalGeoIndexSynced);
   stopBatchPolling();
 });
 </script>

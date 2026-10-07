@@ -7,11 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 
@@ -20,27 +17,27 @@ import java.util.Map;
 public class CommerceOrderAdmissionService {
     private static final Logger log = LoggerFactory.getLogger(CommerceOrderAdmissionService.class);
     private final JdbcTemplate jdbc;
+    private final TransactionTemplate transactions;
     private final CommerceOrderIdGenerator orderIds;
     private final CommerceAdmissionDurabilityService durableAdmissions;
     private final CommerceRedisReplicationExecutor replicatedRedis;
     private final CommerceRedisKeyspace keyspace;
-    private final CommerceRuntimeMutationLeases runtimeLeases;
-    private final CommerceRoutingGuard routing;
+    private final CommerceReadCache readCache;
     private static final DefaultRedisScript<Long> SECKILL_SCRIPT =
             CommerceRedisScripts.longScript("lua/commerce_seckill.lua");
     private static final DefaultRedisScript<Long> RECOVER_ADMISSION_SCRIPT =
             CommerceRedisScripts.longScript("lua/commerce_recover_admission.lua");
 
-    public CommerceOrderAdmissionService(JdbcTemplate jdbc, CommerceOrderIdGenerator orderIds,
+    public CommerceOrderAdmissionService(JdbcTemplate jdbc, TransactionTemplate transactions, CommerceOrderIdGenerator orderIds,
             CommerceAdmissionDurabilityService durableAdmissions, CommerceRedisReplicationExecutor replicatedRedis,
-            CommerceRedisKeyspace keyspace, CommerceRuntimeMutationLeases runtimeLeases, CommerceRoutingGuard routing) {
+            CommerceRedisKeyspace keyspace, CommerceReadCache readCache) {
         this.jdbc = jdbc;
+        this.transactions = transactions;
         this.orderIds = orderIds;
         this.durableAdmissions = durableAdmissions;
         this.replicatedRedis = replicatedRedis;
         this.keyspace = keyspace;
-        this.runtimeLeases = runtimeLeases;
-        this.routing = routing;
+        this.readCache = readCache;
     }
 
     /**
@@ -55,31 +52,12 @@ public class CommerceOrderAdmissionService {
         requirePositive(voucherId, "voucherId");
         requirePositive(userId, "userId");
         String key = normalizeRequiredIdempotencyKey(idempotencyKey);
-        if (runtimeLeases == null) {
-            return seckillWithAdmissionLease(voucherId, userId, key, null);
-        }
-        try (CommerceRuntimeMutationLeases.MutationLease lease =
-                     runtimeLeases.acquireAdmission(voucherId)) {
-            routing.requireAdmissionActive(voucherId);
-            return seckillWithAdmissionLease(voucherId, userId, key, lease);
-        }
-    }
-
-    /**
-     * 在已取得分片准入租约后完成“持久化身份 -> 全局身份 -> Voucher Lua -> ACCEPTED”链路。
-     */
-    private AdmissionAccepted seckillWithAdmissionLease(
-            long voucherId,
-            long userId,
-            String key,
-            CommerceRuntimeMutationLeases.MutationLease lease
-    ) {
+        // 链路：持久化身份 -> 全局身份 -> Voucher Lua -> ACCEPTED。
         String requestFingerprint = requestFingerprint(voucherId);
         CommerceAdmissionDurabilityService.Admission durable = durableAdmissions.prepare(
                 voucherId, userId, key, requestFingerprint, null
         );
         if (durable.wasAccepted()) {
-            assertLease(lease);
             return accepted(durable.orderId(), key, "IDEMPOTENT_REPLAY");
         }
         try {
@@ -96,11 +74,9 @@ public class CommerceOrderAdmissionService {
                     requestFingerprint
             );
             durableAdmissions.markAccepted(durable);
-            assertLease(lease);
             return response;
         } catch (CommerceApiException rejection) {
             persistStableRejection(durable, rejection);
-            assertLease(lease);
             throw rejection;
         }
     }
@@ -118,23 +94,6 @@ public class CommerceOrderAdmissionService {
         requirePositive(voucherId, "voucherId");
         requirePositive(userId, "userId");
         String key = normalizeIdempotencyKey(idempotencyKey, "dead-letter-order:" + orderId);
-        if (runtimeLeases == null) {
-            return replayAdmissionWithLease(orderId, voucherId, userId, key, null);
-        }
-        try (CommerceRuntimeMutationLeases.MutationLease lease =
-                     runtimeLeases.acquireAdmission(voucherId)) {
-            routing.requireAdmissionActive(voucherId);
-            return replayAdmissionWithLease(orderId, voucherId, userId, key, lease);
-        }
-    }
-
-    private Map<String, Object> replayAdmissionWithLease(
-            long orderId,
-            long voucherId,
-            long userId,
-            String key,
-            CommerceRuntimeMutationLeases.MutationLease lease
-    ) {
         List<Map<String, Object>> existing = jdbc.queryForList("""
                 SELECT id,status,version,user_id,voucher_id,idempotency_key
                 FROM commerce_order
@@ -154,7 +113,6 @@ public class CommerceOrderAdmissionService {
                         409
                 );
             }
-            assertLease(lease);
             return orderResult(row, "IDEMPOTENT_REPLAY");
         }
         String fingerprint = requestFingerprint(voucherId);
@@ -162,7 +120,6 @@ public class CommerceOrderAdmissionService {
                 voucherId, userId, key, fingerprint, orderId
         );
         if (durable.wasAccepted()) {
-            assertLease(lease);
             return replayResponse(accepted(durable.orderId(), key, "IDEMPOTENT_REPLAY"));
         }
         try {
@@ -178,11 +135,9 @@ public class CommerceOrderAdmissionService {
             }
             AdmissionAccepted response = admit(voucherId, userId, orderId, key, fingerprint);
             durableAdmissions.markAccepted(durable);
-            assertLease(lease);
             return replayResponse(response);
         } catch (CommerceApiException rejection) {
             persistStableRejection(durable, rejection);
-            assertLease(lease);
             throw rejection;
         }
     }
@@ -212,8 +167,7 @@ public class CommerceOrderAdmissionService {
                     String.valueOf(orderId),
                     String.valueOf(voucherId),
                     idempotencyKey,
-                    requestFingerprint,
-                    keyspace.activeAdmissionGateValue()
+                    requestFingerprint
             );
         } catch (RuntimeException error) {
             throw admissionOutcomeUnknown(error);
@@ -222,6 +176,7 @@ public class CommerceOrderAdmissionService {
             throw admissionUnavailable();
         }
         if (result == 1L) {
+            readCache.markSoldOut(voucherId);
             throw new CommerceApiException("SECKILL_STOCK_NOT_ENOUGH", "Voucher stock exhausted", 409);
         }
         if (result == 2L) {
@@ -249,13 +204,6 @@ public class CommerceOrderAdmissionService {
         if (result == 10L) {
             throw new CommerceApiException("SECKILL_ENDED", "Seckill has ended", 409);
         }
-        if (result == 11L) {
-            throw new CommerceApiException(
-                    "COMMERCE_ROUTING_NOT_ACTIVE",
-                    "Commerce order admission is not active for this Redis shard",
-                    503
-            );
-        }
         if (result != 0L) {
             throw admissionUnavailable();
         }
@@ -277,8 +225,7 @@ public class CommerceOrderAdmissionService {
                 keyspace.stream(voucherId),
                 admissionKey(voucherId, userId, idempotencyKey),
                 keyspace.fence(voucherId),
-                keyspace.inflight(voucherId),
-                keyspace.admissionRoutingGate(voucherId)
+                keyspace.inflight(voucherId)
         );
     }
 
@@ -354,44 +301,49 @@ public class CommerceOrderAdmissionService {
             CommerceAdmissionDurabilityService.Admission admission
     ) {
         try {
-            if (durableOrderExists(admission)) {
-                durableAdmissions.markOrderCreated(admission);
-                return;
-            }
-            AdmissionIdentity global = reserveGlobalIdempotency(
-                    admission.voucherId(),
-                    admission.userId(),
-                    admission.idempotencyKey(),
-                    admission.requestFingerprint(),
-                    admission.orderId()
-            );
-            if (global.orderId() != admission.orderId()) {
-                throw new IllegalStateException("Durable admission global identity conflicts");
-            }
-            // 恢复 Lua 接受 ACTIVE 或 DRAINING 门禁，但仍要求代际匹配，便于排空旧在途任务。
-            Long result = replicatedRedis.executeReplicatedScript(
-                    "voucher_admission_recovery",
-                    keyspace.stock(admission.voucherId()),
-                    RECOVER_ADMISSION_SCRIPT,
-                    admissionScriptKeys(
-                            admission.voucherId(),
-                            admission.userId(),
-                            admission.idempotencyKey()
-                    ),
-                    String.valueOf(admission.userId()),
-                    String.valueOf(admission.orderId()),
-                    String.valueOf(admission.voucherId()),
-                    admission.idempotencyKey(),
-                    admission.requestFingerprint(),
-                    keyspace.activeAdmissionGateValue(),
-                    keyspace.drainingAdmissionGateValue()
-            );
-            if (result == null || result != 0L && result != 3L) {
-                throw new IllegalStateException(
-                        "Redis durable admission recovery returned " + result
+            transactions.executeWithoutResult(transaction -> {
+                // 正常落单也会终态化这行账本；持锁到 Redis 写完，避免取消释放的资格被旧恢复者加回。
+                if (jdbc.queryForList("""
+                        SELECT order_id FROM commerce_admission_ledger
+                        WHERE order_id=? AND status='ACCEPTED' AND claim_token=?
+                        FOR UPDATE
+                        """, Long.class, admission.orderId(), admission.claimToken()).isEmpty()) return;
+                if (durableOrderExists(admission)) {
+                    durableAdmissions.markOrderCreated(admission);
+                    return;
+                }
+                AdmissionIdentity global = reserveGlobalIdempotency(
+                        admission.voucherId(),
+                        admission.userId(),
+                        admission.idempotencyKey(),
+                        admission.requestFingerprint(),
+                        admission.orderId()
                 );
-            }
-            durableAdmissions.releaseAfterQueueConfirmation(admission);
+                if (global.orderId() != admission.orderId()) {
+                    throw new IllegalStateException("Durable admission global identity conflicts");
+                }
+                Long result = replicatedRedis.executeReplicatedScript(
+                        "voucher_admission_recovery",
+                        keyspace.stock(admission.voucherId()),
+                        RECOVER_ADMISSION_SCRIPT,
+                        admissionScriptKeys(
+                                admission.voucherId(),
+                                admission.userId(),
+                                admission.idempotencyKey()
+                        ),
+                        String.valueOf(admission.userId()),
+                        String.valueOf(admission.orderId()),
+                        String.valueOf(admission.voucherId()),
+                        admission.idempotencyKey(),
+                        admission.requestFingerprint()
+                );
+                if (result == null || result != 0L && result != 3L) {
+                    throw new IllegalStateException(
+                            "Redis durable admission recovery returned " + result
+                    );
+                }
+                durableAdmissions.releaseAfterQueueConfirmation(admission);
+            });
         } catch (RuntimeException failure) {
             try {
                 durableAdmissions.releaseForRetryOrRepair(admission, failure);
@@ -430,10 +382,6 @@ public class CommerceOrderAdmissionService {
             throw new IllegalStateException("Durable admission conflicts with an existing Commerce order");
         }
         return true;
-    }
-
-    private void assertLease(CommerceRuntimeMutationLeases.MutationLease lease) {
-        if (lease != null) lease.renewAndAssert();
     }
 
     private Map<String, Object> orderResult(Map<String, Object> row, String code) {
@@ -477,8 +425,7 @@ public class CommerceOrderAdmissionService {
             return new AdmissionIdentity(
                     Long.parseLong(parts[0]),
                     Long.parseLong(parts[1]),
-                    parts.length >= 3 ? parts[2] : null,
-                    parts.length == 4 ? parts[3] : null
+                    parts.length >= 3 ? parts[2] : null
             );
         } catch (NumberFormatException malformed) {
             return null;
@@ -549,52 +496,6 @@ public class CommerceOrderAdmissionService {
         return normalizeIdempotencyKey(value, "");
     }
 
-    /**
-     * 校验数据库形式的秒杀 Voucher 是否在给定时刻可准入。
-     *
-     * <p>主要供测试/兼容路径复用；生产热路径的同类校验由 Redis 活动元数据 Lua 原子完成。</p>
-     */
-    static void validateAdmissionConfig(Map<String, Object> voucher, Instant now) {
-        if (((Number) voucher.get("type")).intValue() != 1) {
-            throw new CommerceApiException("VOUCHER_NOT_SECKILL", "Voucher is not a seckill voucher", 409);
-        }
-        if (((Number) voucher.get("status")).intValue() != 1) {
-            throw new CommerceApiException("VOUCHER_NOT_AVAILABLE", "Voucher is not active", 409);
-        }
-        Object stockValue = voucher.get("stock");
-        if (!(stockValue instanceof Number stock) || stock.intValue() <= 0) {
-            throw new CommerceApiException("SECKILL_STOCK_NOT_ENOUGH", "Voucher stock exhausted", 409);
-        }
-        Instant begin = instant(voucher.get("begin_time"));
-        Instant end = instant(voucher.get("end_time"));
-        if (begin == null || end == null) {
-            throw new CommerceApiException(
-                    "VOUCHER_NOT_AVAILABLE",
-                    "Seckill voucher schedule is incomplete",
-                    409
-            );
-        }
-        if (now.isBefore(begin)) {
-            throw new CommerceApiException("SECKILL_NOT_STARTED", "Seckill has not started", 409);
-        }
-        if (now.isAfter(end)) {
-            throw new CommerceApiException("SECKILL_ENDED", "Seckill has ended", 409);
-        }
-    }
-
-    private static Instant instant(Object value) {
-        if (value instanceof Timestamp timestamp) {
-            return timestamp.toInstant();
-        }
-        if (value instanceof java.util.Date date) {
-            return date.toInstant();
-        }
-        if (value instanceof LocalDateTime local) {
-            return local.atZone(ZoneId.systemDefault()).toInstant();
-        }
-        return value == null ? null : Instant.parse(String.valueOf(value));
-    }
-
     private void requirePositive(long value, String name) {
         if (value <= 0) throw new CommerceApiException("COMMERCE_INVALID_ARGUMENT", name + " must be positive", 400);
     }
@@ -602,13 +503,8 @@ public class CommerceOrderAdmissionService {
     private record AdmissionIdentity(
             long orderId,
             long voucherId,
-            String requestFingerprint,
-            String sourceId
+            String requestFingerprint
     ) {
-        private AdmissionIdentity(long orderId, long voucherId, String requestFingerprint) {
-            this(orderId, voucherId, requestFingerprint, null);
-        }
-
         private boolean matches(long expectedVoucherId, String expectedFingerprint) {
             return voucherId == expectedVoucherId
                     && (requestFingerprint == null || requestFingerprint.equals(expectedFingerprint));

@@ -5,15 +5,13 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
-import com.citycopilot.contract.tool.AgentTool;
-import com.citycopilot.contract.tool.ToolAudience;
 import com.citycopilot.core.config.AuditProperties;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.entity.OperationLog;
 import com.citycopilot.core.mapper.OperationLogMapper;
-import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.utils.SystemConstants;
 import com.citycopilot.core.utils.UserHolder;
+import io.micrometer.core.instrument.Metrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -82,7 +80,9 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
                     .setCreateTime(LocalDateTime.now());
             save(logEntry);
         } catch (Exception error) {
-            log.warn("Operation audit write failed: {}", error.getMessage());
+            // 审计失败不阻塞业务，但必须可见：记录错误并计数，便于告警。
+            Metrics.counter("citycopilot.audit.write.failure", "module", String.valueOf(module)).increment();
+            log.error("Operation audit write failed for {}/{}", module, action, error);
         }
     }
 
@@ -96,13 +96,6 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
      * @param targetId 可选目标主键
      * @return 按主键倒序排列的日志页
      */
-    @AgentTool(
-            name = "query_audit_logs",
-            description = "Query operation audit logs",
-            requiredPermissions = {PermissionCodes.AUDIT_READ},
-            audience = ToolAudience.OPS,
-            scope = "ops:audit"
-    )
     public Page<OperationLog> queryLogs(
             Integer current,
             String module,
@@ -184,13 +177,6 @@ public class OperationLogService extends ServiceImpl<OperationLogMapper, Operati
      *
      * @return 保留天数、导出上限、截止时间及数量统计
      */
-    @AgentTool(
-            name = "get_audit_retention_status",
-            description = "Get audit retention and cleanup status",
-            requiredPermissions = {PermissionCodes.AUDIT_READ},
-            audience = ToolAudience.OPS,
-            scope = "ops:audit"
-    )
     public Map<String, Object> retentionStatus() {
         LocalDateTime cutoff = retentionCutoff();
         Long expired = query().lt("create_time", cutoff).count();

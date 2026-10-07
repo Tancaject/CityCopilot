@@ -28,9 +28,4 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         return Result.ok(query().eq("user_id", UserHolder.getUser().getId())
                 .eq("follow_user_id", followUserId).count() > 0);
     }
-
-    @Override
-    public Result followCommons(Long id) {
-        return Result.ok(baseMapper.commonFollows(UserHolder.getUser().getId(), id));
-    }
 }

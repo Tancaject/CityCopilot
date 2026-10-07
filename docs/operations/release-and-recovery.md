@@ -4,7 +4,7 @@
 
 ## 固定后端发布包
 
-[release_bundle.py](../../tools/release/release_bundle.py) 使用 Python 3.11 及以上版本，无第三方依赖。`create` 只复制已有的四个 `*-exec.jar`、三库规范迁移目录以及构建/部署参考文件，不构建、不连接存储，也不启动进程。Frontend 和基础设施镜像不在该后端包的覆盖范围内。
+[release_bundle.py](../../tools/release/release_bundle.py) 使用 Python 3.11 及以上版本，无第三方依赖。`create` 只复制已有的两个 `*-exec.jar`、两库规范迁移目录以及构建/部署参考文件，不构建、不连接存储，也不启动进程。Frontend 和基础设施镜像不在该后端包的覆盖范围内。
 
 先在同一审核版本完成打包及本次改动所需的定向检查，再在没有并行构建的目录执行：
 
@@ -57,17 +57,17 @@ if ($LASTEXITCODE -ne 0) { throw '镜像与已审核 JAR 不一致。' }
 
 迁移原则和首次接管统一见[数据库迁移运行手册](../database-migrations.md)。执行的 SQL 必须来自通过上述校验的 `migrations/<database>`；工作区后续新增或修改的 SQL 不得混入本次发布。Flyway 历史校验和与发布包 SHA-256 职责不同，应同时保留。
 
-1. 记录三库当前 `info` 输出、目标迁移集、前后应用兼容范围、预计锁表窗口、备份位置与恢复责任人。schema 版本不等于业务兼容性。
-2. 涉及 Commerce 准入、分片代际、ledger 或 writer 所有权的变更，先完成 [Commerce 运行门禁](../architecture/commerce-migration-and-cutover.md)。其中 PowerShell drain 脚本只用于本地演练；生产通过文档指定的 Java routing operator 执行带租约与复制确认的门禁。不能直接停 worker 丢下已接受命令。
-3. 应用流量与定时写入的隔离范围由本次变更决定；逐库执行 `validate`、`info`、审核后 `migrate`、再 `validate` 和 `info`，任一步失败即暂停发布。三个数据库之间没有原子迁移事务。
-4. 扩展后的 schema 与旧应用兼容时才允许滚动；先发布具备版本检查的 Core，再发布使用新工具契约的 Agent/MCP，见 [ADR-0004](../adr/0004-core-agent-service-boundary.md)。最后完成业务核对、实际运行版本与[队列告警](queue-alerts.md)检查后恢复入口。
+1. 记录两库当前 `info` 输出、目标迁移集、前后应用兼容范围、预计锁表窗口、备份位置与恢复责任人。schema 版本不等于业务兼容性。
+2. 涉及 Commerce 准入、分片代际、ledger 或 writer 所有权的变更，先完成 [Commerce 运行门禁](../architecture/commerce-migration-and-cutover.md)。不能直接停 worker 丢下已接受命令。
+3. 应用流量与定时写入的隔离范围由本次变更决定；逐库执行 `validate`、`info`、审核后 `migrate`、再 `validate` 和 `info`，任一步失败即暂停发布。两个数据库之间没有原子迁移事务。
+4. 扩展后的 schema 与旧应用兼容时才允许滚动；先发布 Commerce，再发布调用其新接口的 Core。最后完成业务核对、实际运行版本与[队列告警](queue-alerts.md)检查后恢复入口。
 
 以下模板只针对一个已确认的数据库。运维先从密钥系统向当前进程注入 `FLYWAY_URL`、`FLYWAY_USER`、`FLYWAY_PASSWORD`，并设置已审核的 Flyway 镜像摘要与迁移网络；连接必须指向本次变更的目标。命令不会替操作者推断数据库或创建账号。
 
 ```powershell
 $releaseDirectory = (Resolve-Path '<发布目录>').Path
 $releaseDigest = '<审核记录中的 SHA-256>'
-$databaseOwner = 'commerce' # core / commerce / agent，逐库执行
+$databaseOwner = 'commerce' # core / commerce，逐库执行
 $flywayImage = '<已审核的 Flyway 仓库>@sha256:<实际摘要>'
 $migrationNetwork = '<目标环境迁移网络>'
 python tools/release/release_bundle.py verify --bundle $releaseDirectory --manifest-sha256 $releaseDigest
@@ -98,7 +98,7 @@ if ($LASTEXITCODE -ne 0) { throw '无法保存迁移后历史，保持维护窗�
 |---|---|---|
 | 尚未迁移、未开放新版写入 | 恢复上个已审核应用/配置制品 | 先核验旧发布包与实际镜像摘要 |
 | 只执行兼容扩展，旧应用可读写新数据与协议 | 回退应用，保留已执行迁移 | 继续使用当前完整迁移链；不能运行旧发布包的 migrate 覆盖新历史 |
-| 新版产生旧版无法理解的数据、审批契约或消息 | 保持入口关闭，前向修复或启动专项恢复 | 不强迫旧工具消费新审批，不重建授权，不回到旧 Core writer |
+| 新版产生旧版无法理解的数据或消息 | 保持入口关闭，前向修复或启动专项恢复 | 不重建授权，不回到旧 Core writer |
 | 破坏性 DDL、迁移部分提交或业务数据损坏 | 对照实际结构及备份，在隔离环境恢复并核验，制定切回窗口 | 不自动 clean/repair，不删除 Flyway 历史，不猜测逆向 SQL |
 
 MySQL DDL 可能隐式提交，Flyway 失败退出不等于整个迁移回滚。[Flyway 事务说明](https://documentation.red-gate.com/fd/migration-transaction-handling-273973399.html)解释了这一限制。删除字段、约束收缩、旧格式清理应在旧应用退出且回退窗口结束后独立发布。回退窗口没有通用天数：发布记录须写明旧应用可理解的 schema/事件/工具版本，以及最后可回退时点。
@@ -109,11 +109,11 @@ MySQL DDL 可能隐式提交，Flyway 失败退出不等于整个迁移回滚。
 
 需纳入恢复集的内容与关系：
 
-- Core/Commerce/Agent 的全部业务表和 `flyway_schema_history`。订单、库存、reservation、admission ledger、recovery、Outbox、Inbox/事件版本、审批与执行幂等身份应作为关联事实保存，不能只导出订单表。
-- Redis 的路由控制、准入身份、Stream/PEL 与待确认审批，RocketMQ 的可重放事件/消费位置，上传文件和对应数据库引用。数据中心或实例故障恢复需明确这些系统之间的一致性截点；三个独立 MySQL 快照也不会自动形成跨服务快照。
+- Core/Commerce 的全部业务表和 `flyway_schema_history`。订单、库存、reservation、admission ledger、recovery、Outbox、Inbox/事件版本与幂等身份应作为关联事实保存，不能只导出订单表。
+- Redis 的准入身份、Stream/PEL，RocketMQ 的可重放事件/消费位置，上传文件和对应数据库引用。数据中心或实例故障恢复需明确这些系统之间的一致性截点；两个独立 MySQL 快照也不会自动形成跨服务快照。
 - 各后端发布包及独立清单摘要、镜像回执、有效配置版本、外部密钥版本、备份完成时间、MySQL GTID/binlog 位置（若使用 PITR）和文件摘要。Trace、日志与搜索投影不是交易或授权事实的替代来源。
 
-对小型、已封闭写入口并完成排空的隔离演练，可使用逻辑备份。由各数据库运维身份配置受限的 MySQL option file，避免密码出现在命令行。下面只演示一个 schema，三个 owner 各自执行，文件路径不可复用：
+对小型、已封闭写入口并完成排空的隔离演练，可使用逻辑备份。由各数据库运维身份配置受限的 MySQL option file，避免密码出现在命令行。下面只演示一个 schema，两个 owner 各自执行，文件路径不可复用：
 
 ```powershell
 mysqldump --defaults-extra-file='<受限备份账号配置>' `
@@ -130,13 +130,7 @@ Get-FileHash -Algorithm SHA256 -LiteralPath '<新备份文件.sql>'
 恢复验证按同一发布记录登记：
 
 1. 核验恢复集摘要、来源实例/截点与账号隔离，再恢复 schema 和文件；先不接流量、不启动事件消费和自动执行。
-2. 核对三库历史、关键行数、ID 分配高水位、订单/库存/ledger/recovery、Outbox/Inbox/版本去重和审批状态。ID 分配高水位必须覆盖灾难前已分配的区间，不能仅取恢复后订单 `MAX(id)`；缺失证据时需预留新不相交区间并保持准入关闭。
-3. 按 Commerce 现有 routing/fence/一致性修复协议恢复 Redis 投影与未完成请求。同一幂等键的未知结果先查事实，再决定重试；不得根据 Trace 恢复批准状态。RocketMQ 重放保持原 eventId、body 与版本，不能给旧事件生成新身份。
-4. 确认搜索/GEO 可从业务事实重建，上传引用能访问。只执行与恢复场景关联的读取/交易核对，不借恢复演练运行无关性能基线。
+2. 核对两库历史、关键行数、ID 分配高水位、订单/库存/ledger/recovery、Outbox/Inbox/版本去重。ID 分配高水位必须覆盖灾难前已分配的区间，不能仅取恢复后订单 `MAX(id)`；缺失证据时需预留新不相交区间并保持准入关闭。
+3. 按 Commerce 现有 fence/一致性修复协议恢复 Redis 投影与未完成请求。同一幂等键的未知结果先查事实，再决定重试。RocketMQ 重放保持原 eventId、body 与版本，不能给旧事件生成新身份。
+4. 确认 GEO 投影可从业务事实重建，上传引用能访问。只执行与恢复场景关联的读取/交易核对，不借恢复演练运行无关性能基线。
 5. 保存实际恢复时间、可核验的最后业务时间/数据缺口、未决请求与人工处理项，再决定是否开放入口。RPO/RTO 必须由该次实测与业务目标比较，不能从“备份存在”或“进程健康”推断。
-
-## 模型与工具变更
-
-模型名或 provider alias 可以在 JAR 不变时改变行为。发布记录应关联目标模型/供应商实际返回的版本信息、提示词和工具 schema 所在制品摘要、预算配置及变更所涉及的评测用例。复用现有 [EvalRunner](../../backend/eval/src/main/java/com/citycopilot/eval/EvalRunner.java) 的 `--provider`、`--output` 与 `--fail-on-gate`，只运行对应场景；offline 结果仅说明离线规则，不证明真实模型行为，provider 请求需在获授权的隔离环境执行并记录实际来源。
-
-审批哈希绑定与工具版本检查是写入门禁，模型评测不能替代它们。模型回退使用已审核的配置版本；已有待审批/待验证步骤仍以原快照为准，无法满足旧契约时保留人工复核，不通过重算哈希或改写幂等键强行继续。

@@ -1,11 +1,9 @@
 package com.citycopilot.core.controller;
 
-import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.contract.commerce.CommerceContracts.OperationsSummary;
-import com.citycopilot.contract.tool.ToolAudience;
 import com.citycopilot.core.commerce.CommercePortClient;
 import com.citycopilot.core.dto.Result;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IBlogService;
 import com.citycopilot.core.service.IShopService;
@@ -52,7 +50,7 @@ public class AdminController {
     private CommercePortClient commercePortClient;
 
     /**
-     * 汇总当天运营指标，并作为只读运维工具开放。
+     * 汇总当天运营指标。
      *
      * <p>“当天”以 Core 系统业务时区为准。Commerce 调用失败或响应结构非法时不拼接部分数据，
      * 避免后台把缺失订单指标误当成零。</p>
@@ -61,13 +59,6 @@ public class AdminController {
      */
     @GetMapping("/ops/summary")
     @RequirePermission(PermissionCodes.ADMIN_ACCESS)
-    @AgentTool(
-            name = "ops_summary",
-            description = "Get local-life operations summary",
-            requiredPermissions = {PermissionCodes.ADMIN_ACCESS},
-            audience = ToolAudience.OPS,
-            scope = "ops:summary"
-    )
     public Result opsSummary() {
         ZoneId businessZone = ZoneId.systemDefault();
         LocalDate businessDate = LocalDate.now(businessZone);

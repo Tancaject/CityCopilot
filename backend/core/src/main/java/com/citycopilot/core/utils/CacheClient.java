@@ -2,16 +2,26 @@ package com.citycopilot.core.utils;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Bean;
+import org.springframework.data.redis.connection.Message;
+import org.springframework.data.redis.connection.MessageListener;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.listener.ChannelTopic;
+import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static com.citycopilot.core.utils.RedisConstants.CACHE_NULL_TTL;
@@ -20,15 +30,30 @@ import static com.citycopilot.core.utils.RedisConstants.CACHE_REBUILD_RETRY_MILL
 import static com.citycopilot.core.utils.RedisConstants.CACHE_REBUILD_WAIT_MILLIS;
 import static com.citycopilot.core.utils.RedisConstants.LOCK_SHOP_KEY;
 import static com.citycopilot.core.utils.RedisConstants.LOCK_SHOP_TTL;
+import static com.citycopilot.core.utils.RedisConstants.CACHE_SHOP_KEY;
 
 /**
- * 基于 Redis 的通用 JSON 缓存客户端，重点实现带分布式互斥的 Cache Aside 查询。
+ * 本地短缓存加 Redis JSON 缓存，提供互斥重建与 Outbox 广播失效。
  *
  * <p>空值缓存防穿透、TTL 抖动防集中失效；互斥锁只保护缓存重建，不替代数据库事务锁。</p>
  */
 @Slf4j
 @Component
-public class CacheClient {
+public class CacheClient implements MessageListener {
+
+    public static final String INVALIDATION_CHANNEL = "cache:shop:invalidate";
+    private final Cache<String, CacheLookup<?>> local = Caffeine.newBuilder()
+            .maximumSize(10_000).expireAfterWrite(Duration.ofSeconds(5)).build();
+
+    static final DefaultRedisScript<Long> WRITE_IF_OWNER_SCRIPT = new DefaultRedisScript<>("""
+            if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+            redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[3])
+            return 1
+            """, Long.class);
+    private static final DefaultRedisScript<Long> INVALIDATE_SCRIPT = new DefaultRedisScript<>("""
+            redis.call('DEL', KEYS[1], KEYS[2])
+            return redis.call('PUBLISH', ARGV[1], KEYS[1])
+            """, Long.class);
 
     /** 仅当 Redis 中的锁值仍等于本请求 token 时删除锁，避免误删他人续接的锁。 */
     static final DefaultRedisScript<Long> UNLOCK_IF_OWNER_SCRIPT = new DefaultRedisScript<>("""
@@ -51,6 +76,26 @@ public class CacheClient {
         this(stringRedisTemplate, CACHE_REBUILD_WAIT_MILLIS, CACHE_REBUILD_RETRY_MILLIS);
     }
 
+    @Bean
+    RedisMessageListenerContainer shopCacheInvalidationListener(RedisConnectionFactory connectionFactory) {
+        var listener = new RedisMessageListenerContainer();
+        listener.setConnectionFactory(connectionFactory);
+        listener.addMessageListener(this, new ChannelTopic(INVALIDATION_CHANNEL));
+        return listener;
+    }
+
+    @Override
+    public void onMessage(Message message, byte[] pattern) {
+        local.invalidate(new String(message.getBody(), StandardCharsets.UTF_8));
+    }
+
+    /** 撤销重建 token，使失效前已读出的数据库快照不能在失效后回填缓存。 */
+    public void invalidateShop(long id) {
+        String key = CACHE_SHOP_KEY + id;
+        stringRedisTemplate.execute(INVALIDATE_SCRIPT, List.of(key, LOCK_SHOP_KEY + id), INVALIDATION_CHANNEL);
+        local.invalidate(key);
+    }
+
     /**
      * 允许测试注入更短的等待和退避时间。
      */
@@ -62,29 +107,6 @@ public class CacheClient {
         this.stringRedisTemplate = stringRedisTemplate;
         this.rebuildWaitMillis = Math.max(1L, rebuildWaitMillis);
         this.rebuildRetryMillis = Math.max(1L, rebuildRetryMillis);
-    }
-
-    /**
-     * 将对象序列化为 JSON，并使用带随机抖动的 TTL 写入 Redis。
-     *
-     * @param key 完整缓存键
-     * @param value 待缓存对象
-     * @param ttl 基础有效期
-     * @param ttlJitter 额外随机有效期上限
-     * @param unit ttl 与抖动的时间单位
-     */
-    public void set(
-            String key,
-            Object value,
-            long ttl,
-            long ttlJitter,
-            TimeUnit unit
-    ) {
-        stringRedisTemplate.opsForValue().set(
-                key,
-                JSONUtil.toJsonStr(value),
-                jitteredTtl(ttl, ttlJitter, unit)
-        );
     }
 
     /**
@@ -109,10 +131,19 @@ public class CacheClient {
             long ttlJitter,
             TimeUnit unit
     ) {
+        AtomicReference<R> uncachedValue = new AtomicReference<>();
+        CacheLookup<?> value = local.get(keyPrefix + id, key -> queryRedisWithMutex(
+                keyPrefix, id, type, dbFallback, ttl, ttlJitter, unit, uncachedValue));
+        return value == null ? uncachedValue.get() : type.cast(value.value());
+    }
+
+    private <R, ID> CacheLookup<R> queryRedisWithMutex(String keyPrefix, ID id, Class<R> type,
+            Function<ID, R> dbFallback, long ttl, long ttlJitter, TimeUnit unit,
+            AtomicReference<R> uncachedValue) {
         String key = keyPrefix + id;
         CacheLookup<R> cached = read(key, type);
         if (cached.resolved()) {
-            return cached.value();
+            return cached;
         }
 
         String lockKey = LOCK_SHOP_KEY + id;
@@ -124,16 +155,22 @@ public class CacheClient {
                     // 首次读与抢锁之间可能已有请求填充缓存，双重检查可避免重复查询 MySQL。
                     cached = read(key, type);
                     if (cached.resolved()) {
-                        return cached.value();
+                        return cached;
                     }
 
                     R loaded = dbFallback.apply(id);
-                    if (loaded == null) {
-                        setNull(key);
+                    Duration lifetime = loaded == null
+                            ? jitteredTtl(CACHE_NULL_TTL, CACHE_NULL_TTL_JITTER, TimeUnit.MINUTES)
+                            : jitteredTtl(ttl, ttlJitter, unit);
+                    Long written = stringRedisTemplate.execute(WRITE_IF_OWNER_SCRIPT, List.of(lockKey, key),
+                            lockToken, loaded == null ? "" : JSONUtil.toJsonStr(loaded),
+                            Long.toString(lifetime.toMillis()));
+                    if (!Long.valueOf(1).equals(written)) {
+                        // null 让 Caffeine 跳过回填，已读结果仍可供当前请求返回。
+                        uncachedValue.set(loaded);
                         return null;
                     }
-                    set(key, loaded, ttl, ttlJitter, unit);
-                    return loaded;
+                    return CacheLookup.hit(loaded);
                 } finally {
                     unlockIfOwner(lockKey, lockToken);
                 }
@@ -141,7 +178,7 @@ public class CacheClient {
 
             cached = read(key, type);
             if (cached.resolved()) {
-                return cached.value();
+                return cached;
             }
             if (System.nanoTime() >= deadline) {
                 throw new CacheRebuildBusyException("店铺缓存正在重建，请稍后重试");
@@ -177,15 +214,6 @@ public class CacheClient {
         }
         // 空字符串是显式负缓存；null 才表示真正 miss。
         return json == null ? CacheLookup.miss() : CacheLookup.hit(null);
-    }
-
-    /** 为数据库不存在的数据写入较短且带抖动的负缓存。 */
-    private void setNull(String key) {
-        stringRedisTemplate.opsForValue().set(
-                key,
-                "",
-                jitteredTtl(CACHE_NULL_TTL, CACHE_NULL_TTL_JITTER, TimeUnit.MINUTES)
-        );
     }
 
     /**

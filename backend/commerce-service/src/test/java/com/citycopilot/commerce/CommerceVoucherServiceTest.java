@@ -58,7 +58,7 @@ class CommerceVoucherServiceTest {
         CommerceRedisCampaignMetadata metadata = mock(CommerceRedisCampaignMetadata.class);
         when(place.requireWriteAuthority(1L, 7L, true))
                 .thenReturn(Map.of("name", "Demo", "ownerUserId", 7L));
-        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata);
+        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata, mock(CommerceReadCache.class));
 
         assertThatThrownBy(() -> service.create(Map.of(
                 "shopId", 1L,
@@ -78,6 +78,31 @@ class CommerceVoucherServiceTest {
     }
 
     @Test
+    void rejectsClientSuppliedVoucherIdBeforeWriting() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        PlaceAuthorityClient place = mock(PlaceAuthorityClient.class);
+        CommerceOrderIdGenerator ids = mock(CommerceOrderIdGenerator.class);
+        CommerceRedisInventoryBootstrap inventory = mock(CommerceRedisInventoryBootstrap.class);
+        CommerceRedisCampaignMetadata metadata = mock(CommerceRedisCampaignMetadata.class);
+        when(place.requireWriteAuthority(1L, 7L, false))
+                .thenReturn(Map.of("name", "Demo", "ownerUserId", 7L));
+        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata, mock(CommerceReadCache.class));
+
+        assertThatThrownBy(() -> service.create(Map.of(
+                "id", 999L,
+                "shopId", 1L,
+                "title", "Valid",
+                "payValue", 50,
+                "actualValue", 100
+        ), 7L, false))
+                .isInstanceOf(CommerceApiException.class)
+                .hasMessage("id is assigned by Commerce");
+
+        org.mockito.Mockito.verifyNoInteractions(ids);
+        org.mockito.Mockito.verifyNoInteractions(jdbc);
+    }
+
+    @Test
     void allocatesVoucherIdsFromTheCommerceGenerator() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         PlaceAuthorityClient place = mock(PlaceAuthorityClient.class);
@@ -87,7 +112,7 @@ class CommerceVoucherServiceTest {
         when(place.requireWriteAuthority(1L, 7L, true))
                 .thenReturn(Map.of("name", "Demo", "ownerUserId", 7L));
         when(ids.nextVoucherId()).thenReturn(123L);
-        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata);
+        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata, mock(CommerceReadCache.class));
 
         VoucherCreated created = service.create(Map.of(
                 "shopId", 1L,
@@ -135,7 +160,7 @@ class CommerceVoucherServiceTest {
                 "begin_time", Timestamp.from(Instant.parse("2026-07-30T00:00:00Z")),
                 "end_time", Timestamp.from(Instant.parse("2026-07-31T00:00:00Z"))
         ));
-        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata);
+        CommerceVoucherService service = new CommerceVoucherService(jdbc, place, ids, inventory, metadata, mock(CommerceReadCache.class));
 
         assertThatThrownBy(() -> service.update(123L, Map.of("stock", 11), 7L, true))
                 .isInstanceOf(CommerceApiException.class)
@@ -188,7 +213,7 @@ class CommerceVoucherServiceTest {
                 Map.entry("end_time", seckill.get("end_time"))
         ));
         CommerceVoucherService service = new CommerceVoucherService(
-                jdbc, place, ids, inventory, metadata
+                jdbc, place, ids, inventory, metadata, mock(CommerceReadCache.class)
         );
 
         service.update(123L, Map.of("status", 2), 7L, true);

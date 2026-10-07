@@ -14,7 +14,6 @@ import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.ConnectionIntent;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,8 +27,6 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
-import java.util.TreeSet;
 import java.util.function.Function;
 
 /**
@@ -37,8 +34,7 @@ import java.util.function.Function;
  *
  * <p>Spring Data Cluster 的通用命令接口会把路由键加入参数，无法路由无键的 WAIT。本组件因此先按
  * key slot 找到当前主节点，再在其专用连接上连续执行写入和 WAIT；非 Lettuce 工厂无法保证这种
- * 连接绑定，故直接拒绝。require-all 模式还会在写前读取 {@code CLUSTER REPLICAS}，等待所有已配置
- * 副本，并在 WAIT 后复核副本身份集合；拓扑不可见或中途变化均失败关闭。</p>
+ * 连接绑定，故直接拒绝。</p>
  */
 @Component
 final class CommerceRedisReplicationExecutor {
@@ -104,24 +100,15 @@ final class CommerceRedisReplicationExecutor {
     private final int requiredReplicas;
     /** WAIT 最长阻塞时间。 */
     private final long waitTimeoutMillis;
-    /** 是否要求确认拓扑中全部已配置副本，而非固定最小数量。 */
-    private final boolean requireAllReplicas;
 
     @Autowired
     CommerceRedisReplicationExecutor(
             RedisConnectionFactory connectionFactory,
             MeterRegistry metrics,
             @Value("${citycopilot.commerce.redis-required-replicas:0}") int requiredReplicas,
-            @Value("${citycopilot.commerce.redis-replication-timeout-ms:1000}") long waitTimeoutMillis,
-            @Value("${citycopilot.commerce.redis-require-all-replicas:false}") boolean requireAllReplicas
+            @Value("${citycopilot.commerce.redis-replication-timeout-ms:1000}") long waitTimeoutMillis
     ) {
-        this(
-                lettuceProvider(connectionFactory),
-                metrics,
-                requiredReplicas,
-                waitTimeoutMillis,
-                requireAllReplicas
-        );
+        this(lettuceProvider(connectionFactory), metrics, requiredReplicas, waitTimeoutMillis);
     }
 
     CommerceRedisReplicationExecutor(
@@ -129,16 +116,6 @@ final class CommerceRedisReplicationExecutor {
             MeterRegistry metrics,
             int requiredReplicas,
             long waitTimeoutMillis
-    ) {
-        this(connections, metrics, requiredReplicas, waitTimeoutMillis, false);
-    }
-
-    CommerceRedisReplicationExecutor(
-            NodeBoundConnectionProvider connections,
-            MeterRegistry metrics,
-            int requiredReplicas,
-            long waitTimeoutMillis,
-            boolean requireAllReplicas
     ) {
         if (requiredReplicas < 0 || requiredReplicas > 16) {
             throw new IllegalArgumentException("Redis required replicas must be 0..16");
@@ -150,17 +127,6 @@ final class CommerceRedisReplicationExecutor {
         this.metrics = metrics;
         this.requiredReplicas = requiredReplicas;
         this.waitTimeoutMillis = waitTimeoutMillis;
-        this.requireAllReplicas = requireAllReplicas;
-    }
-
-    /** require-all 模式在接收业务前先验证 Redis Cluster 可暴露副本拓扑。 */
-    @PostConstruct
-    void validateRequiredReplicaTopology() {
-        if (!requireAllReplicas) return;
-        execute("startup_replica_topology", CommerceRedisKeyspace.ROUTING_CONTROL_KEY, commands -> {
-            confirmationTarget(commands, "startup_replica_topology");
-            return null;
-        });
     }
 
     /**
@@ -172,10 +138,6 @@ final class CommerceRedisReplicationExecutor {
      */
     String reserveGlobalIdentity(String key, String candidateIdentity) {
         return execute("global_idempotency", key, commands -> {
-            ReplicationConfirmationTarget confirmationTarget = confirmationTarget(
-                    commands,
-                    "global_idempotency"
-            );
             byte[] rawKey = bytes(key);
             byte[] candidate = bytes(candidateIdentity);
             byte[] existing = commands.evalValue(
@@ -186,7 +148,7 @@ final class CommerceRedisReplicationExecutor {
             if (existing == null) {
                 throw new IllegalStateException("Redis did not retain the global admission identity");
             }
-            confirmReplication(commands, "global_idempotency", confirmationTarget);
+            confirmReplication(commands, "global_idempotency");
             return text(existing);
         });
     }
@@ -198,7 +160,6 @@ final class CommerceRedisReplicationExecutor {
      */
     ReplicatedMutation setIfAbsent(String operation, String key, String value) {
         return execute(operation, key, commands -> {
-            ReplicationConfirmationTarget confirmationTarget = confirmationTarget(commands, operation);
             Long result = commands.eval(
                     SET_IF_ABSENT_SCRIPT,
                     new byte[][]{bytes(key)},
@@ -206,7 +167,7 @@ final class CommerceRedisReplicationExecutor {
             );
             ReplicatedMutation mutation = ReplicatedMutation.from(result);
             if (mutation != ReplicatedMutation.CONFLICT) {
-                confirmReplication(commands, operation, confirmationTarget);
+                confirmReplication(commands, operation);
             }
             return mutation;
         });
@@ -222,7 +183,6 @@ final class CommerceRedisReplicationExecutor {
             String next
     ) {
         return execute(operation, key, commands -> {
-            ReplicationConfirmationTarget confirmationTarget = confirmationTarget(commands, operation);
             Long result = commands.eval(
                     COMPARE_AND_SET_SCRIPT,
                     new byte[][]{bytes(key)},
@@ -230,7 +190,7 @@ final class CommerceRedisReplicationExecutor {
             );
             ReplicatedMutation mutation = ReplicatedMutation.from(result);
             if (mutation != ReplicatedMutation.CONFLICT) {
-                confirmReplication(commands, operation, confirmationTarget);
+                confirmReplication(commands, operation);
             }
             return mutation;
         });
@@ -245,7 +205,6 @@ final class CommerceRedisReplicationExecutor {
             String expected
     ) {
         return execute(operation, key, commands -> {
-            ReplicationConfirmationTarget confirmationTarget = confirmationTarget(commands, operation);
             Long result = commands.eval(
                     DELETE_IF_EQUALS_SCRIPT,
                     new byte[][]{bytes(key)},
@@ -253,7 +212,7 @@ final class CommerceRedisReplicationExecutor {
             );
             ReplicatedMutation mutation = ReplicatedMutation.from(result);
             if (mutation != ReplicatedMutation.CONFLICT) {
-                confirmReplication(commands, operation, confirmationTarget);
+                confirmReplication(commands, operation);
             }
             return mutation;
         });
@@ -278,14 +237,13 @@ final class CommerceRedisReplicationExecutor {
     ) {
         requireSameSlot(routingKey, keys);
         return execute(operation, routingKey, commands -> {
-            ReplicationConfirmationTarget confirmationTarget = confirmationTarget(commands, operation);
             Long result = commands.eval(
                     bytes(script.getScriptAsString()),
                     keys.stream().map(this::bytes).toArray(byte[][]::new),
                     Arrays.stream(arguments).map(this::bytes).toArray(byte[][]::new)
             );
             if (result != null && (result == 0L || result == 3L)) {
-                confirmReplication(commands, operation, confirmationTarget);
+                confirmReplication(commands, operation);
             }
             return result;
         });
@@ -325,60 +283,16 @@ final class CommerceRedisReplicationExecutor {
         }
     }
 
-    /** 确定本次写入必须等待的副本数量和拓扑指纹。 */
-    private ReplicationConfirmationTarget confirmationTarget(
-            NodeBoundCommands commands,
-            String operation
-    ) {
-        ReplicationConfirmationTarget target = commands.replicationConfirmationTarget(
-                requiredReplicas,
-                requireAllReplicas
-        );
-        if (target == null) {
-            throw new RedisReplicationTopologyUnavailableException(
-                    "Redis " + operation + " replication topology returned no target"
-            );
-        }
-        if (target.replicaCount() < requiredReplicas) {
-            throw new RedisReplicationInsufficientException(
-                    "Redis topology has fewer replicas than the configured minimum"
-            );
-        }
-        if (requireAllReplicas && target.replicaCount() == 0) {
-            throw new RedisReplicationTopologyUnavailableException(
-                    "Redis topology exposes no configured replica for " + operation
-            );
-        }
-        return target;
-    }
-
-    /**
-     * 执行 WAIT，并在 require-all 模式确认写前后副本集合完全相同。
-     */
-    private void confirmReplication(
-            NodeBoundCommands commands,
-            String operation,
-            ReplicationConfirmationTarget targetBeforeWrite
-    ) {
-        if (targetBeforeWrite.replicaCount() == 0) return;
-        Long confirmed = commands.waitForReplication(
-                targetBeforeWrite.replicaCount(),
-                waitTimeoutMillis
-        );
-        if (requireAllReplicas) {
-            ReplicationConfirmationTarget targetAfterWait = confirmationTarget(commands, operation);
-            if (!targetBeforeWrite.equals(targetAfterWait)) {
-                throw new RedisReplicationTopologyUnavailableException(
-                        "Redis replica topology changed during " + operation + " confirmation"
-                );
-            }
-        }
-        if (confirmed == null || confirmed < targetBeforeWrite.replicaCount()) {
+    /** 在写入所用的同一连接上执行 WAIT，确认达到配置的副本数。 */
+    private void confirmReplication(NodeBoundCommands commands, String operation) {
+        if (requiredReplicas == 0) return;
+        Long confirmed = commands.waitForReplication(requiredReplicas, waitTimeoutMillis);
+        if (confirmed == null || confirmed < requiredReplicas) {
             log.error(
                     "Redis {} write reached only {} of {} required replicas before {}ms",
                     operation,
                     confirmed,
-                    targetBeforeWrite.replicaCount(),
+                    requiredReplicas,
                     waitTimeoutMillis
             );
             throw new RedisReplicationInsufficientException(
@@ -415,7 +329,6 @@ final class CommerceRedisReplicationExecutor {
         Throwable cursor = failure;
         while (cursor != null) {
             if (cursor instanceof RedisReplicationInsufficientException) return true;
-            if (cursor instanceof RedisReplicationTopologyUnavailableException) return true;
             cursor = cursor.getCause();
         }
         return false;
@@ -467,21 +380,6 @@ final class CommerceRedisReplicationExecutor {
         byte[] evalValue(byte[] script, byte[][] keys, byte[][] arguments);
 
         Long waitForReplication(int replicas, long timeoutMillis);
-
-        default ReplicationConfirmationTarget replicationConfirmationTarget(
-                int minimumRequiredReplicas,
-                boolean requireAllReplicas
-        ) {
-            if (requireAllReplicas) {
-                throw new RedisReplicationTopologyUnavailableException(
-                        "Redis provider does not expose configured replica topology"
-                );
-            }
-            return new ReplicationConfirmationTarget(
-                    minimumRequiredReplicas,
-                    "configured-minimum:" + minimumRequiredReplicas
-            );
-        }
     }
 
     /** Lettuce 实现：单机复用连接，Cluster 按 slot 获取具体主节点写连接。 */
@@ -512,7 +410,7 @@ final class CommerceRedisReplicationExecutor {
         /** 根据路由键解析当前主节点；找不到可写主节点时失败关闭。 */
         private NodeBoundCommands commands(String routingKey) {
             if (client instanceof RedisClient redisClient) {
-                return new LettuceNodeBoundCommands(standalone(redisClient).sync(), null);
+                return new LettuceNodeBoundCommands(standalone(redisClient).sync());
             }
             StatefulRedisClusterConnection<byte[], byte[]> connection = cluster(
                     (RedisClusterClient) client
@@ -529,7 +427,7 @@ final class CommerceRedisReplicationExecutor {
             if (nodeConnection == null || !nodeConnection.isOpen()) {
                 throw new IllegalStateException("Redis Cluster master connection is unavailable");
             }
-            return new LettuceNodeBoundCommands(nodeConnection.sync(), master.getNodeId());
+            return new LettuceNodeBoundCommands(nodeConnection.sync());
         }
 
         private synchronized StatefulRedisConnection<byte[], byte[]> standalone(RedisClient redisClient) {
@@ -566,12 +464,8 @@ final class CommerceRedisReplicationExecutor {
      * 绑定某个主节点的同步命令适配器。
      *
      * @param delegate Lettuce 同步命令连接
-     * @param masterNodeId Cluster 主节点 ID；单机模式为空
      */
-    private record LettuceNodeBoundCommands(
-            RedisCommands<byte[], byte[]> delegate,
-            String masterNodeId
-    )
+    private record LettuceNodeBoundCommands(RedisCommands<byte[], byte[]> delegate)
             implements NodeBoundCommands {
         @Override
         public Long eval(byte[] script, byte[][] keys, byte[][] arguments) {
@@ -587,104 +481,12 @@ final class CommerceRedisReplicationExecutor {
         public Long waitForReplication(int replicas, long timeoutMillis) {
             return delegate.waitForReplication(replicas, timeoutMillis);
         }
-
-        /** require-all 模式读取并校验当前主节点的全部 replica 身份。 */
-        @Override
-        public ReplicationConfirmationTarget replicationConfirmationTarget(
-                int minimumRequiredReplicas,
-                boolean requireAllReplicas
-        ) {
-            if (!requireAllReplicas) {
-                return NodeBoundCommands.super.replicationConfirmationTarget(
-                        minimumRequiredReplicas,
-                        false
-                );
-            }
-            if (masterNodeId == null || masterNodeId.isBlank()) {
-                throw new RedisReplicationTopologyUnavailableException(
-                        "Require-all replica confirmation needs Redis Cluster topology"
-                );
-            }
-            List<String> replicaLines;
-            try {
-                replicaLines = delegate.clusterReplicas(masterNodeId);
-            } catch (RuntimeException topologyFailure) {
-                throw new RedisReplicationTopologyUnavailableException(
-                        "Unable to read configured Redis Cluster replicas",
-                        topologyFailure
-                );
-            }
-            if (replicaLines == null) {
-                throw new RedisReplicationTopologyUnavailableException(
-                        "Redis Cluster returned no replica topology"
-                );
-            }
-            Set<String> replicaIds = new TreeSet<>();
-            for (String replicaLine : replicaLines) {
-                String[] fields = replicaLine == null
-                        ? new String[0]
-                        : replicaLine.trim().split("\\s+");
-                if (fields.length < 8) {
-                    throw new RedisReplicationTopologyUnavailableException(
-                            "Redis Cluster returned an unrecognized replica record"
-                    );
-                }
-                Set<String> flags = Set.of(fields[2].split(","));
-                if (!flags.contains("slave") && !flags.contains("replica")) {
-                    throw new RedisReplicationTopologyUnavailableException(
-                            "Redis Cluster replica record has no replica role"
-                    );
-                }
-                if (!masterNodeId.equals(fields[3])
-                        || fields[0].isBlank()
-                        || masterNodeId.equals(fields[0])
-                        || !replicaIds.add(fields[0])) {
-                    throw new RedisReplicationTopologyUnavailableException(
-                            "Redis Cluster replica ownership is inconsistent"
-                    );
-                }
-            }
-            if (replicaIds.isEmpty()) {
-                throw new RedisReplicationTopologyUnavailableException(
-                        "Redis Cluster master has no configured replica"
-                );
-            }
-            return new ReplicationConfirmationTarget(
-                    replicaIds.size(),
-                    "cluster:" + masterNodeId + ":" + String.join(",", replicaIds)
-            );
-        }
     }
 
     /** WAIT 未达到要求副本数。 */
     static final class RedisReplicationInsufficientException extends RuntimeException {
         RedisReplicationInsufficientException(String message) {
             super(message);
-        }
-    }
-
-    /** 无法取得稳定且可验证的副本拓扑。 */
-    static final class RedisReplicationTopologyUnavailableException extends RuntimeException {
-        RedisReplicationTopologyUnavailableException(String message) {
-            super(message);
-        }
-
-        RedisReplicationTopologyUnavailableException(String message, Throwable cause) {
-            super(message, cause);
-        }
-    }
-
-    /**
-     * 一次写入的副本确认目标。
-     *
-     * @param replicaCount WAIT 所需副本数
-     * @param topologyFingerprint 写前后比较的拓扑指纹
-     */
-    record ReplicationConfirmationTarget(int replicaCount, String topologyFingerprint) {
-        ReplicationConfirmationTarget {
-            if (replicaCount < 0 || topologyFingerprint == null || topologyFingerprint.isBlank()) {
-                throw new IllegalArgumentException("Invalid Redis replication confirmation target");
-            }
         }
     }
 

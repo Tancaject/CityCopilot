@@ -9,17 +9,16 @@
 | P0 | 数据库迁移唯一来源 | 新建与接管均使用各 owner 的版本迁移；已执行文件不可重写，接管须校验结构与数据前置条件。见[迁移运行手册](../database-migrations.md)。 |
 | P0 | 持久业务事实 | 点赞、关注在 MySQL 中有唯一身份和事务约束；Redis 可从事实重建。见[社区事实模型](../community-facts.md)。 |
 | P0 | 依赖组合 | 构建声明与持久化 JSON、HTTP 协议共同演进，版本来源只有 POM/Compose。见[依赖与兼容 ADR](../adr/0011-supported-dependencies-and-wire-compatibility.md)。 |
-| P0 | 请求资源预算 | 入站请求、工具执行、完整 HTTP 响应共享截止时间与并发预算；写结果未知不被自动解释为未执行。见[请求预算](request-budgets.md)。 |
+| P0 | 请求资源预算 | 入站请求、跨服务调用、完整 HTTP 响应共享截止时间与并发预算；写结果未知不被自动解释为未执行。见[请求预算](request-budgets.md)。 |
 | P1 | 核心交易合同 | 服务边界使用明确请求/结果类型和事件信封，保留身份、金额、时间、HTTP 状态与稀疏更新语义。见[Commerce 边界 ADR](../adr/0006-commerce-place-service-boundaries.md)。 |
 | P1 | 关键职责拆分 | 准入、消费/恢复、事务写入分别承担自己的失败边界；订单/库存/Outbox/账本终态仍原子提交。资源管理与预约生命周期分开，避免改变事务所有权。见[准入 ADR](../adr/0009-commerce-high-concurrency-admission.md)。 |
-| P1 | 工具版本与审批 | 暂停计划绑定当时的工具版本/Schema；变更后须重新预览，不重算旧审批身份继续执行。见[工具边界 ADR](../adr/0004-core-agent-service-boundary.md)及[Ops 审批 ADR](../adr/0007-ops-agent-evidence-approval-verification.md)。 |
-| P1 | 业务可观测闭环 | 区分发布、Broker 积压、Inbox 接收、业务投影提交与最终修复；空样本/失鲜不能视为成功，告警有处理入口。见[队列与业务告警](../operations/queue-alerts.md)。 |
-| P1 | 数据生命周期 | 保留恢复身份和唯一约束，明确正文保留/归档/重放与回退边界，禁止从 Trace 重建已消费授权。见[数据生命周期](../operations/data-lifecycle.md)。 |
+| P1 | 业务可观测闭环 | 区分发布、Broker 积压、Inbox 接收与业务投影提交；空样本/失鲜不能视为成功，告警有处理入口。见[队列与业务告警](../operations/queue-alerts.md)。 |
+| P1 | 数据生命周期 | 保留恢复身份和唯一约束，明确正文保留/归档/重放与回退边界。见[数据生命周期](../operations/data-lifecycle.md)。 |
 | P1 | 安全与 API | 认证先于业务处理，身份作用域可清理，轮换可撤销；错误码、重试提示与写入幂等语义一致。见[凭据及认证操作契约](../operations/service-credential-rotation.md)。 |
-| P1 | 发布与恢复 | 同次制品、迁移、外部摘要及来源记录绑定；迁移/回滚窗口与模型变更门槛明确。见[发布与恢复](../operations/release-and-recovery.md)。 |
+| P1 | 发布与恢复 | 同次制品、迁移、外部摘要及来源记录绑定；迁移/回滚窗口明确。见[发布与恢复](../operations/release-and-recovery.md)。 |
 | P2 | SQL 访问模式 | 有界批量与索引对应实际筛选/排序；保留外部分页协议，不把 LIMIT 当作扫描量证明。见[查询与索引](../operations/sql-access-paths.md)。 |
 | P2 | 秒杀热路径兼容成本 | 只有历史订单回填 postflight 成立且旧 writer 全部退出后，才可移除兼容身份补建。准入账本仍是已受理承诺，不能改成仅靠 Redis ACK。见[切换协议](commerce-migration-and-cutover.md)。 |
-| P2 | 搜索/GEO 重建与回收 | 基础快照分页、批量写、续租、Outbox 追尾和 fenced 发布共同生效；旧代际回收保护活跃/构建中代际并约束读者和回退窗口。见[投影 ADR](../adr/0010-versioned-shop-search-geo-projections.md)。 |
+| P2 | GEO 重建与回收 | 基础快照分页、批量写、续租、Outbox 追尾和 fenced 发布共同生效；旧代际回收保护活跃/构建中代际并约束读者和回退窗口。见[投影 ADR](../adr/0010-versioned-shop-search-geo-projections.md)。 |
 | P2 | Core 领域边界 | Identity、Place、Community 的公开业务接口使用领域操作与读取 DTO；ORM 查询构造器留在领域实现内部。HTTP 兼容载体不作为向其他业务层暴露通用 CRUD 的理由。见[领域边界 ADR](../adr/0006-commerce-place-service-boundaries.md)。 |
 | P3 | Worker 并行与角色拆分 | 以积压、完成时延和连接预算证据触发；增加线程不能绕过 claim、幂等或数据库容量约束。 |
 | P3 | fan-out、热点分片、锁粒度 | 分别以关注规模、热点争用和锁等待证据触发，保留事实一致性与写入所有权。 |

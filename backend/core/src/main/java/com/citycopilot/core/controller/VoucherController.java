@@ -3,7 +3,7 @@ package com.citycopilot.core.controller;
 
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.VoucherRequest;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IVoucherService;
 import org.springframework.web.bind.annotation.*;
@@ -33,19 +33,6 @@ public class VoucherController {
     public Result addVoucher(@RequestBody VoucherRequest voucher) {
         // 明确覆盖客户端 type，保证该路由只能创建普通券。
         voucher.setType(0);
-        return voucherService.createVoucher(voucher);
-    }
-
-    /**
-     * 新增秒杀券
-     * @param voucher 优惠券信息，包含秒杀信息
-     * @return 优惠券id
-     */
-    @PostMapping("seckill")
-    @RequirePermission(PermissionCodes.VOUCHER_WRITE)
-    public Result addSeckillVoucher(@RequestBody VoucherRequest voucher) {
-        // 明确覆盖客户端 type，保证该路由进入秒杀券创建合同。
-        voucher.setType(1);
         return voucherService.createVoucher(voucher);
     }
 

@@ -12,6 +12,7 @@ export class ApiError extends Error {
   code?: string;
   status?: number;
   details?: unknown;
+  retryAfterSeconds?: number;
 
   constructor(message: string, code?: string, status?: number, details?: unknown) {
     super(message);
@@ -42,8 +43,15 @@ api.interceptors.response.use(
       window.dispatchEvent(new CustomEvent('citycopilot:auth-expired'));
       return Promise.reject(new ApiError('请先登录', error.response?.data?.code || 'AUTH_REQUIRED'));
     }
-    const message = error.response?.data?.errorMsg || error.response?.data?.message || error.message || '服务暂时不可用';
-    return Promise.reject(new ApiError(message, error.response?.data?.code, error.response?.status, error.response?.data));
+    const retryAfter = error.response?.headers?.['retry-after'];
+    const seconds = retryAfter === undefined ? NaN : Number(retryAfter);
+    const retryAfterSeconds = Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : undefined;
+    const message = error.response?.status === 429 && retryAfterSeconds !== undefined
+      ? `请求过于频繁，请在 ${retryAfterSeconds} 秒后重试`
+      : error.response?.data?.errorMsg || error.response?.data?.message || error.message || '服务暂时不可用';
+    const apiError = new ApiError(message, error.response?.data?.code, error.response?.status, error.response?.data);
+    apiError.retryAfterSeconds = retryAfterSeconds;
+    return Promise.reject(apiError);
   },
 );
 

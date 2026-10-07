@@ -1,5 +1,6 @@
 package com.citycopilot.core.security;
 
+import com.citycopilot.contract.security.PermissionCodes;
 import cn.hutool.core.util.StrUtil;
 import com.citycopilot.core.config.SecurityProperties;
 import jakarta.annotation.Resource;

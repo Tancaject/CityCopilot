@@ -1,8 +1,6 @@
 package com.citycopilot.core.booking;
 
 import com.citycopilot.contract.booking.BookingContracts.*;
-import com.citycopilot.contract.booking.BookingPlanContracts.BatchRequest;
-import com.citycopilot.contract.booking.BookingPlanContracts.BatchResponse;
 import com.citycopilot.contract.booking.PricingContracts.*;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.config.CrossServiceHttpConfig.CommerceHttpFactories;
@@ -39,17 +37,8 @@ public class BookingPortClient {
     }
 
     public Rules rules() { return get("/booking-rules", new ParameterizedTypeReference<>() {}); }
-    public BatchResponse options(BatchRequest request) {
-        return post("/booking-options/query", request, null, new ParameterizedTypeReference<>() {});
-    }
     public List<ResourceView> resources(String shopId) {
         return get("/shops/{shopId}/booking-resources", new ParameterizedTypeReference<>() {}, shopId);
-    }
-    public ResourceView resource(String resourceId) {
-        return get("/booking-resources/{id}", new ParameterizedTypeReference<>() {}, resourceId);
-    }
-    public SlotView slot(String slotId) {
-        return get("/booking-slots/{id}", new ParameterizedTypeReference<>() {}, slotId);
     }
     public List<SlotView> slots(String resourceId, Instant from, Instant to) {
         return get("/booking-resources/{id}/slots?dateFrom={from}&dateTo={to}",

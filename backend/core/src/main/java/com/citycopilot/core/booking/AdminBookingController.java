@@ -1,7 +1,7 @@
 package com.citycopilot.core.booking;
 
 import com.citycopilot.contract.booking.BookingContracts.*;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IShopService;
 import org.springframework.http.ResponseEntity;

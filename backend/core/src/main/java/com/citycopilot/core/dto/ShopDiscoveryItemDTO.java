@@ -1,6 +1,5 @@
 package com.citycopilot.core.dto;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -58,7 +57,4 @@ public class ShopDiscoveryItemDTO {
     private String openHours;
     /** 到查询中心的距离，单位米。 */
     private Double distance;
-    /** 内部合并排序位次，不序列化给客户端。 */
-    @JsonIgnore
-    private Integer searchRank;
 }

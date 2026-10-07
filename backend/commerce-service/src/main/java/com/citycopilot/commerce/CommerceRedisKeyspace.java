@@ -6,7 +6,6 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -40,16 +39,6 @@ final class CommerceRedisKeyspace {
 
     /** 允许写入 Redis 键名的路由代际格式，限制长度和字符集。 */
     private static final Pattern SAFE_GENERATION = Pattern.compile("[A-Za-z0-9_-]{1,24}");
-    /** 全局路由控制记录；保存 ACTIVE/DRAINING、代际、分片数和修订号。 */
-    static final String ROUTING_CONTROL_KEY = "commerce:{commerce-runtime}:routing";
-    /** 全局业务写租约集合，与路由控制键使用相同 Cluster slot。 */
-    static final String RUNTIME_MUTATION_LEASES_KEY =
-            "commerce:{commerce-runtime}:mutation-leases";
-    /** 一次性路由运维任务的互斥租约键。 */
-    static final String ROUTING_OPERATOR_LEASE_KEY =
-            "commerce:{commerce-runtime}:routing-operator-lease";
-    /** 路由控制值的序列化协议版本。 */
-    private static final String ROUTING_RECORD_VERSION = "v1";
 
     /** 当前部署配置的逻辑物理分片数。 */
     private final int physicalShardCount;
@@ -174,64 +163,6 @@ final class CommerceRedisKeyspace {
         return prefix(voucherId) + "seckill:inflight:" + voucherId;
     }
 
-    /** @return 准入 Lua 在同一 slot 内复核的分片路由门禁键 */
-    String admissionRoutingGate(long voucherId) {
-        return prefix(voucherId) + "runtime:routing-gate";
-    }
-
-    /** @return 当前 Voucher 分片上的并发准入租约集合键 */
-    String admissionRuntimeLeases(long voucherId) {
-        return prefix(voucherId) + "runtime:admission-leases";
-    }
-
-    /** @return 所有逻辑分片的准入门禁键 */
-    List<String> admissionRoutingGates() {
-        List<String> gates = new ArrayList<>(physicalShardCount);
-        for (int shard = 0; shard < physicalShardCount; shard++) {
-            gates.add(prefix(shard) + "runtime:routing-gate");
-        }
-        return List.copyOf(gates);
-    }
-
-    /** @return 所有逻辑分片的准入租约集合键 */
-    List<String> admissionRuntimeLeaseKeys() {
-        List<String> leases = new ArrayList<>(physicalShardCount);
-        for (int shard = 0; shard < physicalShardCount; shard++) {
-            leases.add(prefix(shard) + "runtime:admission-leases");
-        }
-        return List.copyOf(leases);
-    }
-
-    String activeAdmissionGateValue() {
-        return routingGateValue("ACTIVE");
-    }
-
-    String drainingAdmissionGateValue() {
-        return routingGateValue("DRAINING");
-    }
-
-    /**
-     * 生成全局路由控制记录值。
-     *
-     * @param state {@code ACTIVE} 或 {@code DRAINING}
-     * @param revision 本次控制面变更的唯一修订号
-     */
-    String routingControlValue(String state, String revision) {
-        String normalizedState = normalizeRoutingState(state);
-        String normalizedRevision = Objects.requireNonNull(revision, "revision").trim();
-        if (!normalizedRevision.matches("[A-Za-z0-9_-]{8,64}")) {
-            throw new IllegalArgumentException("Invalid Commerce routing revision");
-        }
-        return String.join(
-                "|",
-                ROUTING_RECORD_VERSION,
-                normalizedState,
-                routingGeneration,
-                String.valueOf(physicalShardCount),
-                normalizedRevision
-        );
-    }
-
     /** @return 幂等库存恢复标记键 */
     String restoreMarker(long voucherId, String sourceId) {
         return prefix(voucherId) + "seckill:restore:" + sourceId;
@@ -276,21 +207,4 @@ final class CommerceRedisKeyspace {
         return "{commerce:" + routingGeneration + ":" + physicalShardCount + ":" + shard + "}";
     }
 
-    private String routingGateValue(String state) {
-        return String.join(
-                "|",
-                ROUTING_RECORD_VERSION,
-                normalizeRoutingState(state),
-                routingGeneration,
-                String.valueOf(physicalShardCount)
-        );
-    }
-
-    private String normalizeRoutingState(String state) {
-        String normalized = Objects.requireNonNull(state, "state").trim().toUpperCase(Locale.ROOT);
-        if (!"ACTIVE".equals(normalized) && !"DRAINING".equals(normalized)) {
-            throw new IllegalArgumentException("Invalid Commerce routing state: " + state);
-        }
-        return normalized;
-    }
 }

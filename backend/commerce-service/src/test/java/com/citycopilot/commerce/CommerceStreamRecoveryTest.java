@@ -326,9 +326,9 @@ class CommerceStreamRecoveryTest {
         var durable = mock(CommerceAdmissionDurabilityService.class);
         var recovery = new CommerceOrderRecoveryStore(jdbc);
         var orders = new CommerceOrderService(jdbc, redis, transactions, json, durable,
-                keyspace, null, null, recovery);
+                keyspace, recovery, mock(PlaceAuthorityClient.class));
         CommerceOrderStreamWorker service = new CommerceOrderStreamWorker(jdbc, redis, transactions, json,
-                durable, keyspace, null, orders, mock(CommerceOrderAdmissionService.class), recovery,
+                durable, keyspace, orders, mock(CommerceOrderAdmissionService.class), recovery,
                 "test", enabled, batchSize, 10);
         return new Fixture(jdbc, redis, stream, service);
     }

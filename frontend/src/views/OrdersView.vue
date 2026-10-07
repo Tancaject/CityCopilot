@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { AlertCircle, Clock, CreditCard, Loader2, ReceiptText, RefreshCw, Store, Ticket, Undo2 } from '@lucide/vue';
 import { cancelVoucherOrder, fetchMyVoucherOrders, fetchVoucherOrder, payVoucherOrder, refundVoucherOrder } from '../api/citycopilot';
@@ -21,6 +21,8 @@ const payingId = ref<string | null>(null);
 const refundingId = ref<string | null>(null);
 const hasMore = ref(true);
 const errorMessage = ref('');
+const paymentMessage = ref('');
+let paymentPollTimer: number | undefined;
 const pendingOrderAction = ref<{ type: OrderAction; order: VoucherOrder } | null>(null);
 
 const highlightedOrderId = computed(() => {
@@ -177,17 +179,44 @@ async function cancelOrder(order: VoucherOrder) {
 }
 
 async function handlePay(order: VoucherOrder) {
-  if (!canPay(order)) {
+  if (!canPay(order) || payingId.value) {
     return;
   }
   payingId.value = order.id;
   errorMessage.value = '';
+  paymentMessage.value = '正在发起模拟支付';
   try {
     const updated = await payVoucherOrder(order.id);
+    if (payingId.value !== order.id) return;
     updateOrder(updated);
+    paymentMessage.value = '支付已发起，正在等待渠道回调';
+    await pollPayment(order.id);
   } catch (error) {
     errorMessage.value = getErrorMessage(error, '支付失败');
-  } finally {
+    paymentMessage.value = '';
+    payingId.value = null;
+  }
+}
+
+async function pollPayment(orderId: string, attempt = 0) {
+  try {
+    const updated = await fetchVoucherOrder(orderId);
+    if (payingId.value !== orderId) return;
+    updateOrder(updated);
+    if (updated.state !== 'unpaid') {
+      paymentMessage.value = updated.state === 'paid'
+        ? '渠道回调已确认，支付成功'
+        : `订单当前状态：${updated.statusText}。已关单的迟到支付会自动退款。`;
+      payingId.value = null;
+    } else if (attempt >= 10) {
+      paymentMessage.value = '支付结果尚未确认，请稍后刷新订单查看';
+      payingId.value = null;
+    } else {
+      paymentPollTimer = window.setTimeout(() => { void pollPayment(orderId, attempt + 1); }, 1000);
+    }
+  } catch (error) {
+    paymentMessage.value = '';
+    errorMessage.value = getErrorMessage(error, '支付结果查询失败，请刷新订单查看');
     payingId.value = null;
   }
 }
@@ -214,6 +243,10 @@ async function refundOrder(order: VoucherOrder) {
 }
 
 onMounted(loadOrders);
+onUnmounted(() => {
+  window.clearTimeout(paymentPollTimer);
+  payingId.value = null;
+});
 
 watch(
   () => route.query.highlight,
@@ -247,6 +280,8 @@ watch(
       </button>
     </section>
 
+    <p v-if="paymentMessage" class="notice" role="status">{{ paymentMessage }}</p>
+
     <div v-if="loading" class="loading-row orders-loading">
       <Loader2 class="spin" :size="18" aria-hidden="true" />
       正在加载订单
@@ -270,7 +305,7 @@ watch(
                 {{ order.statusText || '状态待确认' }}
               </span>
             </div>
-            <p>{{ order.voucherSubTitle || order.voucherRules || '系统正在同步订单信息' }}</p>
+            <p v-if="order.voucherSubTitle || order.voucherRules">{{ order.voucherSubTitle || order.voucherRules }}</p>
             <div class="order-meta">
               <span>
                 <Ticket :size="15" aria-hidden="true" />
@@ -294,10 +329,10 @@ watch(
           <RouterLink v-if="order.shopId" :to="{ name: 'shop-detail', params: { id: order.shopId } }">
             查看店铺
           </RouterLink>
-          <button v-if="canPay(order)" type="button" :disabled="payingId === order.id" @click="handlePay(order)">
+          <button v-if="canPay(order)" type="button" :disabled="payingId !== null" @click="handlePay(order)">
             <Loader2 v-if="payingId === order.id" class="spin" :size="14" aria-hidden="true" />
             <CreditCard v-else :size="14" aria-hidden="true" />
-            模拟支付
+            {{ payingId === order.id ? '等待支付回调' : '发起模拟支付' }}
           </button>
           <button v-if="canCancel(order)" type="button" :disabled="cancelingId === order.id" @click="handleCancel(order)">
             <Loader2 v-if="cancelingId === order.id" class="spin" :size="14" aria-hidden="true" />

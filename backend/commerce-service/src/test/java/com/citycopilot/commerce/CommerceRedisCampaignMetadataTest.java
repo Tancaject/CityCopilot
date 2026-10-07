@@ -110,8 +110,6 @@ class CommerceRedisCampaignMetadataTest {
 
         assertThat(lua).contains("redis.call('time')")
                 .contains("'hmget', KEYS[1]")
-                .contains("redis.call('get', KEYS[8]) ~= ARGV[6]")
-                .contains("return 11")
                 .contains("beginEpochMillis")
                 .contains("endEpochMillis");
     }

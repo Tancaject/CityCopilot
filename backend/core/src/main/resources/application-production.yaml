@@ -37,8 +37,6 @@ spring:
 
 citycopilot:
   projection:
-    outbox-enabled: true
-    legacy-after-commit-enabled: false
     roles:
       api-enabled: "${CITYCOPILOT_ROLE_API_ENABLED:true}"
       projector-enabled: "${CITYCOPILOT_ROLE_PROJECTOR_ENABLED:false}"
@@ -60,6 +58,3 @@ management:
           include: livenessState,ping
         readiness:
           include: readinessState,db,redis
-  health:
-    elasticsearch:
-      enabled: false

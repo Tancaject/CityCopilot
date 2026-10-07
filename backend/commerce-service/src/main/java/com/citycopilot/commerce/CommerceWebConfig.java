@@ -36,6 +36,6 @@ public class CommerceWebConfig implements WebMvcConfigurer {
     /** 仅拦截 Commerce 业务路径；Actuator 等端点不经过该路径规则。 */
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(deadline).addPathPatterns("/commerce/**").order(0);
+        registry.addInterceptor(deadline).addPathPatterns("/commerce/**", "/payment-callbacks/**").order(0);
     }
 }

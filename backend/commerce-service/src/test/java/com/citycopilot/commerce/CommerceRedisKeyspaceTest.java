@@ -23,7 +23,6 @@ class CommerceRedisKeyspaceTest {
                 keyspace.idempotency(voucherId, 7L, "request-1"),
                 keyspace.fence(voucherId),
                 keyspace.inflight(voucherId),
-                keyspace.admissionRoutingGate(voucherId),
                 keyspace.compensationMarker(voucherId, "g1:10:1-0")
         );
 
@@ -77,21 +76,6 @@ class CommerceRedisKeyspaceTest {
                 .isNotEqualTo(keyspace.globalIdempotency(7L, "request-key"));
         assertThat(keyspace.idempotency(42L, 7L, "Request-Key"))
                 .isNotEqualTo(keyspace.idempotency(42L, 7L, "request-key"));
-    }
-
-    @Test
-    void routingControlAndShardGateValuesEncodeTheImmutableFingerprint() {
-        CommerceRedisKeyspace keyspace = new CommerceRedisKeyspace(4, "g1");
-
-        assertThat(keyspace.routingControlValue("ACTIVE", "revision01"))
-                .isEqualTo("v1|ACTIVE|g1|4|revision01");
-        assertThat(keyspace.activeAdmissionGateValue())
-                .isEqualTo("v1|ACTIVE|g1|4");
-        assertThat(keyspace.drainingAdmissionGateValue())
-                .isEqualTo("v1|DRAINING|g1|4");
-        assertThat(keyspace.admissionRoutingGates())
-                .hasSize(4)
-                .allSatisfy(gate -> assertThat(gate).endsWith(":runtime:routing-gate"));
     }
 
     private String hashTag(String key) {

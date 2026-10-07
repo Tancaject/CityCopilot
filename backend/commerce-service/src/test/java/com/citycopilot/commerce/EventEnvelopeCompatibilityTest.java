@@ -39,7 +39,7 @@ class EventEnvelopeCompatibilityTest {
     void typedBookingPayloadKeepsOptionalAttributionAndTimestampShape() throws Exception {
         BookingChangedEvent payload = new BookingChangedEvent("42", "7", "9", "1", "2", 2, 2,
                 "HELD", 0, Instant.parse(AT), Instant.parse(AT).plusSeconds(3600),
-                Map.of("currency", "CNY", "total", 200), null, null, null, 9);
+                Map.of("currency", "CNY", "total", 200), null, null, 9);
         EventEnvelope<BookingChangedEvent> event = new EventEnvelope<>(ID, "commerce.booking.held", 1,
                 "commerce_booking", "42", 0, "commerce-service", AT, "42", payload);
         byte[] body = json.writeValueAsBytes(event);

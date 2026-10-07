@@ -26,7 +26,6 @@ class CommerceFacadeDelegationTest {
         CommercePortClient port = mock(CommercePortClient.class);
         VoucherOrderServiceImpl facade = new VoucherOrderServiceImpl(port);
         Result expected = Result.ok("commerce");
-        when(port.seckill(10L, null)).thenReturn(expected);
         when(port.seckill(10L, "request-1")).thenReturn(expected);
         when(port.myOrders(2)).thenReturn(expected);
         when(port.order(99L, false)).thenReturn(expected);
@@ -36,7 +35,6 @@ class CommerceFacadeDelegationTest {
         when(port.transition(99L, "use", null, true)).thenReturn(expected);
         when(port.transition(99L, "refund", null, false)).thenReturn(expected);
 
-        assertThat(facade.seckillVoucher(10L)).isSameAs(expected);
         assertThat(facade.seckillVoucher(10L, "request-1")).isSameAs(expected);
         assertThat(facade.queryMyOrders(2)).isSameAs(expected);
         assertThat(facade.queryOrder(99L)).isSameAs(expected);
@@ -46,7 +44,6 @@ class CommerceFacadeDelegationTest {
         assertThat(facade.useOrder(99L)).isSameAs(expected);
         assertThat(facade.refundOrder(99L)).isSameAs(expected);
 
-        verify(port).seckill(10L, null);
         verify(port).seckill(10L, "request-1");
         verify(port).myOrders(2);
         verify(port).order(99L, false);
@@ -61,8 +58,8 @@ class CommerceFacadeDelegationTest {
     void voucherFacadeDelegatesReadsAndWritesToCommerce() {
         CommercePortClient port = mock(CommercePortClient.class);
         VoucherServiceImpl facade = new VoucherServiceImpl(port);
-        VoucherRequest voucher = new VoucherRequest().setId(12L);
-        Map<String, Object> voucherPayload = Map.of("id", 12L);
+        VoucherRequest voucher = new VoucherRequest().setId(12L).setTitle("coffee");
+        Map<String, Object> voucherPayload = Map.of("title", "coffee");
         Result expected = Result.ok("commerce");
         when(port.vouchers(3L, false, null, null)).thenReturn(expected);
         when(port.vouchers(3L, true, "coffee", 1)).thenReturn(expected);
@@ -84,10 +81,11 @@ class CommerceFacadeDelegationTest {
     }
 
     @Test
-    void consistencyAndRecoveryToolsDelegateToCommerce() {
+    void consistencyAndRecoveryDelegateToCommerceAndAuditWrites() {
         CommercePortClient port = mock(CommercePortClient.class);
-        SeckillConsistencyService consistency = new SeckillConsistencyService(port);
-        SeckillRecoveryService recovery = new SeckillRecoveryService(port);
+        OperationLogService audit = mock(OperationLogService.class);
+        SeckillConsistencyService consistency = new SeckillConsistencyService(port, audit);
+        SeckillRecoveryService recovery = new SeckillRecoveryService(port, audit);
         Map<String, Object> snapshot = Map.of(
                 "redisStock", 8,
                 "expectedRedisStock", 8,
@@ -106,16 +104,6 @@ class CommerceFacadeDelegationTest {
         when(port.replayDeadLetter("1-0")).thenReturn(replay);
 
         assertThat(consistency.snapshot(7L)).isSameAs(snapshot);
-        assertThat(consistency.previewRepair(7L))
-                .containsEntry("targetRedisStock", 8)
-                .containsEntry("blocked", false)
-                .containsEntry("evidenceHash", "hash-1");
-        Map<String, Object> missingRedisStock = new java.util.LinkedHashMap<>(snapshot);
-        missingRedisStock.put("redisStock", null);
-        when(port.consistency(8L)).thenReturn(missingRedisStock);
-        assertThat(consistency.previewRepair(8L))
-                .containsEntry("currentRedisStock", null)
-                .containsEntry("targetRedisStock", 8);
         assertThat(consistency.repairStock(7L, "hash-1")).isSameAs(repair);
         assertThat(consistency.verify(7L)).isSameAs(verification);
         assertThat(recovery.listDeadLetters(5)).isSameAs(deadLetters);
@@ -125,6 +113,8 @@ class CommerceFacadeDelegationTest {
         verify(port).verifyConsistency(7L);
         verify(port).deadLetters(5);
         verify(port).replayDeadLetter("1-0");
+        verify(audit).record("seckill", "stock_repair", "voucher", 7L, "7", "hash-1", repair, true, null);
+        verify(audit).record("seckill", "dead_letter_replay", "dead_letter", null, "1-0", null, replay, true, null);
         assertThatThrownBy(() -> consistency.snapshot(0L))
                 .isInstanceOf(IllegalArgumentException.class);
     }

@@ -6,11 +6,8 @@ import com.citycopilot.commerce.CommerceOutboxArchive;
 import com.citycopilot.commerce.PlaceAuthorityClient;
 import com.citycopilot.commerce.pricing.BookingPricingService;
 import com.citycopilot.commerce.pricing.BookingQuoteCleanup;
-import com.citycopilot.commerce.pricing.BookableOptionsQueryService;
-import com.citycopilot.contract.booking.BookingPlanContracts.BatchRequest;
 import com.citycopilot.contract.booking.BookingContracts.*;
 import com.citycopilot.contract.booking.PricingContracts.*;
-import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -390,10 +387,10 @@ class BookingLifecycleIT {
         sql.update("UPDATE commerce_booking SET hold_expires_at=UTC_TIMESTAMP(3)-INTERVAL 1 SECOND WHERE id=?", held.id());
         race(2, i -> {
             if (i == 0) return first.confirm(1, held.id(), "late-confirm", new ActionRequest(held.version(), null, null));
-            second.expireDue();
+            second.expireDue(Runnable::run);
             return null;
         });
-        first.expireDue();
+        first.expireDue(Runnable::run);
         assertEquals("HOLD_EXPIRED", first.booking(held.id(), 1).status());
         assertEquals(0, occupied(slot));
 
@@ -523,7 +520,7 @@ class BookingLifecycleIT {
         var booking = confirm(1, resource, slot, 4);
         // Simulate a persisted timer becoming due, then restart processing using the second service instance.
         sql.update("UPDATE commerce_booking_reminder SET due_at=UTC_TIMESTAMP(3)-INTERVAL 1 SECOND WHERE booking_id=?", booking.id());
-        second.deliverDueReminders();
+        second.deliverDueReminders(Runnable::run);
         var notice = first.notices(1).get(0);
         first.readNotice(1, Long.parseLong(notice.id()));
         assertNotNull(first.notices(1).get(0).readAt());
@@ -534,8 +531,8 @@ class BookingLifecycleIT {
         assertEquals(1, sql.queryForObject("SELECT COUNT(*) FROM commerce_booking_reminder WHERE booking_id=? AND status='PENDING' AND schedule_version=?",
                 Integer.class, booking.id(), moved.scheduleVersion()));
         sql.update("UPDATE commerce_booking SET start_at=UTC_TIMESTAMP(3)-INTERVAL 2 HOUR,end_at=UTC_TIMESTAMP(3)-INTERVAL 1 HOUR WHERE id=?", booking.id());
-        first.expireDue();
-        second.expireDue();
+        first.expireDue(Runnable::run);
+        second.expireDue(Runnable::run);
         assertEquals("NO_SHOW", first.booking(booking.id(), 1).status());
         assertEquals(4, occupied(target));
         assertTrue(first.notices(1).isEmpty());
@@ -687,7 +684,7 @@ class BookingLifecycleIT {
         var held = first.hold(1, "old-priced", pricedHold(resource, oldSlot, 3, quoted)).booking();
         var original = first.confirm(1, held.id(), "old-priced-confirm", new ActionRequest(held.version(), null, null)).booking();
         var moveQuote = pricing.quote(1, new QuoteRequest(resource.id(), target.id(), 4, offer.id(), "AUTO", List.of(), "RESCHEDULE",
-                original.id(), original.version(), "WEB", null, "acceptance"));
+                original.id(), original.version(), "WEB", "acceptance"));
         var competitorQuote = quote(2, resource, target, offer, 1);
         var competitor = second.hold(2, "competitor", pricedHold(resource, target, 1, competitorQuote)).booking();
         reject(() -> first.reschedule(1, original.id(), "move-full",
@@ -733,35 +730,6 @@ class BookingLifecycleIT {
     }
 
     @Test
-    void batchFiltersAllCandidateDiscountsBeforeTakingFiveAndDoesNotInventOnSitePrices() {
-        for (int index = 0; index < 5; index++) {
-            var expensive = resource("DINING_POOL", 20L, 8);
-            slot(expensive, tomorrow, 10);
-            offer(expensive, 10_000);
-        }
-        var affordable = resource("DINING_POOL", 20L, 8);
-        slot(affordable, tomorrow, 10);
-        offer(affordable, 5000);
-        claim(1, affordable, "batch-discount", "CASH", 0, 3000, 0);
-        var onSite = resource("DINING_POOL", 20L, 8);
-        slot(onSite, tomorrow, 10);
-        var query = new BookableOptionsQueryService(sql, new TransactionTemplate(new DataSourceTransactionManager(firstPool)),
-                pricing, new BookingPolicy(60, 14, 120, 1, 3, 8, 30, 15, 30, "Asia/Shanghai", "test", true));
-        var result = query.query(1, new BatchRequest(List.of("20"), "DINING_POOL", tomorrow, tomorrow.plus(1, ChronoUnit.HOURS),
-                4, 17_000L, "batch-budget", null));
-        assertEquals(1, result.options().size());
-        assertEquals(affordable.id(), result.options().get(0).resource().id());
-        assertEquals(17_000L, result.options().get(0).quote().totalCents());
-        assertEquals(1, count("commerce_booking_quote"));
-        assertEquals(0, count("commerce_booking"));
-        assertEquals(0, sql.queryForObject("SELECT SUM(occupied) FROM commerce_booking_slot", Integer.class));
-        var noBudget = query.query(2, new BatchRequest(List.of("20"), "DINING_POOL", tomorrow, tomorrow.plus(1, ChronoUnit.HOURS),
-                4, null, "batch-no-budget", null));
-        assertEquals(5, noBudget.options().size());
-        assertEquals(6, count("commerce_booking_quote"));
-    }
-
-    @Test
     void sameCouponCannotBindTwoConfirmedBookingsAndExpiryCannotTransferIt() {
         var resource = resource("COURT", 10L, 4);
         var oldSlot = slot(resource, tomorrow, 1);
@@ -777,7 +745,7 @@ class BookingLifecycleIT {
         assertEquals("BOOKING_COUPON_UNAVAILABLE", rejected.code());
         assertEquals(0, occupied(target));
         var move = pricing.quote(1, new QuoteRequest(resource.id(), target.id(), 2, offer.id(), "AUTO", List.of(), "RESCHEDULE",
-                confirmed.id(), confirmed.version(), "WEB", null, "coupon-expiry"));
+                confirmed.id(), confirmed.version(), "WEB", "coupon-expiry"));
         sql.update("UPDATE commerce_user_booking_coupon SET expires_at=UTC_TIMESTAMP(3)-INTERVAL 1 SECOND WHERE id=?", coupon.id());
         var expired = assertThrows(CommerceApiException.class, () -> second.reschedule(1, confirmed.id(), "expired-transfer",
                 new RescheduleRequest(confirmed.version(), resource.id(), target.id(), 2, move.quoteId())));
@@ -808,11 +776,11 @@ class BookingLifecycleIT {
 
     private QuoteView quote(long user, ResourceView resource, SlotView slot, OfferView offer, int party) {
         return pricing.quote(user, new QuoteRequest(resource.id(), slot.id(), party, offer.id(), "AUTO", List.of(), "CREATE",
-                null, null, "WEB", null, "acceptance"));
+                null, null, "WEB", "acceptance"));
     }
 
     private HoldRequest pricedHold(ResourceView resource, SlotView slot, int party, QuoteView quote) {
-        return new HoldRequest(resource.id(), slot.id(), party, quote.quoteId(), quote.source(), quote.impressionId(), quote.requestId());
+        return new HoldRequest(resource.id(), slot.id(), party, quote.quoteId(), quote.source(), quote.requestId());
     }
 
     private String couponStatus(CouponView coupon) {
@@ -825,7 +793,7 @@ class BookingLifecycleIT {
     }
 
     private HoldRequest holdRequest(ResourceView resource, SlotView slot, int party) {
-        return new HoldRequest(resource.id(), slot.id(), party, null, "WEB", null, "acceptance");
+        return new HoldRequest(resource.id(), slot.id(), party, null, "WEB", "acceptance");
     }
 
     private MutationResult hold(BookingService service, long user, String key, ResourceView resource, SlotView slot, int party) {

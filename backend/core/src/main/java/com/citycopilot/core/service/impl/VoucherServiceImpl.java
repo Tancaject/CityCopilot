@@ -60,15 +60,6 @@ public class VoucherServiceImpl implements IVoucherService {
         return commercePortClient.updateVoucher(id, Map.of("status", status));
     }
 
-    @Override
-    public void addSeckillVoucher(VoucherRequest voucher) {
-        voucher.setType(1);
-        Result result = createVoucher(voucher);
-        if (!Boolean.TRUE.equals(result.getSuccess())) {
-            throw new IllegalArgumentException(result.getErrorMsg());
-        }
-    }
-
     /**
      * 将 Core DTO 转成 Commerce 接口接受的稀疏字段映射。
      *
@@ -77,7 +68,6 @@ public class VoucherServiceImpl implements IVoucherService {
      */
     private Map<String, Object> voucherPayload(VoucherRequest voucher) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        putIfPresent(payload, "id", voucher.getId());
         putIfPresent(payload, "shopId", voucher.getShopId());
         putIfPresent(payload, "title", voucher.getTitle());
         putIfPresent(payload, "subTitle", voucher.getSubTitle());

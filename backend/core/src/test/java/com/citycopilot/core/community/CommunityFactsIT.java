@@ -157,11 +157,6 @@ class CommunityFactsIT {
         follows.follow(2L, true);
         follows.follow(3L, true);
         assertEquals(2, count("SELECT COUNT(*) FROM user_follow WHERE user_id=1"));
-        login(4);
-        follows.follow(2L, true);
-        List<?> common = (List<?>) follows.followCommons(1L).getData();
-        assertEquals(2L, ((UserDTO) common.get(0)).getId());
-        login(1);
         for (long id = 200; id < 207; id++) note(id, 2);
         sql.update("UPDATE note SET create_time='2026-01-01 12:00:00'");
         Set<Long> seen = new HashSet<>();

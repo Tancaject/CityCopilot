@@ -11,10 +11,10 @@
 
 - `commerce-service` 拥有 coupon、seckill、reservation、order、outbox、inbox 数据以及业务 Redis key。
 - `place-service` 仅在指标触发后抽出，拥有 shop、shop_type、GEO 和地理批任务。
-- Place 公开读取由既有服务映射为 [`ShopViewDTO`](../../backend/core/src/main/java/com/citycopilot/core/dto/ShopViewDTO.java) 与 [`ShopTypeDTO`](../../backend/core/src/main/java/com/citycopilot/core/dto/ShopTypeDTO.java)：详情和旧版附近接口保留原店铺字段；无坐标分类查询保留原分页载体与元数据，名称和附近查询仍返回列表；统一发现继续使用独立的 `ShopDiscoveryItemDTO`。分类字典的缓存仍使用既有存储格式，公开视图不带原本隐藏的审计时间。Shop 写入请求和 GEO 更新写接口不因读取视图调整而改变。
+- Place 公开读取由既有服务映射为 [`ShopViewDTO`](../../backend/core/src/main/java/com/citycopilot/core/dto/ShopViewDTO.java) 与 [`ShopTypeDTO`](../../backend/core/src/main/java/com/citycopilot/core/dto/ShopTypeDTO.java)：详情保留原店铺字段；无坐标分类查询保留原分页载体与元数据，名称和附近查询仍返回列表；统一发现继续使用独立的 `ShopDiscoveryItemDTO`。分类字典的缓存仍使用既有存储格式，公开视图不带原本隐藏的审计时间。Shop 写入请求和 GEO 更新写接口不因读取视图调整而改变。
 - Place 的 `IShopService`、`IShopTypeService` 不继承 MyBatis `IService`，控制器通过权威店铺视图、当前用户可管理预约店铺、分类读取和统计方法访问数据；不向调用方暴露 Query/Wrapper/Page builder。内部发现与批量 GEO 实现直接使用 Place 的既有 Mapper，坐标写入继续经过店铺服务的权限、事务、缓存和投影链。Shop 写请求暂保留既有实体字段及稀疏更新语义；这一步不声称完全消除所有持久化类型，也不改变工具版本。
 - `core-service` 保留 Identity、Community 和外部兼容 API；订单、优惠券、一致性及死信能力仅通过 Commerce facade 调用，不保留运行时本地 writer 回退。
-- Identity 公开响应使用独立视图：基础用户与会话沿用 `UserDTO`，扩展资料由现有资料服务映射为 [`UserProfileDTO`](../../backend/core/src/main/java/com/citycopilot/core/dto/UserProfileDTO.java)。资料不存在仍返回空数据，审计时间不外传；实体新增字段不会自动加入该公开响应。Identity 的业务接口不继承 MyBatis `IService`：单用户和 Community 批量作者读取返回 `UserDTO`；后台分页和角色变更通过明确的业务方法执行。角色校验、更新、会话撤销和审计保留原有顺序与失败语义，不因下沉到服务层增加事务。
+- Identity 公开响应使用独立视图：基础用户与会话沿用 `UserDTO`。Identity 的业务接口不继承 MyBatis `IService`：单用户和 Community 批量作者读取返回 `UserDTO`；后台分页和角色变更通过明确的业务方法执行。角色校验、更新、会话撤销和审计保留原有顺序与失败语义，不因下沉到服务层增加事务。
 - 服务使用独立 schema 账号；禁止跨服务私表访问、跨库 Join 和数据库外键。
 - 同步查询/命令使用版本化 HTTP；已发生事实使用 RocketMQ 事件。
 - 共享交易边界使用 [`CommerceContracts`](../../backend/contracts/src/main/java/com/citycopilot/contract/commerce/CommerceContracts.java) 的请求和结果类型，不共享持久化实体。准入、订单概览与详情、订单动作、一致性修复和错误响应由同一契约定义；Core 只做外部 API 适配。类型化不得改变现有 HTTP 状态、业务码、幂等身份和证据哈希；订单 ID 在传输层保持字符串，金额使用整数分，日期保留现有 HTTP 编码。订单详情的 `inventoryRecovery` 仅在返库存待恢复或需人工修复时有值；客户端兼容可选字段缺失或为 null，以及响应新增字段。

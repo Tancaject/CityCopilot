@@ -8,7 +8,7 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
 /**
  * Core 服务启动入口。
  *
- * <p>Core 提供用户、店铺、内容、地理和内部 Tool API，是前端及 Agent/MCP 的统一入口；
+ * <p>Core 提供用户、店铺、内容和地理 API，是前端的统一入口；
  * 优惠券和订单写入继续委托给 Commerce 单写者。</p>
  */
 @EnableAspectJAutoProxy(exposeProxy = true)

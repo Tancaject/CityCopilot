@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -24,8 +25,7 @@ import java.util.UUID;
 /**
  * Commerce 运维查询与人工恢复服务。
  *
- * <p>提供汇总、死信重放和准入修复重排；所有会改变业务状态的操作都参与路由写租约，
- * 并把操作者与结果写入 Outbox 审计事件。</p>
+ * <p>提供汇总、死信重放和准入修复重排；会改变业务状态的操作把操作者与结果写入 Outbox 审计事件。</p>
  */
 @Service
 public class CommerceOperationsService {
@@ -35,38 +35,24 @@ public class CommerceOperationsService {
     private final CommerceOrderAdmissionService orders;
     /** 解析死信载荷并序列化审计事件。 */
     private final ObjectMapper objectMapper;
-    /** 确认当前路由仍允许业务写。 */
-    private final CommerceRoutingGuard routing;
     /** 管理持久化准入的人工修复状态。 */
     private final CommerceAdmissionDurabilityService admissions;
-    /** 让运维写与路由排空互斥；测试构造可为空。 */
-    private final CommerceRuntimeMutationLeases runtimeLeases;
+    /** 死信重放只把重放标记和审计放进同一个短事务。 */
+    private final TransactionTemplate transactions;
 
     @Autowired
     public CommerceOperationsService(
             JdbcTemplate jdbc,
             CommerceOrderAdmissionService orders,
             ObjectMapper objectMapper,
-            CommerceRoutingGuard routing,
             CommerceAdmissionDurabilityService admissions,
-            CommerceRuntimeMutationLeases runtimeLeases
+            TransactionTemplate transactions
     ) {
         this.jdbc = jdbc;
         this.orders = orders;
         this.objectMapper = objectMapper;
-        this.routing = routing;
         this.admissions = admissions;
-        this.runtimeLeases = runtimeLeases;
-    }
-
-    CommerceOperationsService(
-            JdbcTemplate jdbc,
-            CommerceOrderAdmissionService orders,
-            ObjectMapper objectMapper,
-            CommerceRoutingGuard routing,
-            CommerceAdmissionDurabilityService admissions
-    ) {
-        this(jdbc, orders, objectMapper, routing, admissions, null);
+        this.transactions = transactions;
     }
 
     /**
@@ -140,15 +126,16 @@ public class CommerceOperationsService {
     }
 
     /**
-     * 在事务中重放死信准入并记录审计事件。
+     * 重放死信准入并记录审计事件。
+     *
+     * <p>准入不能放进外层事务：Redis Lua 一旦写入就无法回滚，账本 ACCEPTED 必须像普通秒杀一样
+     * 先独立提交。之后只把重放标记和审计放进短事务；它失败时可用同一死信重试，准入幂等重放。</p>
      *
      * @param sourceId 死信/恢复记录的稳定来源 ID
      * @param actor 运维操作者标识
      * @return 重放结果；已重放时幂等返回 {@code already_replayed}
      */
-    @Transactional
     public DeadLetterReplayResult replayDeadLetter(String sourceId, String actor) {
-        beginTransactionalMutation();
         if (sourceId == null || sourceId.isBlank()) {
             throw new CommerceApiException(
                     "COMMERCE_INVALID_ARGUMENT",
@@ -190,7 +177,6 @@ public class CommerceOperationsService {
         String idempotencyKey = payload.get("idempotencyKey") == null
                 ? "dead-letter-order:" + orderId
                 : String.valueOf(payload.get("idempotencyKey"));
-        routing.requireAdmissionActive(voucherId);
         // 复用原 orderId、userId、voucherId 和幂等键，避免“修复”变成一笔新订单。
         Map<String, Object> accepted = orders.replayAdmission(
                 orderId,
@@ -198,15 +184,19 @@ public class CommerceOperationsService {
                 userId,
                 idempotencyKey
         );
-        int marked = jdbc.update("""
-                UPDATE commerce_dead_letter
-                SET replayed_at=CURRENT_TIMESTAMP(3)
-                WHERE source_id=? AND replayed_at IS NULL
-                """, sourceId);
-        if (marked != 1) {
+        Boolean marked = transactions.execute(status -> {
+            int changed = jdbc.update("""
+                    UPDATE commerce_dead_letter
+                    SET replayed_at=CURRENT_TIMESTAMP(3)
+                    WHERE source_id=? AND replayed_at IS NULL
+                    """, sourceId);
+            if (changed != 1) return false;
+            appendReplayAudit(sourceId, orderId, voucherId, userId, actor);
+            return true;
+        });
+        if (!Boolean.TRUE.equals(marked)) {
             return alreadyReplayed(sourceId);
         }
-        appendReplayAudit(sourceId, orderId, voucherId, userId, actor);
         // 原 HTTP 响应的 status 一直是重放状态；completed 分支只透传订单 version。
         return new DeadLetterReplayResult("replayed", sourceId, (String) accepted.get("orderId"),
                 (String) accepted.get("state"), (String) accepted.get("code"),
@@ -223,7 +213,6 @@ public class CommerceOperationsService {
      */
     @Transactional
     public AdmissionRepairRequeued requeueAdmissionRepair(long orderId, String actor) {
-        beginTransactionalMutation();
         if (orderId <= 0) {
             throw new CommerceApiException(
                     "COMMERCE_INVALID_ARGUMENT",
@@ -253,23 +242,6 @@ public class CommerceOperationsService {
                     "Dead-letter payload cannot be replayed",
                     409
             );
-        }
-    }
-
-    /**
-     * 为当前事务取得运行时写租约，并注册事务完成后释放。
-     *
-     * <p>先取租约再检查路由，避免排空任务与新事务交错；若检查失败立即释放。</p>
-     */
-    private void beginTransactionalMutation() {
-        if (runtimeLeases == null) return;
-        CommerceRuntimeMutationLeases.MutationLease lease = runtimeLeases.acquireMutation();
-        try {
-            routing.requireRuntimeMutationActive();
-            runtimeLeases.releaseAfterTransaction(lease);
-        } catch (RuntimeException failure) {
-            lease.close();
-            throw failure;
         }
     }
 

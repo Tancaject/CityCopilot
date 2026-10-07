@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { AlertCircle, ArrowLeft, BadgeCheck, CheckCircle2, Clock, Loader2, MapPin, RefreshCw, Star, Ticket } from '@lucide/vue';
 import { fetchShop, fetchVoucherOrder, fetchVouchers, seckillVoucher } from '../api/citycopilot';
+import { ApiError } from '../api/client';
 import { authState } from '../composables/auth';
 import ShopMapPanel from '../components/ShopMapPanel.vue';
 import BookingChooser from '../components/BookingChooser.vue';
@@ -31,6 +32,8 @@ const feedbackVoucherId = ref<number | null>(null);
 const feedbackState = ref<'idle' | 'submitting' | 'processing' | 'success' | 'error'>('idle');
 const claimedVoucherId = ref<number | null>(null);
 let orderPollTimer: number | undefined;
+const rateLimited = ref(false);
+let rateLimitTimer: number | undefined;
 
 const gallery = computed(() => {
   if (!shop.value?.images) {
@@ -121,6 +124,7 @@ function voucherState(voucher: Voucher) {
 }
 
 function voucherButtonText(voucher: Voucher) {
+  if (rateLimited.value) return '请稍后重试';
   if (!voucher.type) {
     return '暂未开放';
   }
@@ -171,7 +175,8 @@ function isVoucherDisabled(voucher: Voucher) {
     return true;
   }
   return (
-    voucherState(voucher) !== 'available'
+    rateLimited.value
+    || voucherState(voucher) !== 'available'
     || orderingId.value === voucher.id
     || isVoucherPending(voucher)
     || claimedVoucherId.value === voucher.id
@@ -202,6 +207,11 @@ async function handleVoucher(voucher: Voucher) {
   } catch (error) {
     feedbackState.value = 'error';
     orderMessage.value = getErrorMessage(error, '抢购失败');
+    if (error instanceof ApiError && error.status === 429 && error.retryAfterSeconds !== undefined) {
+      rateLimited.value = true;
+      window.clearTimeout(rateLimitTimer);
+      rateLimitTimer = window.setTimeout(() => { rateLimited.value = false; }, error.retryAfterSeconds * 1000);
+    }
   } finally {
     orderingId.value = null;
   }
@@ -236,7 +246,10 @@ async function pollOrder(orderId: string, voucherId: number, attempt = 0) {
 
 onMounted(loadShop);
 
-onUnmounted(clearOrderPolling);
+onUnmounted(() => {
+  clearOrderPolling();
+  window.clearTimeout(rateLimitTimer);
+});
 
 watch(
   () => props.id,

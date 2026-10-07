@@ -38,10 +38,7 @@ public class CommerceVoucherService {
     private final CommerceRedisInventoryBootstrap inventory;
     /** 管理同步准入所需的 Redis 活动元数据。 */
     private final CommerceRedisCampaignMetadata campaignMetadata;
-    /** 让业务写与路由排空互斥；测试构造可为空。 */
-    private final CommerceRuntimeMutationLeases runtimeLeases;
-    /** 确认写操作仍属于当前 ACTIVE 路由代际。 */
-    private final CommerceRoutingGuard routing;
+    private final CommerceReadCache readCache;
 
     @Autowired
     public CommerceVoucherService(
@@ -50,27 +47,16 @@ public class CommerceVoucherService {
             CommerceOrderIdGenerator ids,
             CommerceRedisInventoryBootstrap inventory,
             CommerceRedisCampaignMetadata campaignMetadata,
-            CommerceRuntimeMutationLeases runtimeLeases,
-            CommerceRoutingGuard routing
+            CommerceReadCache readCache
     ) {
         this.jdbc = jdbc;
         this.place = place;
         this.ids = ids;
         this.inventory = inventory;
         this.campaignMetadata = campaignMetadata;
-        this.runtimeLeases = runtimeLeases;
-        this.routing = routing;
+        this.readCache = readCache;
     }
 
-    CommerceVoucherService(
-            JdbcTemplate jdbc,
-            PlaceAuthorityClient place,
-            CommerceOrderIdGenerator ids,
-            CommerceRedisInventoryBootstrap inventory,
-            CommerceRedisCampaignMetadata campaignMetadata
-    ) {
-        this(jdbc, place, ids, inventory, campaignMetadata, null, null);
-    }
 
     /**
      * 查询指定店铺当前启用的 Voucher。
@@ -79,13 +65,13 @@ public class CommerceVoucherService {
      * @return 含秒杀库存和时间窗的 Voucher 列表
      */
     public List<VoucherView> list(long shopId) {
-        return jdbc.query("""
+        return readCache.vouchers(shopId, () -> jdbc.query("""
                 SELECT v.*,s.stock,s.begin_time,s.end_time
                 FROM commerce_voucher v
                 LEFT JOIN commerce_seckill_voucher s ON s.voucher_id=v.id
                 WHERE v.shop_id=? AND v.status=1
                 ORDER BY v.id
-                """, this::voucherRow, shopId);
+                """, this::voucherRow, shopId));
     }
 
     /**
@@ -114,17 +100,13 @@ public class CommerceVoucherService {
      */
     @Transactional
     public VoucherCreated create(Map<String, Object> request, long actorId, boolean admin) {
-        beginTransactionalMutation();
         long shopId = requiredLong(request, "shopId");
         Map<String, Object> authority = place.requireWriteAuthority(shopId, actorId, admin);
         validateCreate(request);
-        Long requestedId = optionalLong(request.get("id"));
-        if (requestedId != null && requestedId <= 0) {
-            invalid("id must be positive");
+        if (request.containsKey("id")) {
+            invalid("id is assigned by Commerce");
         }
-        long id = requestedId == null
-                ? ids.nextVoucherId()
-                : requestedId;
+        long id = ids.nextVoucherId();
         int type = number(request.get("type"), 0);
         jdbc.update("""
                 INSERT INTO commerce_voucher(
@@ -158,6 +140,7 @@ public class CommerceVoucherService {
                 campaignMetadata.refreshAfterCommit(id);
             });
         }
+        afterCommit(() -> readCache.invalidateVouchers(shopId));
         return new VoucherCreated(id);
     }
 
@@ -177,7 +160,6 @@ public class CommerceVoucherService {
             long actorId,
             boolean admin
     ) {
-        beginTransactionalMutation();
         Map<String, Object> existing = jdbc.queryForMap(
                 "SELECT * FROM commerce_voucher WHERE id=?",
                 id
@@ -225,6 +207,7 @@ public class CommerceVoucherService {
             // 捕获本次失效修订号；较旧事务的 afterCommit 无法覆盖更新后的活动元数据。
             afterCommit(() -> campaignMetadata.refreshAfterCommit(id, committedRevision));
         }
+        afterCommit(() -> readCache.invalidateVouchers(shopId));
         return jdbc.queryForObject("""
                 SELECT v.*,s.stock,s.begin_time,s.end_time
                 FROM commerce_voucher v
@@ -239,19 +222,6 @@ public class CommerceVoucherService {
             throw new CommerceApiException("COMMERCE_INVALID_ARGUMENT", key + " is required", 400);
         }
         return number;
-    }
-
-    /** 为当前事务获取运行时写租约，并在事务完成后释放。 */
-    private void beginTransactionalMutation() {
-        if (runtimeLeases == null) return;
-        CommerceRuntimeMutationLeases.MutationLease lease = runtimeLeases.acquireMutation();
-        try {
-            routing.requireRuntimeMutationActive();
-            runtimeLeases.releaseAfterTransaction(lease);
-        } catch (RuntimeException failure) {
-            lease.close();
-            throw failure;
-        }
     }
 
     private Long optionalLong(Object value) {

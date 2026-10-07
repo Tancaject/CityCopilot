@@ -48,7 +48,7 @@ class CommerceControllerOperationsTest {
                 mock(CommerceVoucherService.class),
                 mock(CommerceConsistencyService.class),
                 operations,
-                mock(CommerceRoutingGuard.class)
+                mock(CommercePaymentService.class)
         );
     }
 }

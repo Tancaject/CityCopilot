@@ -60,11 +60,11 @@ class CommerceOrderProcessingTest {
         var keyspace = new CommerceRedisKeyspace(1, "0");
         var recovery = new CommerceOrderRecoveryStore(jdbc);
         service = new CommerceOrderService(jdbc, redis, transactions, json, durableAdmissions,
-                keyspace, null, null, recovery);
-        admissions = new CommerceOrderAdmissionService(jdbc, ids, durableAdmissions, replicatedRedis,
-                keyspace, null, null);
+                keyspace, recovery, mock(PlaceAuthorityClient.class));
+        admissions = new CommerceOrderAdmissionService(jdbc, transactions, ids, durableAdmissions, replicatedRedis,
+                keyspace, mock(CommerceReadCache.class));
         worker = new CommerceOrderStreamWorker(jdbc, redis, transactions, json, durableAdmissions,
-                keyspace, null, service, admissions, recovery, "test", true, 10, 10);
+                keyspace, service, admissions, recovery, "test", true, 10, 10);
     }
 
     @Test
@@ -132,31 +132,12 @@ class CommerceOrderProcessingTest {
                 keys.capture(),
                 any(String[].class)
         );
-        assertThat(keys.getValue()).hasSize(8);
+        assertThat(keys.getValue()).hasSize(7);
         assertThat(keys.getValue())
                 .allSatisfy(key -> assertThat(String.valueOf(key))
                         .contains("{commerce:0:1:0}"));
         verify(durableAdmissions).markAccepted(preparedAdmission());
         verifyNoInteractions(jdbc, transactions);
-    }
-
-    @Test
-    void shardRoutingGateClosesAdmissionWhenCutoverStarts() {
-        when(durableAdmissions.prepare(
-                100L, 200L, "request-1", "seckill:v1:100", null
-        )).thenReturn(preparedAdmission());
-        when(replicatedRedis.reserveGlobalIdentity(anyString(), anyString()))
-                .thenAnswer(invocation -> invocation.getArgument(1));
-        when(replicatedRedis.executeReplicatedScript(
-                anyString(), anyString(), any(DefaultRedisScript.class),
-                anyList(), any(String[].class)
-        )).thenReturn(11L);
-
-        assertThatThrownBy(() -> admissions.seckill(100L, 200L, "request-1"))
-                .isInstanceOfSatisfying(
-                        CommerceApiException.class,
-                        error -> assertThat(error.code()).isEqualTo("COMMERCE_ROUTING_NOT_ACTIVE")
-                );
     }
 
     @Test
@@ -368,6 +349,8 @@ class CommerceOrderProcessingTest {
                 "transition:300:cancel:0",
                 300L,
                 100L,
+                200L,
+                true,
                 "expired-token"
         );
 

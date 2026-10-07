@@ -7,7 +7,7 @@ import com.citycopilot.core.dto.GeoPointDTO;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.ShopGeoUpdateDTO;
 import com.citycopilot.core.dto.ShopViewDTO;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.AmapGeoService;
 import com.citycopilot.core.service.IShopService;
@@ -69,21 +69,6 @@ public class GeoController {
     /** 默认城市、分页和 GEO 运行参数配置。 */
     @Resource
     private GeoProperties geoProperties;
-
-    /**
-     * 调用高德将地址解析为坐标候选。
-     *
-     * @param address 待解析的完整或局部地址
-     * @param city 可选城市范围
-     * @return 坐标、行政区码等解析结果，或稳定的高德错误
-     */
-    @GetMapping("/geocode")
-    public Result geocode(
-            @RequestParam("address") String address,
-            @RequestParam(value = "city", required = false) String city
-    ) {
-        return amapGeoService.geocode(address, city);
-    }
 
     /**
      * 根据店铺地址调用高德解析，并将结果写回店铺事实库。

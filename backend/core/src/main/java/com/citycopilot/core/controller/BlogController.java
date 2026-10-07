@@ -4,7 +4,6 @@ package com.citycopilot.core.controller;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.entity.Blog;
 import com.citycopilot.core.service.IBlogService;
-import com.citycopilot.core.utils.UserHolder;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.annotation.Resource;
@@ -43,17 +42,6 @@ public class BlogController {
     @PutMapping("/like/{id}")
     public Result likeBlog(@PathVariable("id") Long id) {
         return blogService.likeBlog(id);
-    }
-
-    /**
-     * 查询当前登录用户发布的笔记。
-     *
-     * @param current 页码，默认第 1 页
-     * @return 当前页的笔记列表
-     */
-    @GetMapping("/of/me")
-    public Result queryMyBlog(@RequestParam(value = "current", defaultValue = "1") Integer current) {
-        return blogService.queryBlogsByUser(UserHolder.getUser().getId(), current);
     }
 
     /**
@@ -99,20 +87,6 @@ public class BlogController {
             @RequestParam("lastId") Long lastId,
             @RequestParam(value = "offset", defaultValue = "0") Integer offset) {
         return blogService.queryBlogOfFollow(lastId, offset);
-    }
-
-    /**
-     * 分页查询指定用户发布的笔记。
-     *
-     * @param current 页码，默认第 1 页
-     * @param id 目标用户主键
-     * @return 当前页的笔记列表
-     */
-    @GetMapping("/of/user")
-    public Result queryBlogByUserId(
-            @RequestParam(value = "current",defaultValue = "1")Integer current,
-            @RequestParam("id")Long id){
-        return blogService.queryBlogsByUser(id, current);
     }
 
 }

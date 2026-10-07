@@ -25,20 +25,6 @@ class CommerceExceptionAdviceTest {
     }
 
     @Test
-    void postAdmissionLeaseLossIncludesRetryAfter() {
-        ResponseEntity<CommerceError> response = advice.handle(
-                new CommerceApiException(
-                        "COMMERCE_ROUTING_MUTATION_LEASE_LOST",
-                        "Admission lease could not be confirmed",
-                        503
-                )
-        );
-
-        assertThat(response.getStatusCode().value()).isEqualTo(503);
-        assertThat(response.getHeaders().getFirst("Retry-After")).isEqualTo("1");
-    }
-
-    @Test
     void stableBusinessRejectionHasNoRetryAfter() {
         ResponseEntity<CommerceError> response = advice.handle(
                 new CommerceApiException("SECKILL_STOCK_NOT_ENOUGH", "Sold out", 409)

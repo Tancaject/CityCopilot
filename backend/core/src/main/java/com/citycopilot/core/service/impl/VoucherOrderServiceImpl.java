@@ -23,11 +23,6 @@ public class VoucherOrderServiceImpl implements IVoucherOrderService {
     }
 
     @Override
-    public Result seckillVoucher(Long voucherId) {
-        return seckillVoucher(voucherId, null);
-    }
-
-    @Override
     public Result seckillVoucher(Long voucherId, String idempotencyKey) {
         // 秒杀准入必须由 Commerce 单写者完成，Core 只透传同一业务重试的幂等键。
         return commercePortClient.seckill(voucherId, idempotencyKey);

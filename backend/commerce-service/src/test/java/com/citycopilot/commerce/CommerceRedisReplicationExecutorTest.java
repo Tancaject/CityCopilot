@@ -147,79 +147,6 @@ class CommerceRedisReplicationExecutorTest {
     }
 
     @Test
-    void requireAllRejectsWhenOnlyOneOfTwoConfiguredReplicasConfirms() {
-        FakeCommands commands = new FakeCommands();
-        commands.integerResult = 0L;
-        commands.replicationResult = 1L;
-        commands.configuredReplicaCount = 2;
-        CommerceRedisReplicationExecutor executor = new CommerceRedisReplicationExecutor(
-                new FakeProvider(commands), new SimpleMeterRegistry(), 1, 100, true
-        );
-        DefaultRedisScript<Long> script = new DefaultRedisScript<>("return 0", Long.class);
-        String key = "commerce:{commerce:v1:1:0}:stock:100";
-
-        assertThatThrownBy(() -> executor.executeReplicatedScript(
-                "voucher_admission", key, script, List.of(key), "arg"
-        )).isInstanceOf(CommerceRedisReplicationExecutor.RedisReplicationInsufficientException.class);
-        assertThat(commands.waitReplicas).isEqualTo(2);
-    }
-
-    @Test
-    void requireAllFailsClosedWhenReplicaTopologyChangesDuringWait() {
-        FakeCommands commands = new FakeCommands();
-        commands.integerResult = 0L;
-        commands.replicationResult = 2L;
-        commands.configuredReplicaCount = 2;
-        commands.configuredReplicaCountAfterWait = 1;
-        CommerceRedisReplicationExecutor executor = new CommerceRedisReplicationExecutor(
-                new FakeProvider(commands), new SimpleMeterRegistry(), 1, 100, true
-        );
-        DefaultRedisScript<Long> script = new DefaultRedisScript<>("return 0", Long.class);
-        String key = "commerce:{commerce:v1:1:0}:stock:100";
-
-        assertThatThrownBy(() -> executor.executeReplicatedScript(
-                "voucher_admission", key, script, List.of(key), "arg"
-        )).isInstanceOf(
-                CommerceRedisReplicationExecutor.RedisReplicationTopologyUnavailableException.class
-        );
-    }
-
-    @Test
-    void requireAllFailsBeforeWritingWhenProviderHidesReplicaTopology() {
-        FakeCommands commands = new FakeCommands();
-        commands.integerResult = 0L;
-        CommerceRedisReplicationExecutor executor = new CommerceRedisReplicationExecutor(
-                new FakeProvider(commands), new SimpleMeterRegistry(), 1, 100, true
-        );
-        DefaultRedisScript<Long> script = new DefaultRedisScript<>("return 0", Long.class);
-        String key = "commerce:{commerce:v1:1:0}:stock:100";
-
-        assertThatThrownBy(() -> executor.executeReplicatedScript(
-                "voucher_admission", key, script, List.of(key), "arg"
-        )).isInstanceOf(
-                CommerceRedisReplicationExecutor.RedisReplicationTopologyUnavailableException.class
-        );
-        assertThat(commands.evalCount).isZero();
-        assertThat(commands.waitCount).isZero();
-    }
-
-    @Test
-    void requireAllStartupValidationFailsWhenProviderHidesReplicaTopology() {
-        CommerceRedisReplicationExecutor executor = new CommerceRedisReplicationExecutor(
-                new FakeProvider(new FakeCommands()),
-                new SimpleMeterRegistry(),
-                1,
-                100,
-                true
-        );
-
-        assertThatThrownBy(executor::validateRequiredReplicaTopology)
-                .isInstanceOf(
-                        CommerceRedisReplicationExecutor.RedisReplicationTopologyUnavailableException.class
-                );
-    }
-
-    @Test
     void movedResponseRefreshesTopologyAndRetriesTheWholeWriteAndWaitOnce() {
         FakeCommands commands = new FakeCommands();
         commands.integerResult = 0L;
@@ -287,9 +214,6 @@ class CommerceRedisReplicationExecutorTest {
         private int waitReplicas;
         private long waitTimeoutMillis;
         private byte[][] lastValueArguments;
-        private int configuredReplicaCount = -1;
-        private int configuredReplicaCountAfterWait = -1;
-        private int targetReadCount;
 
         @Override
         public Long eval(byte[] script, byte[][] keys, byte[][] arguments) {
@@ -311,27 +235,6 @@ class CommerceRedisReplicationExecutorTest {
             waitReplicas = replicas;
             this.waitTimeoutMillis = timeoutMillis;
             return replicationResult;
-        }
-
-        @Override
-        public CommerceRedisReplicationExecutor.ReplicationConfirmationTarget
-        replicationConfirmationTarget(int minimumRequiredReplicas, boolean requireAllReplicas) {
-            if (!requireAllReplicas) {
-                return CommerceRedisReplicationExecutor.NodeBoundCommands.super
-                        .replicationConfirmationTarget(minimumRequiredReplicas, false);
-            }
-            targetReadCount++;
-            int replicas = targetReadCount > 1 && configuredReplicaCountAfterWait >= 0
-                    ? configuredReplicaCountAfterWait
-                    : configuredReplicaCount;
-            if (replicas < 0) {
-                return CommerceRedisReplicationExecutor.NodeBoundCommands.super
-                        .replicationConfirmationTarget(minimumRequiredReplicas, true);
-            }
-            return new CommerceRedisReplicationExecutor.ReplicationConfirmationTarget(
-                    replicas,
-                    "fake-topology:" + replicas
-            );
         }
     }
 }

@@ -1,6 +1,5 @@
 package com.citycopilot.core.service;
 
-import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.VoucherRequest;
 
@@ -17,7 +16,6 @@ public interface IVoucherService {
      * @param shopId 店铺主键
      * @return 可用券列表
      */
-    @AgentTool(name = "list_vouchers_by_shop", description = "List vouchers available for a shop")
     Result queryVoucherOfShop(Long shopId);
 
     /**
@@ -55,11 +53,4 @@ public interface IVoucherService {
      * @return 更新结果
      */
     Result updateVoucherStatus(Long id, Integer status);
-
-    /**
-     * 创建秒杀券；保留该方法用于兼容原有调用方。
-     *
-     * @param voucher 券资料和秒杀时间窗、库存
-     */
-    void addSeckillVoucher(VoucherRequest voucher);
 }

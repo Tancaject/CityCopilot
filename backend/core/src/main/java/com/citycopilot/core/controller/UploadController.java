@@ -33,18 +33,4 @@ public class UploadController {
             return Result.fail("UPLOAD_INVALID", e.getMessage());
         }
     }
-
-    /**
-     * @param filename 待删除图片的公开路径或文件名
-     * @return 删除结果；非法路径返回 UPLOAD_INVALID
-     */
-    @GetMapping("/blog/delete")
-    public Result deleteBlogImg(@RequestParam("name") String filename) {
-        try {
-            fileStorageService.deletePublicPath(filename);
-            return Result.ok();
-        } catch (IllegalArgumentException e) {
-            return Result.fail("UPLOAD_INVALID", e.getMessage());
-        }
-    }
 }

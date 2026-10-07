@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue';
-import { Activity, Braces, CalendarDays, ClipboardCheck, Database, FileText, LayoutDashboard, LogOut, MapPin, ReceiptText, Rss, Search, ShieldCheck, SquarePen, Store, Ticket, UserRound } from '@lucide/vue';
+import { Braces, CalendarDays, ClipboardCheck, Database, FileText, LayoutDashboard, LogOut, MapPin, ReceiptText, Rss, Search, ShieldCheck, SquarePen, Store, Ticket, UserRound } from '@lucide/vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
-import AiAssistantPanel from './components/AiAssistantPanel.vue';
 import { authState, clearAuth, initAuth, logout } from './composables/auth';
 import { hasPermission } from './utils/permissions';
 
@@ -25,8 +24,6 @@ const adminNavItems = [
   { permission: 'content:write', name: 'admin-blogs', label: '内容', detail: '笔记治理', icon: FileText },
   { permission: 'audit:read', name: 'admin-audit', label: '审计', detail: '操作日志', icon: Database },
   { permission: 'audit:read', name: 'admin-api', label: '契约', detail: 'API 自检', icon: Braces },
-  { permission: 'audit:read', name: 'admin-agent-traces', label: 'Traces', detail: 'Agent 轨迹', icon: Activity },
-  { permission: 'audit:read', name: 'admin-ops-cases', label: 'Agent', detail: '诊断与审批', icon: ShieldCheck },
 ] as const;
 const visibleAdminLinks = computed(() =>
   adminNavItems.filter((link) => hasPermission(authState.user, link.permission)
@@ -116,10 +113,6 @@ onUnmounted(() => {
               <Braces :size="17" aria-hidden="true" />
               API 自检
             </RouterLink>
-            <RouterLink :to="{ name: 'admin-agent-traces' }">
-              <Activity :size="17" aria-hidden="true" />
-              Agent Trace
-            </RouterLink>
           </div>
         </header>
 
@@ -179,7 +172,6 @@ onUnmounted(() => {
       </header>
 
       <RouterView />
-      <AiAssistantPanel v-if="!isLoginRoute" />
     </template>
   </main>
 </template>

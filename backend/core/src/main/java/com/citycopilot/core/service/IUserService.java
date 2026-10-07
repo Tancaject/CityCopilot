@@ -52,13 +52,4 @@ public interface IUserService {
      * @return 退出结果
      */
     Result logout(HttpServletRequest request);
-
-    /** 记录当前用户今天的签到。 */
-    Result sign();
-
-    /** @return 当前用户截至今天的连续签到天数 */
-    Result signCount();
-
-    /** @return 当前用户今天是否已签到 */
-    Result isSignedToday();
 }

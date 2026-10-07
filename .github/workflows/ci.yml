@@ -118,23 +118,9 @@ jobs:
           cache: maven
       - name: Verify fresh and adopted service schemas
         run: >-
-          mvn -q -pl backend/core -am -Dit.test=DatabaseMigrationsIT,CommunityFactsIT,LegacyCommunityLikesMigrationIT
+          mvn -q -pl backend/core -am -Dit.test=DatabaseMigrationsIT,CommunityFactsIT
           -Dfailsafe.failIfNoSpecifiedTests=false test-compile
           failsafe:integration-test failsafe:verify
-
-  contracts-and-eval:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: maven
-      - name: Verify Tool and Event contracts
-        run: mvn -q -pl backend/contracts,backend/mcp-server -am test
-      - name: Run deterministic offline Agent eval
-        run: mvn -q -pl backend/eval -am -DskipTests package exec:java
 
   compose-smoke:
     runs-on: ubuntu-latest
@@ -148,8 +134,6 @@ jobs:
         shell: pwsh
         run: |
           Invoke-RestMethod http://127.0.0.1:8081/actuator/health
-          Invoke-RestMethod http://127.0.0.1:8082/agent/ready
-          Invoke-RestMethod http://127.0.0.1:8090/mcp/tools/list
       - name: Capture failure context
         if: failure()
         run: docker compose --profile app logs --no-color --tail 300

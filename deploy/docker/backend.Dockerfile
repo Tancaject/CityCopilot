@@ -10,14 +10,10 @@ WORKDIR /workspace
 COPY pom.xml ./pom.xml
 COPY backend/contracts/pom.xml backend/contracts/pom.xml
 COPY backend/http-support/pom.xml backend/http-support/pom.xml
-COPY backend/search/pom.xml backend/search/pom.xml
 COPY backend/commerce-service/pom.xml backend/commerce-service/pom.xml
 COPY backend/core/pom.xml backend/core/pom.xml
-COPY backend/agent/pom.xml backend/agent/pom.xml
-COPY backend/mcp-server/pom.xml backend/mcp-server/pom.xml
-COPY backend/eval/pom.xml backend/eval/pom.xml
 
-RUN case "${MODULE}" in core|agent|mcp-server|commerce-service) ;; *) echo "Unsupported MODULE=${MODULE}" >&2; exit 2 ;; esac
+RUN case "${MODULE}" in core|commerce-service) ;; *) echo "Unsupported MODULE=${MODULE}" >&2; exit 2 ;; esac
 COPY backend ./backend
 RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -q -pl "backend/${MODULE}" -am -DskipTests package && \
@@ -36,6 +32,6 @@ RUN mkdir -p /app/uploads /app/logs/rocketmq && \
     chown -R citycopilot:citycopilot /app/uploads /app/logs
 
 USER citycopilot
-EXPOSE 8081 8082 8083 8090 9091
+EXPOSE 8081 8083 9091
 
 ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-XX:MaxRAMPercentage=75.0", "-Dfile.encoding=UTF-8", "-jar", "/app/application.jar"]

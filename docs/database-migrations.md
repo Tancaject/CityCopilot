@@ -1,12 +1,11 @@
 # 数据库迁移运行手册
 
-Core、Commerce、Agent 的业务 DDL 只维护在各自的 Flyway 目录。空库与已有库升级使用同一组版本化 SQL，每个数据库独立保存 `flyway_schema_history`。应用启动不执行 DDL，MySQL 镜像初始化只负责创建数据库和账号。
+Core、Commerce 的业务 DDL 只维护在各自的 Flyway 目录。空库与已有库升级使用同一组版本化 SQL，每个数据库独立保存 `flyway_schema_history`。应用启动不执行 DDL，MySQL 镜像初始化只负责创建数据库和账号。
 
 | 数据库 | 迁移唯一来源 | Compose 任务 |
 |---|---|---|
 | Core | [deploy/mysql/core](../deploy/mysql/core/) | `core-migrate` |
 | Commerce | [deploy/mysql/commerce](../deploy/mysql/commerce/) | `commerce-migrate` |
-| Agent | [deploy/mysql/agent](../deploy/mysql/agent/) | `agent-migrate` |
 
 镜像、连接和执行选项以 [compose.yaml](../compose.yaml) 为准。任务固定关闭 `clean` 和 `baselineOnMigrate`；已有库只允许在显式检查后采用版本 `1`。不要把业务 SQL 挂回 `docker-entrypoint-initdb.d`，也不要手工按文件顺序执行版本化 SQL。
 
@@ -18,7 +17,7 @@ Core、Commerce、Agent 的业务 DDL 只维护在各自的 Flyway 目录。空�
 .\tools\citycopilot.ps1 start
 ```
 
-脚本创建缺失的本地 `.env`，启动数据库等基础设施，等待数据库可连接，再依次执行三个迁移任务。迁移成功后才能从 IDE 启动应用。`restart` 同样等待数据库就绪并执行迁移；已有数据库不需要删除数据卷。
+脚本创建缺失的本地 `.env`，启动数据库等基础设施，等待数据库可连接，再依次执行两个迁移任务。迁移成功后才能从 IDE 启动应用。`restart` 同样等待数据库就绪并执行迁移；已有数据库不需要删除数据卷。
 
 只启动数据库并执行迁移：
 
@@ -36,13 +35,12 @@ Core、Commerce、Agent 的业务 DDL 只维护在各自的 Flyway 目录。空�
 
 1. 确认连接指向目标数据库，备份并保留可恢复副本；停止该数据库对应的写入进程。Commerce 还必须完成下节的消息排空步骤。
 2. 核对数据库属于本仓库支持的历史结构。各目录的 `beforeBaseline.sql` 会检查必需的表、列及关键约束；缺失或不兼容结构会使接管失败。回调不会修复结构，也不替代对额外表、索引、业务数据的人工核对。
-3. 仅对已确认没有迁移历史的那个数据库，显式执行下表中的对应命令。不要对三个库不加区分地批量 baseline。
+3. 仅对已确认没有迁移历史的那个数据库，显式执行下表中的对应命令。不要对两个库不加区分地批量 baseline。
 
 | 接管对象 | 显式命令 |
 |---|---|
 | Core | `docker compose run --rm core-migrate -baselineVersion=1 baseline` |
 | Commerce | `docker compose run --rm commerce-migrate -baselineVersion=1 baseline` |
-| Agent | `docker compose run --rm agent-migrate -baselineVersion=1 baseline` |
 
 `baseline` 先运行 `beforeBaseline.sql`；成功后仅登记版本 `1`，不执行 V1，也不表示后续升级已经完成。必须检查命令退出码为 `0`，再运行对应任务，例如 Commerce：
 
@@ -54,19 +52,24 @@ if ($LASTEXITCODE -ne 0) { throw 'Commerce 迁移历史校验失败。' }
 docker compose run --rm commerce-migrate info
 ```
 
-Core 和 Agent 使用各自的任务名。确认各服务迁移成功、业务核对通过后，才恢复相应进程。未知结构应先定位差异并制定独立的数据迁移方案，不能提高 baseline 版本、移除 callback 或改写迁移历史强行接管。
+Core 使用 `core-migrate` 任务名。确认各服务迁移成功、业务核对通过后，才恢复相应进程。未知结构应先定位差异并制定独立的数据迁移方案，不能提高 baseline 版本、移除 callback 或改写迁移历史强行接管。
 
-Core 已有笔记还需完成[旧点赞事实导入](community-facts.md)：DDL 成功不代表 Redis 点赞关系已迁入 MySQL，切换校验通过后 Core 才能启动。
 
 ### Commerce 首次接管的业务门禁
 
 数据库结构检查无法证明 Redis 中没有在途请求。首次建立 admission ledger 前，必须先停止新秒杀准入和其他交易写入，保留旧 Stream worker，等待全部旧 Stream、PEL 和正在处理的消息归零，再停止旧 worker，执行 baseline 和 migrate。
 
-迁移后应核对历史订单与 ledger 身份、金额和库存，替换旧 API/worker，核验路由控制和分片门禁后再开放请求。这一过程不能与不写 ledger 的旧版本混合滚动；Flyway 的结构版本不会替代消息排空或业务对账。详细业务核对要求统一维护在 [Commerce 所有权与运行门禁](architecture/commerce-migration-and-cutover.md#首次-admission-ledger-升级)。
+迁移后应核对历史订单与 ledger 身份、金额和库存，替换旧 API/worker 后再开放请求。这一过程不能与不写 ledger 的旧版本混合滚动；Flyway 的结构版本不会替代消息排空或业务对账。详细业务核对要求统一维护在 [Commerce 所有权与运行门禁](architecture/commerce-migration-and-cutover.md#首次-admission-ledger-升级)。
+
+## Commerce V11：取消后重新购买
+
+V11 将“一人一券”约束改为仅约束未取消订单，并释放已取消订单的 Reservation。升级前停掉交易写入并排空 Stream；不要让新旧交易代码同时运行。历史幂等键、订单和 Outbox 保留，V12 为历史已支付订单补录支付事实，不会重新发起扣款。
+
+旧取消流程可能在 Redis 留有买家标记。升级前记录 `SELECT DISTINCT voucher_id FROM commerce_order WHERE status=4` 的结果；升级后保持这些券停止准入，通过现有 `/admin/seckill/consistency/{voucherId}` 读取证据，出现买家偏差时携带返回的 `evidenceHash` 调用其 `/repair` 接口，再通过 `/verify` 确认一致后开放。不要直接清空买家集合或库存键。接口及修复权限见 [Commerce 所有权与运行门禁](architecture/commerce-migration-and-cutover.md)。
 
 ## 可选开发样例数据
 
-[Core seed](../deploy/mysql/seed/core.sql) 和 [Commerce seed](../deploy/mysql/seed/commerce.sql) 不属于 schema 迁移，启动和升级都不会自动导入。仅在**新建、迁移完成、尚无业务数据的开发库**中显式执行；不要对已有开发库或生产库重放，不要用 seed 修补迁移失败。Agent 没有样例数据导入步骤。
+[Core seed](../deploy/mysql/seed/core.sql) 和 [Commerce seed](../deploy/mysql/seed/commerce.sql) 不属于 schema 迁移，启动和升级都不会自动导入。仅在**新建、迁移完成、尚无业务数据的开发库**中显式执行；不要对已有开发库或生产库重放，不要用 seed 修补迁移失败。
 
 需要样例时，在启动业务应用前逐库导入。以下命令复用容器内已有凭据，不把口令写入命令行：
 

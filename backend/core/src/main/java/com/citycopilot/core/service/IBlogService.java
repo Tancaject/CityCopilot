@@ -1,17 +1,12 @@
 package com.citycopilot.core.service;
 
-import com.citycopilot.contract.tool.AgentTool;
-import com.citycopilot.contract.tool.ToolSideEffect;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.entity.Blog;
-import com.citycopilot.core.security.PermissionCodes;
 
 import java.time.LocalDateTime;
 
 /**
  * 博客领域服务，负责详情、热榜、点赞、发布和关注流查询。
- *
- * <p>标注 {@link AgentTool} 的方法会被 Core 工具注册表扫描，并可经 Agent/MCP 调用。</p>
  */
 public interface IBlogService {
 
@@ -21,7 +16,6 @@ public interface IBlogService {
      * @param id 博客主键
      * @return 详情结果；博客不存在时返回失败结果
      */
-    @AgentTool(name = "get_blog_detail", description = "Get blog detail by blog id")
     Result queryBlogById(Long id);
 
     /**
@@ -30,11 +24,7 @@ public interface IBlogService {
      * @param current 从 1 开始的页码
      * @return 当前页博客列表
      */
-    @AgentTool(name = "list_hot_blogs", description = "List hot blogs by page")
     Result queryHotBlog(Integer current);
-
-    /** 查询用户发布的笔记，保持主页列表的字段和分页规则。 */
-    Result queryBlogsByUser(Long userId, Integer current);
 
     /** 按关键词分页检索后台笔记，保留管理列表的分页元数据。 */
     Result queryAdminBlogs(Integer current, String keyword);
@@ -54,14 +44,6 @@ public interface IBlogService {
      * @param id 博客主键
      * @return 操作结果；关系与计数在同一数据库事务中更新
      */
-    @AgentTool(
-            name = "like_blog",
-            description = "Like or unlike a blog for current user",
-            requiredPermissions = {PermissionCodes.CONTENT_WRITE},
-            idempotent = false,
-            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
-            scope = "community:content"
-    )
     Result likeBlog(Long id);
 
     /**
@@ -70,7 +52,6 @@ public interface IBlogService {
      * @param id 博客主键
      * @return 按点赞时间升序排列的用户摘要
      */
-    @AgentTool(name = "list_blog_likes", description = "List users who liked a blog")
     Result queryBlogLikes(Long id);
 
     /**
@@ -88,6 +69,5 @@ public interface IBlogService {
      * @param offset 同一时间戳下已跳过的记录数
      * @return 博客列表及下一页游标
      */
-    @AgentTool(name = "get_follow_feed", description = "Get current user's follow feed")
     Result queryBlogOfFollow(Long lastId, Integer offset);
 }

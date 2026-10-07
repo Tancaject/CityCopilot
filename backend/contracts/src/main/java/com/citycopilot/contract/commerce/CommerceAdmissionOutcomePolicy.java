@@ -14,15 +14,11 @@ public final class CommerceAdmissionOutcomePolicy {
     /** 准入结果未能可靠持久化，调用方可稍后重试。 */
     public static final String COMMERCE_DURABLE_ADMISSION_UNAVAILABLE =
             "COMMERCE_DURABLE_ADMISSION_UNAVAILABLE";
-    /** 修改路由时失去租约，当前节点不能继续完成操作。 */
-    public static final String COMMERCE_ROUTING_MUTATION_LEASE_LOST =
-            "COMMERCE_ROUTING_MUTATION_LEASE_LOST";
 
     /** 允许重试的稳定错误码集合。 */
     private static final Set<String> RETRYABLE_CODES = Set.of(
             COMMERCE_ADMISSION_OUTCOME_UNKNOWN,
-            COMMERCE_DURABLE_ADMISSION_UNAVAILABLE,
-            COMMERCE_ROUTING_MUTATION_LEASE_LOST
+            COMMERCE_DURABLE_ADMISSION_UNAVAILABLE
     );
 
     private CommerceAdmissionOutcomePolicy() {

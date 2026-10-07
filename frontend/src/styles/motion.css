@@ -22,8 +22,7 @@
    ============================================================ */
 
 body[data-scene="user"] .home-command-actions a,
-body[data-scene="user"] .auth-button,
-.ai-assistant .ai-input button {
+body[data-scene="user"] .auth-button {
   transition:
     transform var(--dur-fast) var(--ease-spring),
     box-shadow var(--dur-fast) var(--ease-out-expo),
@@ -32,8 +31,7 @@ body[data-scene="user"] .auth-button,
 }
 
 body[data-scene="user"] .home-command-actions a:active,
-body[data-scene="user"] .auth-button:active,
-.ai-assistant .ai-input button:active {
+body[data-scene="user"] .auth-button:active {
   transform: translateY(0) scale(0.97);
   transition-duration: 80ms;
 }

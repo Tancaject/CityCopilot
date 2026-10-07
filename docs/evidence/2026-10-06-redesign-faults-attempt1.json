@@ -1,0 +1,106 @@
+{
+  "runId": "redesign-2aada3ffc4f0",
+  "scenarios": {
+    "stream-kill": {
+      "requests": 100,
+      "durationSeconds": 0.344,
+      "qps": 290.94,
+      "latencyMs": {
+        "samples": 100,
+        "mean": 65.62,
+        "p50": 59.28,
+        "p95": 110.14,
+        "p99": 113.28,
+        "max": 113.31
+      },
+      "accepted": 100,
+      "httpStatuses": {
+        "202": 100
+      },
+      "interruptedRequestsReplayed": 0,
+      "killedPendingOwner": "1d15666d5db7-7aa4e82c",
+      "invariants": {
+        "users": 100,
+        "active": 100,
+        "ledger": 100,
+        "orders": 100,
+        "dbStock": 0,
+        "redisStock": 0
+      }
+    },
+    "outbox-kill": {
+      "acceptanceAttempts": [
+        {
+          "status": 202,
+          "code": "COMMERCE_ORDER_ACCEPTED",
+          "latency_ms": 41.115400032140315
+        }
+      ]
+    }
+  },
+  "passed": false,
+  "capturedAtUtc": "2026-10-06T15:06:12.195433+00:00",
+  "mode": "faults-only",
+  "workload": {
+    "users": 100,
+    "concurrency": 20,
+    "readRequests": 0
+  },
+  "images": {
+    "commerce": [
+      "sha256:dd6ae3eda7d1b9f1a98e860cc90c946cc2fd3b8f4da21245a89276f9cb311a7a"
+    ],
+    "commerce-mysql": [
+      "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d"
+    ],
+    "core": [
+      "sha256:a9917f601b75f4b98dcda98733923867e521ef0dd945e87b64a6ded8cde499e0"
+    ],
+    "mysql": [
+      "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d"
+    ],
+    "redis": [
+      "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99"
+    ]
+  },
+  "dockerResources": {
+    "cpus": 32,
+    "memoryBytes": 16653602816
+  },
+  "scope": "Isolated local 2 Core + 2 Commerce; Stream/Outbox/Redis fault checks only, with fresh fixtures; excludes baseline load, cache comparisons, booking, IP limit and two-instance timeout checks",
+  "failure": {
+    "stage": "outbox-kill",
+    "message": "Timed out waiting for the expected runtime state"
+  },
+  "cpuSamples": 882,
+  "cpuByContainer": {
+    "citycopilot-redesign-load-redis-1": {
+      "meanPercent": 0.98,
+      "maxPercent": 3.58
+    },
+    "citycopilot-redesign-load-commerce-mysql-1": {
+      "meanPercent": 2.8,
+      "maxPercent": 27.24
+    },
+    "citycopilot-redesign-load-commerce-2": {
+      "meanPercent": 14.11,
+      "maxPercent": 385.95
+    },
+    "citycopilot-redesign-load-core-2": {
+      "meanPercent": 0.91,
+      "maxPercent": 5.07
+    },
+    "citycopilot-redesign-load-core-1": {
+      "meanPercent": 1.14,
+      "maxPercent": 18.31
+    },
+    "citycopilot-redesign-load-mysql-1": {
+      "meanPercent": 4.83,
+      "maxPercent": 12.13
+    },
+    "citycopilot-redesign-load-commerce-1": {
+      "meanPercent": 1.97,
+      "maxPercent": 109.12
+    }
+  }
+}

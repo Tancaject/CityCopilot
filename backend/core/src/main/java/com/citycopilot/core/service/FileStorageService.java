@@ -16,12 +16,4 @@ public interface FileStorageService {
      * @return 可写入博客内容的公开访问路径
      */
     String storeBlogImage(MultipartFile image);
-
-    /**
-     * 删除公开路径对应的存储文件。
-     *
-     * @param publicPath 先前由本服务返回的公开路径
-     * @return {@code true} 表示文件已删除，{@code false} 表示文件原本不存在
-     */
-    boolean deletePublicPath(String publicPath);
 }

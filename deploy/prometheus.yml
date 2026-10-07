@@ -22,16 +22,6 @@ scrape_configs:
         # Expected role, not a switch: move this label to the actual projector target in split deployments.
         labels:
           projection_role: "true"
-          # Set true only on targets expected to run the enabled BookingEvent business consumer.
-          booking_projection_role: "false"
-  - job_name: citycopilot-agent
-    metrics_path: /actuator/prometheus
-    static_configs:
-      - targets:
-          - host.docker.internal:8082
-        # Expected Ops v2 database sampler, independent of whether this instance runs workers.
-        labels:
-          ops_case_role: "true"
   - job_name: citycopilot-commerce
     metrics_path: /actuator/prometheus
     static_configs:

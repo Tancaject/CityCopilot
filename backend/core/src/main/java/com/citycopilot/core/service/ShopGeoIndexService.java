@@ -195,29 +195,6 @@ public class ShopGeoIndexService {
     }
 
     /**
-     * 将一次已提交的 MySQL 店铺变更应用到兼容 v1 GEO 索引。
-     *
-     * @param before 变更前地理快照
-     * @param after 变更后地理快照
-     */
-    public synchronized void refreshShopGeoIndex(Shop before, Shop after) {
-        String previousGeneration = readyGeneration();
-        if (previousGeneration == null) {
-            locallyStale = true;
-            return;
-        }
-        locallyStale = true;
-        try {
-            stringRedisTemplate.delete(SHOP_GEO_INDEX_READY_KEY);
-            applyIncrementalRefresh(before, after);
-            markIncrementalRefreshReady();
-        } catch (RuntimeException error) {
-            markStaleSafely(error);
-            throw error;
-        }
-    }
-
-    /**
      * Projector 专用的 v2 版本化增量更新。
      *
      * <p>调用方持有共享写租约；Redis 记录源版本，使至少一次投递可幂等重试。</p>
@@ -401,18 +378,6 @@ public class ShopGeoIndexService {
     }
 
     /**
-     * 把店铺写入旧版全分类和分类 GEO 索引。
-     *
-     * @param shop 已通过索引资格校验的店铺
-     */
-    private void addToIndexes(Shop shop) {
-        Point point = new Point(shop.getX(), shop.getY());
-        String shopId = shop.getId().toString();
-        stringRedisTemplate.opsForGeo().add(SHOP_GEO_ALL_KEY, point, shopId);
-        stringRedisTemplate.opsForGeo().add(SHOP_GEO_KEY + shop.getTypeId(), point, shopId);
-    }
-
-    /**
      * 解析给定代际和分类对应的 Redis GEO 键。
      *
      * @param generation 当前代际
@@ -524,40 +489,6 @@ public class ShopGeoIndexService {
     }
 
     /**
-     * 从旧版 GEO 索引删除变更前成员，再按变更后资格重新写入。
-     *
-     * @param before 变更前快照
-     * @param after 变更后快照
-     */
-    private void applyIncrementalRefresh(Shop before, Shop after) {
-        Long id = after != null && after.getId() != null
-                ? after.getId()
-                : before == null ? null : before.getId();
-        if (id == null) {
-            return;
-        }
-
-        String shopId = id.toString();
-        stringRedisTemplate.opsForGeo().remove(SHOP_GEO_ALL_KEY, shopId);
-        removeFromTypeIndex(before, shopId);
-        Long beforeTypeId = before == null ? null : before.getTypeId();
-        Long afterTypeId = after == null ? null : after.getTypeId();
-        if (!Objects.equals(beforeTypeId, afterTypeId)) {
-            removeFromTypeIndex(after, shopId);
-        }
-
-        if (isIndexable(after)) {
-            addToIndexes(after);
-        }
-    }
-
-    private void removeFromTypeIndex(Shop shop, String shopId) {
-        if (shop != null && shop.getTypeId() != null) {
-            stringRedisTemplate.opsForGeo().remove(SHOP_GEO_KEY + shop.getTypeId(), shopId);
-        }
-    }
-
-    /**
      * 判断店铺是否可进入附近查询索引。
      *
      * @param shop 店铺事实
@@ -649,17 +580,6 @@ public class ShopGeoIndexService {
         locallyStale = false;
     }
 
-    private void markIncrementalRefreshReady() {
-        String generation = newGeneration();
-        Map<String, String> metadata = new HashMap<>();
-        metadata.put("status", "ready");
-        metadata.put("generation", generation);
-        metadata.put("refreshedAt", Instant.now().toString());
-        stringRedisTemplate.opsForHash().putAll(SHOP_GEO_INDEX_META_KEY, metadata);
-        stringRedisTemplate.opsForValue().set(SHOP_GEO_INDEX_READY_KEY, generation);
-        locallyStale = false;
-    }
-
     private String newGeneration() {
         return "v1:" + UUID.randomUUID();
     }
@@ -678,17 +598,4 @@ public class ShopGeoIndexService {
         }
     }
 
-    private void markStaleSafely(RuntimeException failure) {
-        locallyStale = true;
-        try {
-            stringRedisTemplate.delete(SHOP_GEO_INDEX_READY_KEY);
-            Map<String, String> metadata = new HashMap<>();
-            metadata.put("status", "stale");
-            metadata.put("staleAt", Instant.now().toString());
-            metadata.put("error", failure.getClass().getSimpleName());
-            stringRedisTemplate.opsForHash().putAll(SHOP_GEO_INDEX_META_KEY, metadata);
-        } catch (RuntimeException metadataFailure) {
-            log.warn("Failed to mark Redis GEO index stale: {}", metadataFailure.getMessage());
-        }
-    }
 }

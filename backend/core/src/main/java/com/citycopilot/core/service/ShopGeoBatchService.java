@@ -3,11 +3,6 @@ package com.citycopilot.core.service;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.citycopilot.contract.tool.AgentTool;
-import com.citycopilot.contract.tool.ToolApprovalPolicy;
-import com.citycopilot.contract.tool.ToolAudience;
-import com.citycopilot.contract.tool.ToolRiskLevel;
-import com.citycopilot.contract.tool.ToolSideEffect;
 import com.citycopilot.core.dto.GeoBatchJobDTO;
 import com.citycopilot.core.dto.GeoPointDTO;
 import com.citycopilot.core.dto.Result;
@@ -21,7 +16,6 @@ import com.citycopilot.core.mapper.ShopGeoBatchJobItemMapper;
 import com.citycopilot.core.mapper.ShopGeoBatchJobMapper;
 import com.citycopilot.core.mapper.ShopMapper;
 import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
-import com.citycopilot.core.security.PermissionCodes;
 import com.citycopilot.core.utils.SystemConstants;
 import com.citycopilot.core.utils.UserHolder;
 import jakarta.annotation.PreDestroy;
@@ -84,17 +78,6 @@ public class ShopGeoBatchService {
      * @param limit 最大处理数量，受全局配置限制
      * @return 已持久化任务摘要
      */
-    @AgentTool(
-            name = "start_batch_geocode",
-            description = "Start a batch geocode job for shops",
-            requiredPermissions = {PermissionCodes.GEO_WRITE},
-            idempotent = false,
-            audience = ToolAudience.OPS,
-            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
-            risk = ToolRiskLevel.HIGH,
-            approval = ToolApprovalPolicy.OPS_APPROVAL,
-            scope = "place:geo"
-    )
     public GeoBatchJobDTO startGeocodeJob(String city, String keyword, Boolean verified, Boolean onlyMissing, Integer limit) {
         int size = normalizeLimit(limit);
         String scopeCity = resolveCity(city);
@@ -110,13 +93,6 @@ public class ShopGeoBatchService {
      * @param status 可选任务状态
      * @return 按主键倒序排列的任务页
      */
-    @AgentTool(
-            name = "list_geo_batch_jobs",
-            description = "List shop geocode batch jobs",
-            requiredPermissions = {PermissionCodes.GEO_READ},
-            audience = ToolAudience.OPS,
-            scope = "place:geo"
-    )
     public Page<ShopGeoBatchJob> queryJobs(Integer current, String status) {
         int pageNo = current == null || current < 1 ? 1 : current;
         return jobMapper.selectPage(
@@ -166,17 +142,6 @@ public class ShopGeoBatchService {
      * @param limit 最大重试数量
      * @return 新任务摘要
      */
-    @AgentTool(
-            name = "retry_geo_batch_failed_items",
-            description = "Retry failed items from a geocode batch job",
-            requiredPermissions = {PermissionCodes.GEO_WRITE},
-            idempotent = false,
-            audience = ToolAudience.OPS,
-            sideEffect = ToolSideEffect.NON_IDEMPOTENT_WRITE,
-            risk = ToolRiskLevel.HIGH,
-            approval = ToolApprovalPolicy.OPS_APPROVAL,
-            scope = "place:geo"
-    )
     public Result retryFailedItems(String sourceJobId, Boolean verified, Integer limit) {
         ShopGeoBatchJob source = findJob(sourceJobId);
         if (source == null) {

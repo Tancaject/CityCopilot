@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 /**
  * 对应 {@code shop} 表的本地店铺权威实体。
  *
- * <p>Core 负责店铺资料；GEO 与 Elasticsearch 都是可重建投影，通过 projectionVersion 防止旧事件覆盖新状态。</p>
+ * <p>Core 负责店铺资料；GEO 是可重建投影，通过 projectionVersion 防止旧事件覆盖新状态。</p>
  */
 @Data
 @EqualsAndHashCode(callSuper = false)

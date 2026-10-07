@@ -10,20 +10,12 @@ docker compose up -d
 
 Compose 默认启动基础设施及一次性迁移任务：
 
-- Core、Agent、Commerce 各自的 MySQL
-- Core、Agent、Commerce 各自的 Flyway 迁移任务
+- Core、Commerce 各自的 MySQL
+- Core、Commerce 各自的 Flyway 迁移任务
 - 项目专用 Redis，以及一次性的 `redis-init`
 - RocketMQ NameServer、Broker、Proxy 和初始化任务
 
-Elasticsearch 位于可选的 `search` profile，不会被默认基础设施脚本启动：
-
-```powershell
-docker compose --profile search up -d elasticsearch
-```
-
-它仅保存可从 MySQL 重建的店铺搜索投影，数据卷为 `elasticsearch-v9-data`。启用、旧卷升级和降级边界见 [Elasticsearch 店铺搜索投影](design/elasticsearch-shop-search.md)。
-
-`core`、`commerce`、`agent`、`mcp` 和 `frontend` 位于可选的 `app` profile，日常开发不启用，由 IDE 启动。CI 如需验证完整容器拓扑，显式执行 `docker compose --profile app up -d --build --wait`。
+`core`、`commerce` 和 `frontend` 位于可选的 `app` profile，日常开发不启用，由 IDE 启动。CI 如需验证完整容器拓扑，显式执行 `docker compose --profile app up -d --build --wait`。
 
 ## Redis 边界
 
@@ -33,7 +25,6 @@ Compose 使用独立的 `redis:7-alpine` 容器：
 - Windows 调试地址：`127.0.0.1:6380`
 - Core 使用 DB 0 中的非交易 key
 - Commerce 使用 DB 0 的 `commerce:*` key，并通过独立 `commerce` ACL 用户访问
-- Agent 使用 DB 1
 - 数据保存在 `redis-data` 命名卷
 
 WSL Redis 仍可运行在 `127.0.0.1:6379`，但 Compose 不连接它。两个 Redis 端口不同、数据独立，不会互相覆盖。
@@ -43,31 +34,27 @@ WSL Redis 仍可运行在 `127.0.0.1:6379`，但 Compose 不连接它。两个 R
 | 服务 | 职责 | 持久化 |
 |---|---|---|
 | `mysql` | Core 业务数据库 | `mysql-data` |
-| `agent-mysql` | Agent Trace、Ops 与长期偏好数据库 | `agent-mysql-data` |
 | `commerce-mysql` | Commerce 订单与交易数据库 | `commerce-mysql-data` |
-| `redis` | Core DB 0、Commerce ACL/keyspace、Agent DB 1、Redis Stream | `redis-data` |
+| `redis` | Core DB 0、Commerce ACL/keyspace、Redis Stream | `redis-data` |
 | `redis-init` | 幂等创建并验证 Commerce Redis ACL 用户，完成后退出 | 无 |
 | `rocketmq-namesrv` | RocketMQ 名称服务 | `rocketmq-namesrv-logs` |
 | `rocketmq-broker` | RocketMQ Broker | `rocketmq-broker-store`、`rocketmq-broker-logs` |
 | `rocketmq-proxy` | 本地 Java 服务访问 RocketMQ 的 gRPC Proxy | 无 |
-| `elasticsearch` | 可选店铺全文检索投影，不是业务事实源 | `elasticsearch-v9-data` |
 
 数据库结构由独立迁移任务维护，应用容器等待对应任务成功后启动。日常启动、已有数据卷接管、迁移失败处置和可选开发样例导入统一见 [数据库迁移运行手册](database-migrations.md)。后台 `docker compose up -d` 返回不表示迁移成功，应查看任务退出状态。
 
 ## 端口
 
 - Core MySQL：`127.0.0.1:3307`
-- Agent MySQL：`127.0.0.1:3308`
 - Commerce MySQL：`127.0.0.1:3309`
 - Docker Redis：`127.0.0.1:6380`
 - RocketMQ NameServer：`127.0.0.1:9876`
 - RocketMQ Broker：`127.0.0.1:10911`
 - RocketMQ Proxy：`127.0.0.1:18080` / `127.0.0.1:18081`
-- Elasticsearch（可选）：`127.0.0.1:9200`
 
 所有 Compose 端口默认只绑定本机。
 
-Java 服务的 Working directory 设为仓库根目录后会自动加载 `.env`，并连接上述宿主机端口。源码默认值已对齐 3307/3308/3309、6380 和 18081。Vue 开发服务器运行在 `5173`，并把 API 代理到本地 Core `8081` 与 Agent `8082`。
+Java 服务的 Working directory 设为仓库根目录后会自动加载 `.env`，并连接上述宿主机端口。源码默认值已对齐 3307/3309、6380 和 18081。Vue 开发服务器运行在 `5173`，并把 API 代理到本地 Core `8081`。
 
 本地 RocketMQ 默认启用：Commerce Outbox Relay 与跨服务 Consumer 连接 Proxy，Redis Stream 继续负责秒杀准入后的本地订单消费。只有在明确诊断 MQ 故障时才临时设置 `CITYCOPILOT_ROCKETMQ_ENABLED=false`，并保留所有未发布 Outbox。
 
@@ -86,7 +73,7 @@ Java 服务的 Working directory 设为仓库根目录后会自动加载 `.env`�
 # 停止并保留数据卷
 .\tools\citycopilot.ps1 stop
 
-# 删除 MySQL、Docker Redis、Elasticsearch 搜索投影和上传文件卷
+# 删除 MySQL、Docker Redis 和上传文件卷
 .\tools\citycopilot.ps1 reset -Force
 ```
 
@@ -98,11 +85,36 @@ Java 服务的 Working directory 设为仓库根目录后会自动加载 `.env`�
 
 - Docker daemon 不可用：启动 Docker Desktop 后重试。
 - 本地 Java 服务无法连接 Redis：确认 `redis` 为 `healthy`，IDE Working directory 是仓库根目录，并使用 `127.0.0.1:6380`。
-- 本地 Java 服务无法连接 MySQL：确认使用对应的 3307/3308/3309 端口，并加载根 `.env` 中对应账号密码。
-- Java 服务提示 8081/8082/8083/8090 被占用但系统查不到进程：这是已移除应用容器遗留的 Docker Desktop loopback 代理，执行 `docker desktop restart` 后再启动。
+- 本地 Java 服务无法连接 MySQL：确认使用对应的 3307/3309 端口，并加载根 `.env` 中对应账号密码。
+- Java 服务提示 8081/8083 被占用但系统查不到进程：这是已移除应用容器遗留的 Docker Desktop loopback 代理，执行 `docker desktop restart` 后再启动。
 - 业务表不存在或迁移任务失败：按 [数据库迁移运行手册](database-migrations.md)检查对应任务，不要手工导入旧初始化 SQL。
+- Outbox 已发布但消费缓慢：同时检查 Broker 的 `pop.log`、消费积压和直接内存错误；Broker 的堆、直接内存与容器总预算集中在 [Compose](../compose.yaml)，调整容器上限时要一起核对 JVM 预算。
 - 前端地图配置：本地 Vite 读取 `frontend/.env`，不再依赖 Docker 前端镜像。
 - 附近店铺无法点击：高德外部地点只用于发现展示，不能下单。页面会标明“外部地点 · 暂不支持下单”；附近没有入驻店铺时，点击“查看可下单店铺”回到本地交易店铺。
+
+## 隔离多实例验证
+
+[`redesign-compose.yaml`](../tools/loadtest/redesign-compose.yaml)与默认文件组合使用；独立项目创建自己的数据卷和 `*_load_test` 数据库，不复用日常业务数据。两个 Core、两个 Commerce 共用现有 nginx，服务之间也通过 nginx 分发请求。需使用支持 `!override` 的 Docker Compose。
+
+```powershell
+docker compose -p citycopilot-redesign-load -f compose.yaml -f tools/loadtest/redesign-compose.yaml --profile app up -d --build --scale core=2 --scale commerce=2 --wait
+python tools/loadtest/run_multiinstance_acceptance.py --failover --output tools/loadtest/results/redesign/topology.json
+python tools/loadtest/run_redesign_load.py --users 300 --concurrency 50 --read-requests 3000 --faults --output tools/loadtest/results/redesign/load.json
+```
+
+前台入口是 `127.0.0.1:18090`；`18092`、`18094` 是仅绑定本机的 Core、Commerce 压测入口，用来分别观察后端容量和前台 IP 限流。脚本在写入前核对项目、卷和两个数据库名称，只追加本轮数据。CPU 采样、逐请求结果和失败阶段保存在输出文件旁；故障模式会停止或暂停该独立项目的指定容器，并在结束时恢复。
+
+`run_multiinstance_acceptance.py` 检查实际负载分发及任务持有者接管。业务脚本检查秒杀、80% 热点读、预约容量、两个关单任务，以及 Stream、Outbox、Redis 故障；Redis 重启后额外删除本轮券的库存键，以验证带证据哈希的修复。Core Inbox 的重复投递以实际 duplicate 指标增加和原处理时间不变为证据。性能数字只使用当次真实产物更新 [E6](evidence/2026-07-26-e6-performance-and-recovery.md)。
+
+缓存对照只用本轮 key 的 `GET`、`EVAL`、`EVALSHA` 计数，MONITOR 原文不会保存。店铺 L1 与等量 Redis GET 比较，并用同一段 HTTP 实际速率计算 Redis QPS 降幅；售罄缓存与“每次请求前广播失效”的串行对照比较每请求 Lua 次数，广播和测量屏障不计入。TTL 仍生效，目标 key 的后台读取保留在计数中；这些受控差值不能解释为生产峰值。
+
+仅复验 Stream、Outbox、Redis 故障时可使用 `--faults-only` 并指定另一输出文件，原报告不会被覆盖。停机期间结果未知的请求沿用原幂等键重放，尝试结果也写入报告。
+
+停止时保留独立数据卷：
+
+```powershell
+docker compose -p citycopilot-redesign-load -f compose.yaml -f tools/loadtest/redesign-compose.yaml --profile app down
+```
 
 ## 本地秒杀压测
 
@@ -136,4 +148,4 @@ RocketMQ Relay 默认开启；报告会等待并核对本轮 Outbox 发布结果
 
 ## 架构边界
 
-Compose 只负责有状态基础设施的隔离与持久化；业务进程由 IDE 管理。Docker Redis 是项目的隔离运行依赖，不是对 Windows 或 WSL Redis 的重新安装。
+日常开发的业务进程由 IDE 管理；`app` profile 和独立负载配置负责容器验证。Docker Redis 是项目的隔离运行依赖，不是对 Windows 或 WSL Redis 的重新安装。

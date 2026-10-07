@@ -40,7 +40,7 @@ class ReleaseBundleTest(unittest.TestCase):
         (self.repository / "deploy/mysql/core/V1__fixture.sql").write_text("modified after release", encoding="utf-8")
         manifest = release.verify_bundle(self.bundle, self.digest)
         self.assertFalse(manifest["checkout"]["jarProvenanceVerified"])
-        self.assertEqual(13, len(manifest["files"]))
+        self.assertEqual(9, len(manifest["files"]))
         self.assertIn("CREATE TABLE", (self.bundle / "migrations/core/V1__fixture.sql").read_text())
 
     def test_changed_jar_sql_and_manifest_are_rejected(self):
@@ -79,8 +79,8 @@ class ReleaseBundleTest(unittest.TestCase):
 
     def test_wrong_service_jar_is_rejected(self):
         core = self.repository / "backend/core/target/fixture-exec.jar"
-        agent = self.repository / "backend/agent/target/fixture-exec.jar"
-        core.write_bytes(agent.read_bytes())
+        commerce = self.repository / "backend/commerce-service/target/fixture-exec.jar"
+        core.write_bytes(commerce.read_bytes())
         with patch.object(release, "run", side_effect=["fixture-commit", ""]):
             with self.assertRaisesRegex(ValueError, "expected executable"):
                 release.create_bundle(self.repository, self.root / "wrong-service", "wrong-service")

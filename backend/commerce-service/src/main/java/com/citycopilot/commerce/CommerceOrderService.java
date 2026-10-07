@@ -15,6 +15,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.sql.Timestamp;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -36,9 +37,9 @@ public class CommerceOrderService {
     private final ObjectMapper objectMapper;
     private final CommerceAdmissionDurabilityService durableAdmissions;
     private final CommerceRedisKeyspace keyspace;
-    private final CommerceRuntimeMutationLeases runtimeLeases;
-    private final CommerceRoutingGuard routing;
     private final CommerceOrderRecoveryStore recovery;
+    /** 商家视角下按订单所属店铺校验归属。 */
+    private final PlaceAuthorityClient place;
     private static final DefaultRedisScript<Long> RESTORE_INVENTORY_SCRIPT =
             CommerceRedisScripts.longScript("lua/commerce_restore_inventory.lua");
     private static final DefaultRedisScript<Long> RELEASE_FENCE_SCRIPT =
@@ -47,17 +48,15 @@ public class CommerceOrderService {
 
     public CommerceOrderService(JdbcTemplate jdbc, StringRedisTemplate redis, TransactionTemplate transactions,
             ObjectMapper objectMapper, CommerceAdmissionDurabilityService durableAdmissions,
-            CommerceRedisKeyspace keyspace, CommerceRuntimeMutationLeases runtimeLeases,
-            CommerceRoutingGuard routing, CommerceOrderRecoveryStore recovery) {
+            CommerceRedisKeyspace keyspace, CommerceOrderRecoveryStore recovery, PlaceAuthorityClient place) {
         this.jdbc = jdbc;
         this.redis = redis;
         this.transactions = transactions;
         this.objectMapper = objectMapper;
         this.durableAdmissions = durableAdmissions;
         this.keyspace = keyspace;
-        this.runtimeLeases = runtimeLeases;
-        this.routing = routing;
         this.recovery = recovery;
+        this.place = place;
     }
 
     /**
@@ -157,36 +156,51 @@ public class CommerceOrderService {
      *
      * @param orderId 订单 ID
      * @param userId 当前用户 ID
-     * @param admin 是否使用管理员范围
+     * @param admin 是否使用平台管理员范围
+     * @param merchant 是否使用商家范围；只能读取本人名下店铺的订单
      * @return 规范化订单字段
      */
-    public OrderView order(long orderId, long userId, boolean admin) {
-        return order(orderId, userId, admin, null);
+    public OrderView order(long orderId, long userId, boolean admin, boolean merchant) {
+        OrderView view = order(orderId, userId, admin || merchant, null);
+        if (merchant && !admin) {
+            place.requireWriteAuthority(view.shopId(), userId, false);
+        }
+        return view;
     }
 
     private OrderView order(long orderId, long userId, boolean admin, String inventoryRecovery) {
         String sql = """
                 SELECT id,user_id,voucher_id,shop_id,shop_name_snapshot,
                        voucher_title_snapshot,voucher_sub_title_snapshot,voucher_rules_snapshot,
-                       pay_value_snapshot,actual_value_snapshot,pay_type,status,version,
+                       pay_value_snapshot,actual_value_snapshot,pay_type,status,close_reason,version,
                        create_time,pay_time,use_time,refund_time,update_time
                 FROM commerce_order WHERE id=?
-                """ + (admin ? "" : " AND user_id=?");
+                """ + (admin ? "" : " AND user_id=?\n") + """
+                UNION ALL
+                SELECT l.order_id,l.user_id,l.voucher_id,v.shop_id,
+                       NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+                       CASE l.status WHEN 'ACCEPTED' THEN 0 ELSE -1 END,NULL,0,
+                       l.accepted_at,NULL,NULL,NULL,l.updated_at
+                FROM commerce_admission_ledger l JOIN commerce_voucher v ON v.id=l.voucher_id
+                WHERE l.order_id=? AND l.status IN ('ACCEPTED','REPAIR_REQUIRED')
+                """ + (admin ? "" : " AND l.user_id=?");
         List<OrderView> rows = jdbc.query(sql, (row, index) -> {
             int status = row.getInt("status");
-            OrderStatus presentation = orderStatus(status);
+            if (status == -1) throw new CommerceApiException("COMMERCE_ADMISSION_REPAIR_REQUIRED",
+                    "订单已受理，但生成失败，需要管理员修复后再查询", 503);
+            OrderStatus presentation = orderStatus(status, row.getString("close_reason"));
             return new OrderView(
                     row.getString("id"), row.getLong("user_id"), row.getLong("voucher_id"), row.getLong("shop_id"),
                     row.getString("shop_name_snapshot"), row.getString("voucher_title_snapshot"),
                     row.getString("voucher_sub_title_snapshot"), row.getString("voucher_rules_snapshot"),
-                    row.getInt("pay_value_snapshot"), row.getInt("actual_value_snapshot"), row.getObject("pay_type", Integer.class),
+                    row.getObject("pay_value_snapshot", Integer.class), row.getObject("actual_value_snapshot", Integer.class), row.getObject("pay_type", Integer.class),
                     status, presentation.state(), presentation.statusText(), row.getInt("version"), row.getTimestamp("create_time"),
                     row.getTimestamp("pay_time"), row.getTimestamp("use_time"), row.getTimestamp("refund_time"),
                     row.getTimestamp("update_time"), inventoryRecovery);
         },
-                admin ? new Object[]{orderId} : new Object[]{orderId, userId});
+                admin ? new Object[]{orderId, orderId} : new Object[]{orderId, userId, orderId, userId});
         if (rows.isEmpty()) {
-            throw new CommerceApiException("COMMERCE_ORDER_NOT_FOUND", "Order not found", 404);
+            throw new CommerceApiException("COMMERCE_ORDER_NOT_FOUND", "订单不存在或无权查看，请核对订单号", 404);
         }
         return rows.get(0);
     }
@@ -196,14 +210,14 @@ public class CommerceOrderService {
         return jdbc.query("""
                 SELECT id,user_id,voucher_id,shop_id,shop_name_snapshot,
                        voucher_title_snapshot,voucher_sub_title_snapshot,voucher_rules_snapshot,
-                       pay_value_snapshot,actual_value_snapshot,status,version,create_time,update_time
+                       pay_value_snapshot,actual_value_snapshot,status,close_reason,version,create_time,update_time
                 FROM commerce_order
                 WHERE user_id=?
                 ORDER BY id DESC
                 LIMIT 10 OFFSET ?
                 """, (row, index) -> {
             int status = row.getInt("status");
-            OrderStatus presentation = orderStatus(status);
+            OrderStatus presentation = orderStatus(status, row.getString("close_reason"));
             return new OrderSummary(
                     row.getString("id"), row.getLong("user_id"), row.getLong("voucher_id"), row.getLong("shop_id"),
                     row.getString("shop_name_snapshot"), row.getString("voucher_title_snapshot"),
@@ -215,12 +229,13 @@ public class CommerceOrderService {
     }
 
     /** 已落库订单的状态展示由同一事实生成，列表、详情和动作结果共用此映射。 */
-    private static OrderStatus orderStatus(int status) {
+    private static OrderStatus orderStatus(int status, String closeReason) {
         return switch (status) {
+            case 0 -> new OrderStatus("processing", "订单处理中");
             case 1 -> new OrderStatus("unpaid", "待支付");
             case 2 -> new OrderStatus("paid", "已支付");
             case 3 -> new OrderStatus("used", "已核销");
-            case 4 -> new OrderStatus("cancelled", "已取消");
+            case 4 -> new OrderStatus("cancelled", "PAY_TIMEOUT".equals(closeReason) ? "超时已取消" : "已取消");
             case 5 -> new OrderStatus("refunding", "退款中");
             case 6 -> new OrderStatus("refunded", "已退款");
             default -> new OrderStatus("unknown", "状态未知");
@@ -234,38 +249,18 @@ public class CommerceOrderService {
      *
      * @param orderId 订单 ID
      * @param userId 操作者用户 ID
-     * @param action pay、cancel、use 或 refund
-     * @param payType 支付类型，非 pay 动作忽略
-     * @param admin 是否以管理员范围操作
+     * @param action cancel、use 或 refund；支付只由验签回调推进
+     * @param admin 是否以平台管理员范围操作
+     * @param merchant 是否以商家范围操作；商家只能核销本人名下店铺的订单
      * @return 流转后的订单及可能的库存恢复状态
      */
-    public OrderView transition(long orderId, long userId, String action, Integer payType, boolean admin) {
-        if (runtimeLeases == null) {
-            return transitionWithLease(orderId, userId, action, payType, admin, null);
+    public OrderView transition(long orderId, long userId, String action,
+                                boolean admin, boolean merchant) {
+        if (merchant && !admin && !"use".equals(action)) {
+            throw new CommerceApiException("COMMERCE_MERCHANT_ACTION_FORBIDDEN", "Merchants may only check in orders", 403);
         }
-        try (CommerceRuntimeMutationLeases.MutationLease lease = runtimeLeases.acquireMutation()) {
-            routing.requireRuntimeMutationActive();
-            OrderView result = transitionWithLease(
-                    orderId, userId, action, payType, admin, lease
-            );
-            lease.renewAndAssert();
-            return result;
-        }
-    }
-
-    /**
-     * 在运行时写租约内以数据库状态条件更新推进订单，并为返库存动作持久化恢复意图。
-     */
-    private OrderView transitionWithLease(
-            long orderId,
-            long userId,
-            String action,
-            Integer payType,
-            boolean admin,
-            CommerceRuntimeMutationLeases.MutationLease lease
-    ) {
+        boolean unscoped = admin || merchant;
         Map<String, Transition> transitions = Map.of(
-                "pay", new Transition(1, 2),
                 "cancel", new Transition(1, 4),
                 "use", new Transition(2, 3),
                 "refund", new Transition(2, 6)
@@ -274,18 +269,19 @@ public class CommerceOrderService {
         if (transition == null) {
             throw new CommerceApiException("COMMERCE_ACTION_UNSUPPORTED", "Unsupported order action", 400);
         }
-        String ownerClause = admin ? "" : " AND user_id=?";
+        String ownerClause = unscoped ? "" : " AND user_id=?";
         String timeColumn = switch (action) {
-            case "pay" -> "pay_time";
             case "use" -> "use_time";
             case "refund" -> "refund_time";
             default -> "update_time";
         };
         String sql = "UPDATE commerce_order SET status=?, version=version+1, "
                 + timeColumn + "=CURRENT_TIMESTAMP(3)"
-                + ("pay".equals(action) ? ", pay_type=?" : "")
+                + ("cancel".equals(action) ? ", close_reason='USER_CANCELLED'" : "")
                 + " WHERE id=? AND status=?" + ownerClause;
-        OrderView before = order(orderId, userId, admin);
+        OrderView before = order(orderId, userId, admin, merchant);
+        if ("processing".equals(before.state())) throw new CommerceApiException("COMMERCE_ORDER_PROCESSING",
+                "订单仍在生成中，请等待订单确认后再操作", 409);
         long voucherId = before.voucherId();
         boolean returnsInventory = "cancel".equals(action) || "refund".equals(action);
         String fenceToken = returnsInventory ? acquireInventoryFence(voucherId) : null;
@@ -295,38 +291,20 @@ public class CommerceOrderService {
         boolean transitionCommitted = false;
         try {
             Boolean changed = transactions.execute(status -> {
-                assertLease(lease);
-                int updated;
-                if ("pay".equals(action)) {
-                    updated = admin
-                            ? jdbc.update(sql, transition.to(), payType == null ? 1 : payType, orderId, transition.from())
-                            : jdbc.update(sql, transition.to(), payType == null ? 1 : payType, orderId, transition.from(), userId);
-                } else {
-                    updated = admin
-                            ? jdbc.update(sql, transition.to(), orderId, transition.from())
-                            : jdbc.update(sql, transition.to(), orderId, transition.from(), userId);
-                }
+                int updated = unscoped
+                        ? jdbc.update(sql, transition.to(), orderId, transition.from())
+                        : jdbc.update(sql, transition.to(), orderId, transition.from(), userId);
                 if (updated != 1) return false;
-                if (returnsInventory) {
-                    jdbc.update("""
-                            UPDATE commerce_seckill_voucher
-                            SET stock=stock+1, version=version+1
-                            WHERE voucher_id=?
-                            """, voucherId);
-                    jdbc.update("""
-                            INSERT INTO commerce_order_recovery(
-                                source_id,source_type,order_id,voucher_id,user_id,payload_json,
-                                phase,inventory_fence_token,compensation_delta
-                            ) VALUES (?,'STATE_TRANSITION',?,?,?,?,?,?,1)
-                            """,
-                            recoverySourceId, orderId, voucherId, userId,
-                            json(Map.of("action", action, "targetStatus", transition.to())),
-                            PHASE_RESTORE_PENDING, fenceToken
-                    );
+                if ("refund".equals(action)) {
+                    int refunded = jdbc.update("UPDATE commerce_payment SET status='REFUNDED' WHERE order_id=? AND status='PAID'", orderId);
+                    if (refunded != 1) throw new CommerceApiException("COMMERCE_PAYMENT_STATE_CONFLICT", "支付单当前不能退款，请管理员核对支付记录", 409);
                 }
-                appendStateEvent(orderId, userId, action, transition.to());
-                // TransactionTemplate 在回调返回后才提交；提交前续租失败会回滚本次全部 SQL 变更。
-                assertLease(lease);
+                if (returnsInventory) {
+                    recordInventoryReturn(recoverySourceId, orderId, voucherId, before.userId(),
+                            action, transition.to(), fenceToken);
+                }
+                // 事件与恢复记录描述订单主人；管理员或商家只是操作者。
+                appendStateEvent(orderId, before.userId(), action, transition.to());
                 return true;
             });
             if (!Boolean.TRUE.equals(changed)) {
@@ -343,11 +321,12 @@ public class CommerceOrderService {
                         recoverySourceId,
                         orderId,
                         voucherId,
-                        fenceToken,
-                        lease
+                        before.userId(),
+                        transition.to() == 4,
+                        fenceToken
                 );
             }
-            return order(orderId, userId, admin,
+            return order(orderId, userId, unscoped,
                     PHASE_RESTORED.equals(inventoryRecovery) ? null : inventoryRecovery);
         } finally {
             if (fenceToken != null && !transitionCommitted) {
@@ -356,20 +335,86 @@ public class CommerceOrderService {
         }
     }
 
-    private void assertLease(CommerceRuntimeMutationLeases.MutationLease lease) {
-        if (lease != null) lease.renewAndAssert();
+    /** 每行独立事务，锁定到期订单后与支付的条件更新竞争；Redis 恢复在提交之后执行。 */
+    public int expireDueOrders() {
+        int expired = 0;
+        Timestamp afterDeadline = Timestamp.from(Instant.EPOCH);
+        long afterId = 0;
+        for (int attempt = 0; attempt < 100; attempt++) {
+            Timestamp deadlineCursor = afterDeadline;
+            long idCursor = afterId;
+            ExpiryCandidate closed = transactions.execute(transaction -> {
+                List<Map<String, Object>> due = jdbc.queryForList("""
+                        SELECT id,voucher_id,user_id,version,pay_deadline FROM commerce_order
+                        WHERE status=1 AND pay_deadline<=CURRENT_TIMESTAMP(3)
+                          AND (pay_deadline>? OR (pay_deadline=? AND id>?))
+                        ORDER BY pay_deadline,id LIMIT 1 FOR UPDATE SKIP LOCKED
+                        """, deadlineCursor, deadlineCursor, idCursor);
+                if (due.isEmpty()) return null;
+                Map<String, Object> row = due.get(0);
+                long orderId = ((Number) row.get("id")).longValue();
+                long voucherId = ((Number) row.get("voucher_id")).longValue();
+                long userId = ((Number) row.get("user_id")).longValue();
+                Timestamp payDeadline = (Timestamp) row.get("pay_deadline");
+                String sourceId = "transition:" + orderId + ":cancel:" + row.get("version");
+                String fenceToken;
+                try {
+                    fenceToken = acquireInventoryFence(voucherId);
+                } catch (CommerceApiException busy) {
+                    if ("COMMERCE_INVENTORY_MAINTENANCE".equals(busy.code())) {
+                        return new ExpiryCandidate(sourceId, orderId, voucherId, userId, payDeadline, null);
+                    }
+                    throw busy;
+                }
+                try {
+                    int changed = jdbc.update("""
+                            UPDATE commerce_order SET status=4,close_reason='PAY_TIMEOUT',version=version+1
+                            WHERE id=? AND status=1
+                            """, orderId);
+                    if (changed == 0) {
+                        releaseInventoryFence(voucherId, fenceToken);
+                        return null;
+                    }
+                    recordInventoryReturn(sourceId, orderId, voucherId, userId, "cancel", 4, fenceToken);
+                    appendStateEvent(orderId, userId, "cancel", 4);
+                    return new ExpiryCandidate(sourceId, orderId, voucherId, userId, payDeadline, fenceToken);
+                } catch (RuntimeException failure) {
+                    releaseInventoryFence(voucherId, fenceToken);
+                    throw failure;
+                }
+            });
+            if (closed == null) break;
+            afterDeadline = closed.payDeadline();
+            afterId = closed.orderId();
+            if (closed.fenceToken() == null) continue;
+            attemptTransitionInventoryRestore(closed.sourceId(), closed.orderId(), closed.voucherId(),
+                    closed.userId(), true, closed.fenceToken());
+            expired++;
+        }
+        return expired;
     }
 
-    /** 测试/直接调用入口：不带运行时租约尝试一次库存恢复。 */
-    String attemptTransitionInventoryRestore(
-            String sourceId,
-            long orderId,
-            long voucherId,
-            String fenceToken
-    ) {
-        return attemptTransitionInventoryRestore(
-                sourceId, orderId, voucherId, fenceToken, null
-        );
+    private record ExpiryCandidate(String sourceId, long orderId, long voucherId, long userId,
+                                   Timestamp payDeadline, String fenceToken) {}
+
+    private void recordInventoryReturn(String sourceId, long orderId, long voucherId, long userId,
+                                       String action, int targetStatus, String fenceToken) {
+        jdbc.update("""
+                UPDATE commerce_seckill_voucher SET stock=stock+1,version=version+1 WHERE voucher_id=?
+                """, voucherId);
+        if (targetStatus == 4) {
+            jdbc.update("UPDATE commerce_payment SET status='CLOSED' WHERE order_id=? AND status='PENDING'", orderId);
+            jdbc.update("""
+                    UPDATE commerce_reservation SET status='CANCELLED',version=version+1 WHERE order_id=?
+                    """, orderId);
+        }
+        jdbc.update("""
+                INSERT INTO commerce_order_recovery(
+                    source_id,source_type,order_id,voucher_id,user_id,payload_json,
+                    phase,inventory_fence_token,compensation_delta
+                ) VALUES (?,'STATE_TRANSITION',?,?,?,?,?,?,1)
+                """, sourceId, orderId, voucherId, userId,
+                json(Map.of("action", action, "targetStatus", targetStatus)), PHASE_RESTORE_PENDING, fenceToken);
     }
 
     /**
@@ -381,20 +426,21 @@ public class CommerceOrderService {
             String sourceId,
             long orderId,
             long voucherId,
-            String fenceToken,
-            CommerceRuntimeMutationLeases.MutationLease lease
+            long userId,
+            boolean releaseBuyer,
+            String fenceToken
     ) {
         Long restored;
         try {
-            assertLease(lease);
             restored = redis.execute(
                     RESTORE_INVENTORY_SCRIPT,
                     List.of(
                             keyspace.fence(voucherId),
                             keyspace.stock(voucherId),
-                            keyspace.restoreMarker(voucherId, sourceId)
+                            keyspace.restoreMarker(voucherId, sourceId),
+                            keyspace.buyers(voucherId)
                     ),
-                    fenceToken
+                    fenceToken, String.valueOf(userId), String.valueOf(releaseBuyer)
             );
         } catch (Exception unavailable) {
             // 保持 RESTORE_PENDING；Lua marker 能区分“已增加库存”和“尚未执行”，调度器可安全重试。
@@ -402,7 +448,6 @@ public class CommerceOrderService {
             return PHASE_RESTORE_PENDING;
         }
         if (restored != null && (restored == 1L || restored == 2L)) {
-            assertLease(lease);
             int completed = jdbc.update("""
                     UPDATE commerce_order_recovery
                     SET phase=?, compensation_delta=0, terminal_at=CURRENT_TIMESTAMP(3)
@@ -415,26 +460,23 @@ public class CommerceOrderService {
                     log.debug("Unable to remove completed inventory restore marker {}", sourceId);
                 }
             }
-            assertLease(lease);
             return PHASE_RESTORED;
         }
         String reason = restored != null && restored == -2L
                  ? "redis_stock_missing_during_transition_restore"
                 : "inventory_fence_expired_before_transition_restore";
-        assertLease(lease);
         jdbc.update("""
                 UPDATE commerce_order_recovery
                 SET phase=?, compensation_delta=1, last_error=?,
                     terminal_at=CURRENT_TIMESTAMP(3)
                 WHERE source_id=? AND phase=?
                 """, PHASE_REPAIR_REQUIRED, reason, sourceId, PHASE_RESTORE_PENDING);
-        assertLease(lease);
         releaseInventoryFence(voucherId, fenceToken);
         return PHASE_REPAIR_REQUIRED;
     }
 
     /** 在订单状态事务内追加 Outbox 事件，交由 Relay 异步发布。 */
-    private void appendStateEvent(long orderId, long userId, String action, int state) {
+    void appendStateEvent(long orderId, long userId, String action, int state) {
         String eventId = UUID.randomUUID().toString();
         EventEnvelope<Map<String, Object>> event = new EventEnvelope<>(
                 eventId, "commerce.order." + action, 1, "commerce_order", String.valueOf(orderId), state,

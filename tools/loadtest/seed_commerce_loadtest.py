@@ -19,7 +19,6 @@ VOUCHER_ID = 200
 START_USER_ID = 200_000
 CONSUMER_GROUP = "commerce-order-workers"
 SAFE_GENERATION = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
-ROUTING_CONTROL_KEY = "commerce:{commerce-runtime}:routing"
 
 
 def java_long_hash(value: int) -> int:
@@ -113,30 +112,6 @@ def redis_cli(*arguments: str) -> list[str]:
         raise RuntimeError(f"Redis command failed: {lines[0]}")
     return lines
 
-
-def routing_state(generation: str, shard_count: int, voucher_id: int) -> dict[str, str]:
-    control_lines = redis_cli("GET", ROUTING_CONTROL_KEY)
-    control = control_lines[0] if control_lines else ""
-    fields = control.split("|")
-    if len(fields) != 5 or fields[:4] != ["v1", "ACTIVE", generation, str(shard_count)]:
-        raise RuntimeError(
-            "Commerce routing control is not ACTIVE for the load-test fingerprint: "
-            f"actual={control!r}, expected={generation}/{shard_count}"
-        )
-    prefix = voucher_prefix(generation, shard_count, voucher_id)
-    gate_key = f"{prefix}runtime:routing-gate"
-    gate_lines = redis_cli("GET", gate_key)
-    gate = gate_lines[0] if gate_lines else ""
-    expected_gate = f"v1|ACTIVE|{generation}|{shard_count}"
-    if gate != expected_gate:
-        raise RuntimeError(
-            f"Commerce routing gate is not active: key={gate_key}, actual={gate!r}"
-        )
-    return {
-        "control": control,
-        "gate": gate,
-        "gateKey": gate_key,
-    }
 
 
 def one_stream_status(stream: str) -> dict[str, object]:
@@ -240,7 +215,6 @@ def seed(
         generation: str,
         shard_count: int,
 ) -> None:
-    active_routing = routing_state(generation, shard_count, VOUCHER_ID)
     wait_for_stream_drain(drain_timeout_seconds, generation, shard_count)
     mysql(f"""
 DELETE FROM commerce_dead_letter
@@ -323,8 +297,6 @@ ON DUPLICATE KEY UPDATE stock={stock},begin_time=VALUES(begin_time),end_time=VAL
         "routingGeneration": generation,
         "physicalShardCount": shard_count,
         "voucherShard": physical_shard(VOUCHER_ID, shard_count),
-        "routingControl": active_routing["control"],
-        "routingGate": active_routing["gate"],
         "voucherIdempotencyRemoved": voucher_idempotency_removed,
         "globalIdempotencyRemoved": global_idempotency_removed,
         "previousTokensRemoved": len(previous_tokens),
@@ -386,7 +358,6 @@ AND NOT (
     ) = map(int, rows[6].split("\t"))
     cross_generation_ledger = int(rows[7])
     env = env_file()
-    active_routing = routing_state(generation, shard_count, VOUCHER_ID)
     prefix = voucher_prefix(generation, shard_count, VOUCHER_ID)
     # Read only the Commerce keys with the administrative test harness account.
     with socket.create_connection(("127.0.0.1", int(env.get("CITYCOPILOT_REDIS_PORT", "6380"))), timeout=10) as connection:
@@ -425,8 +396,6 @@ AND NOT (
         "routingGeneration": generation,
         "physicalShardCount": shard_count,
         "voucherShard": physical_shard(VOUCHER_ID, shard_count),
-        "routingControl": active_routing["control"],
-        "routingGate": active_routing["gate"],
         "orders": order_count,
         "distinctUsers": distinct_users,
         "userRange": [minimum_user, maximum_user],

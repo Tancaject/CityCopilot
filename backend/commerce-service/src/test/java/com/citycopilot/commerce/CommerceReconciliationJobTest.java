@@ -1,6 +1,5 @@
 package com.citycopilot.commerce;
 
-import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -9,7 +8,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -31,7 +33,7 @@ class CommerceReconciliationJobTest {
                 redis,
                 consistency,
                 metadata,
-                JsonMapper.builderWithJackson2Defaults().build()
+                JsonMapper.builderWithJackson2Defaults().build(), leader()
         );
 
         job.reconcile();
@@ -60,7 +62,7 @@ class CommerceReconciliationJobTest {
                 redis,
                 consistency,
                 metadata,
-                JsonMapper.builderWithJackson2Defaults().build()
+                JsonMapper.builderWithJackson2Defaults().build(), leader()
         );
 
         job.reconcile();
@@ -85,7 +87,7 @@ class CommerceReconciliationJobTest {
                 redis,
                 consistency,
                 metadata,
-                JsonMapper.builderWithJackson2Defaults().build()
+                JsonMapper.builderWithJackson2Defaults().build(), leader()
         );
 
         job.reconcile();
@@ -94,6 +96,15 @@ class CommerceReconciliationJobTest {
         verify(metadata).refreshAfterCommit(200L);
         verify(consistency).snapshotForReconciliation(200L);
         verify(redis).delete("commerce:metrics:seckill:discrepancy-streak:200");
+    }
+
+    private CommerceJobLease leader() {
+        CommerceJobLease leases = mock(CommerceJobLease.class);
+        CommerceJobLease.Lease lease = mock(CommerceJobLease.Lease.class);
+        when(leases.acquire("stock-reconciliation")).thenReturn(Optional.of(lease));
+        doAnswer(invocation -> { invocation.getArgument(0, Runnable.class).run(); return null; })
+                .when(lease).runFenced(any());
+        return leases;
     }
 
     private void stubVoucherPage(JdbcTemplate jdbc, List<Long> voucherIds) {

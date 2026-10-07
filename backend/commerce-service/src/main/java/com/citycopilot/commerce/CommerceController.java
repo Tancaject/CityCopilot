@@ -12,6 +12,7 @@ import com.citycopilot.contract.commerce.CommerceContracts.OperationsSummary;
 import com.citycopilot.contract.commerce.CommerceContracts.DeadLetterView;
 import com.citycopilot.contract.commerce.CommerceContracts.DeadLetterReplayResult;
 import com.citycopilot.contract.commerce.CommerceContracts.AdmissionRepairRequeued;
+import com.citycopilot.contract.commerce.CommerceContracts.PaymentReview;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -52,8 +53,7 @@ public class CommerceController {
     private final CommerceConsistencyService consistency;
     /** 死信、准入修复和运营汇总接口。 */
     private final CommerceOperationsService operations;
-    /** 在请求进入准入链路前校验当前 Redis 路由代际和门禁。 */
-    private final CommerceRoutingGuard routing;
+    private final CommercePaymentService payments;
 
     public CommerceController(
             CommerceOrderService orders,
@@ -61,18 +61,18 @@ public class CommerceController {
             CommerceVoucherService vouchers,
             CommerceConsistencyService consistency,
             CommerceOperationsService operations,
-            CommerceRoutingGuard routing
+            CommercePaymentService payments
     ) {
         this.orders = orders;
         this.admissions = admissions;
         this.vouchers = vouchers;
         this.consistency = consistency;
         this.operations = operations;
-        this.routing = routing;
+        this.payments = payments;
     }
 
     /**
-     * 提交秒杀请求。接口先检查路由门禁，再以幂等键执行持久化准入。
+     * 提交秒杀请求，以幂等键执行持久化准入。
      *
      * @param voucherId 秒杀 Voucher ID
      * @param userId 调用方传递的用户 ID
@@ -85,7 +85,6 @@ public class CommerceController {
             @RequestHeader("X-CityCopilot-User-Id") long userId,
             @RequestHeader("Idempotency-Key") String idempotencyKey
     ) {
-        routing.requireAdmissionActive(voucherId);
         AdmissionAccepted result = admissions.seckill(voucherId, userId, idempotencyKey);
         ResponseEntity.BodyBuilder response = "COMMERCE_ORDER_ACCEPTED".equals(result.code())
                 ? ResponseEntity.status(HttpStatus.ACCEPTED)
@@ -110,9 +109,10 @@ public class CommerceController {
     OrderView order(
             @PathVariable long orderId,
             @RequestHeader("X-CityCopilot-User-Id") long userId,
-            @RequestParam(defaultValue = "false") boolean admin
+            @RequestParam(defaultValue = "false") boolean admin,
+            @RequestParam(defaultValue = "false") boolean merchant
     ) {
-        return orders.order(orderId, userId, admin);
+        return orders.order(orderId, userId, admin, merchant);
     }
 
     /**
@@ -144,9 +144,14 @@ public class CommerceController {
             @PathVariable long orderId,
             @RequestHeader("X-CityCopilot-User-Id") long userId,
             @RequestParam(defaultValue = "false") boolean admin,
+            @RequestParam(defaultValue = "false") boolean merchant,
             @RequestBody OrderActionRequest request
     ) {
-        return orders.transition(orderId, userId, request.action(), request.payType(), admin);
+        return switch (request.action()) {
+            case "pay" -> payments.start(orderId, userId, request.payType(), admin, merchant);
+            case "refund" -> payments.refund(orderId, userId, admin, merchant);
+            default -> orders.transition(orderId, userId, request.action(), admin, merchant);
+        };
     }
 
     /**
@@ -313,6 +318,27 @@ public class CommerceController {
     }
 
     /** 拒绝未经过上游运维授权的高风险修复操作。 */
+    @GetMapping("/ops/payments")
+    List<PaymentReview> paymentIssues(
+            @RequestHeader(value = "X-CityCopilot-Ops-Authorized", defaultValue = "false") boolean opsAuthorized) {
+        requireOpsAuthorization(opsAuthorized);
+        return payments.issues();
+    }
+
+    @GetMapping("/ops/payments/{paymentId}")
+    PaymentReview paymentReview(@PathVariable String paymentId,
+            @RequestHeader(value = "X-CityCopilot-Ops-Authorized", defaultValue = "false") boolean opsAuthorized) {
+        requireOpsAuthorization(opsAuthorized);
+        return payments.review(paymentId);
+    }
+
+    @PostMapping("/ops/payments/{paymentId}/repair")
+    PaymentReview repairPayment(@PathVariable String paymentId, @RequestBody ConsistencyRepairRequest request,
+            @RequestHeader(value = "X-CityCopilot-Ops-Authorized", defaultValue = "false") boolean opsAuthorized) {
+        requireOpsAuthorization(opsAuthorized);
+        return payments.repair(paymentId, request.expectedEvidenceHash());
+    }
+
     private void requireOpsAuthorization(boolean authorized) {
         if (!authorized) {
             throw new CommerceApiException(

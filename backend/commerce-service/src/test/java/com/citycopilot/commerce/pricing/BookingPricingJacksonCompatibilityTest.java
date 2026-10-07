@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 class BookingPricingJacksonCompatibilityTest {
     @Test
     void readsStoredQuoteAndPreservesCentsNullsAndIsoTimesInBookingSnapshot() {
+        // 样例保留已移除的 impressionId，证明升级前写入的报价仍可读取。
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForList(anyString(), eq(String.class), eq("quote-1"))).thenReturn(List.of("""
                 {"quoteId":"quote-1","userId":"7","purpose":"CREATE","bookingId":null,
@@ -31,7 +32,7 @@ class BookingPricingJacksonCompatibilityTest {
                    "discountCapCents":null,"eligibleBaseCents":5004,"beforeCents":5004,
                    "discountCents":1,"afterCents":5003,"couponExpiresAt":"2026-09-26T12:00:00.123Z"}],
                  "totalCents":5003,"expiresAt":"2026-09-25T10:15:30.123Z",
-                 "source":"AGENT","impressionId":null,"requestId":"request-1"}
+                 "source":"AGENT","impressionId":"legacy-impression","requestId":"request-1"}
                 """));
         // Pricing owns its ISO storage format even when the application's mapper enables timestamps.
         JsonMapper json = JsonMapper.builderWithJackson2Defaults()
@@ -45,7 +46,7 @@ class BookingPricingJacksonCompatibilityTest {
         assertThat(quote.totalCents()).isEqualTo(5003L);
         assertThat(quote.expiresAt()).isEqualTo(Instant.parse("2026-09-25T10:15:30.123Z"));
         assertThat(snapshot).containsEntry("offerTitle", "双人午餐")
-                .containsEntry("bookingId", null).containsEntry("impressionId", null)
+                .containsEntry("bookingId", null).doesNotContainKey("impressionId")
                 .containsEntry("expiresAt", "2026-09-25T10:15:30.123Z");
         var wire = json.valueToTree(snapshot);
         assertThat(wire.get("totalCents").longValue()).isEqualTo(5003);

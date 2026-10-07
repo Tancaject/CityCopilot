@@ -5,6 +5,7 @@ import com.citycopilot.commerce.PlaceAuthorityClient;
 import com.citycopilot.contract.booking.BookingContracts.ResourceView;
 import com.citycopilot.contract.booking.BookingContracts.SlotView;
 import com.citycopilot.contract.booking.PricingContracts.*;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.cfg.DateTimeFeature;
@@ -273,30 +274,10 @@ public class BookingPricingService {
     public QuoteView quote(long userId, QuoteRequest request) {
         user(userId);
         if (request == null) throw invalid("报价请求不能为空");
-        return transactions.execute(tx -> createQuote(userId, request, null));
+        return transactions.execute(tx -> createQuote(userId, request));
     }
 
-    /** 给已筛选的最多五个方案生成报价，用户券及规则只做一次批量查询。 */
-    public List<QuoteView> quoteBatch(long userId, List<QuoteRequest> requests) {
-        user(userId);
-        List<QuoteRequest> batch = List.copyOf(requests);
-        if (batch.size() > 5) throw invalid("一次最多为五个候选方案生成报价");
-        if (batch.isEmpty()) return List.of();
-        List<Long> resourceIds = batch.stream().map(request -> id(request.resourceId())).distinct().toList();
-        String placeholders = String.join(",", java.util.Collections.nCopies(resourceIds.size(), "?"));
-        List<Object> parameters = new ArrayList<>();
-        parameters.add(userId);
-        parameters.addAll(resourceIds);
-        return transactions.execute(tx -> {
-            List<CouponView> candidates = jdbc.query(COUPON_QUERY + " WHERE c.user_id=?"
-                            + " AND c.status IN ('AVAILABLE','RESERVED') AND r.shop_id IN"
-                            + " (SELECT shop_id FROM commerce_booking_resource WHERE id IN (" + placeholders + "))",
-                    this::joinedCouponRow, parameters.toArray());
-            return batch.stream().map(request -> createQuote(userId, request, candidates)).toList();
-        });
-    }
-
-    private QuoteView createQuote(long userId, QuoteRequest request, List<CouponView> preloadedCoupons) {
+    private QuoteView createQuote(long userId, QuoteRequest request) {
         String purpose = request.purpose() == null ? "CREATE" : request.purpose();
         if (!List.of("CREATE", "RESCHEDULE").contains(purpose)) throw invalid("报价用途无效");
         if (purpose.equals("CREATE") && !newBookingsEnabled) {
@@ -323,13 +304,13 @@ public class BookingPricingService {
             throw conflict("BOOKING_QUOTE_CHANGED", "所选价目已停售或不属于该资源，请重新选择");
         }
         if (offer == null) requireOnSiteAllowed(request.resourceId());
-        QuoteView quote = buildQuote(userId, request, purpose, resource, slot, offer, preloadedCoupons, now, previous);
+        QuoteView quote = buildQuote(userId, request, purpose, resource, slot, offer, now, previous);
         persistQuote(quote);
         return quote;
     }
 
     private QuoteView buildQuote(long userId, QuoteRequest request, String purpose, Resource resource,
-                                  Slot slot, OfferView offer, List<CouponView> preloadedCoupons,
+                                  Slot slot, OfferView offer,
                                   Instant now, Map<String, Object> previous) {
         int units = resource.kind().equals("COURT") ? 1 : request.partySize();
         String mode = request.couponMode() == null ? "AUTO" : request.couponMode();
@@ -343,9 +324,7 @@ public class BookingPricingService {
         if (offer != null) {
             base = checkedBase(offer.unitPriceCents(), resource.kind().equals("COURT") ? 1 : request.partySize());
             String reuseBooking = purpose.equals("RESCHEDULE") ? request.bookingId() : null;
-            List<CouponView> candidates = preloadedCoupons == null
-                    ? eligibleCoupons(userId, resource.shopId(), offer.id(), slot, reuseBooking, now)
-                    : preloadedCoupons.stream().filter(coupon -> eligible(coupon, userId, resource.shopId(), offer.id(), slot, reuseBooking, now)).toList();
+            List<CouponView> candidates = eligibleCoupons(userId, resource.shopId(), offer.id(), slot, reuseBooking, now);
             List<CouponView> chosen = mode.equals("NONE") ? List.of() : mode.equals("MANUAL")
                     ? selected(candidates, selectedIds) : candidates;
             Price price = calculatePrice(base, chosen, mode.equals("AUTO"));
@@ -353,10 +332,8 @@ public class BookingPricingService {
             total = price.totalCents();
         }
         String source = previous == null ? request.source() : (String) previous.get("source");
-        String impressionId = previous == null ? request.impressionId() : (String) previous.get("impression_id");
         String requestId = previous == null ? request.requestId() : (String) previous.get("request_id");
         optionalText(source, 32, "来源");
-        optionalText(impressionId, 128, "曝光标识");
         optionalText(requestId, 128, "请求标识");
         return new QuoteView(UUID.randomUUID().toString(), String.valueOf(userId), purpose,
                 request.bookingId(), request.expectedBookingVersion(), request.resourceId(), request.slotId(),
@@ -364,35 +341,7 @@ public class BookingPricingService {
                 offer == null ? null : offer.version(), offer == null ? null : offer.title(),
                 offer == null ? null : offer.includedItems(), offer == null ? null : offer.excludedItems(),
                 offer == null ? null : offer.unitPriceCents(), "CNY", base, discounts, total,
-                now.plusSeconds(quoteSeconds), source, impressionId, requestId);
-    }
-
-    /** 查询服务提供同一事务内批量读取的事实，预览阶段不写报价或占用资源。 */
-    List<QuoteView> previews(long userId, List<PreviewInput> inputs, int partySize, Instant now,
-                             String requestId, String impressionId) {
-        inTransaction();
-        user(userId);
-        if (!newBookingsEnabled) throw new CommerceApiException("BOOKING_NEW_DISABLED", "新预约暂时关闭，已有预约仍可查询和处理", 503);
-        if (inputs.isEmpty()) return List.of();
-        List<Long> shopIds = inputs.stream().map(input -> id(input.resource().shopId())).distinct().toList();
-        String placeholders = String.join(",", java.util.Collections.nCopies(shopIds.size(), "?"));
-        List<Object> parameters = new ArrayList<>();
-        parameters.add(userId);
-        parameters.addAll(shopIds);
-        List<CouponView> coupons = jdbc.query(COUPON_QUERY + " WHERE c.user_id=?"
-                        + " AND c.status='AVAILABLE' AND r.shop_id IN (" + placeholders + ")",
-                this::joinedCouponRow, parameters.toArray());
-        return inputs.stream().map(input -> {
-            ResourceView r = input.resource();
-            SlotView s = input.slot();
-            Resource resource = new Resource(id(r.id()), id(r.shopId()), r.kind(), r.maxPartySize(), r.status());
-            Slot slot = new Slot(id(s.id()), id(s.resourceId()), s.startAt(), s.endAt(), s.capacity(), s.occupied(), s.status());
-            validateTarget(resource, slot, partySize);
-            QuoteRequest request = new QuoteRequest(r.id(), s.id(), partySize,
-                    input.offer() == null ? null : input.offer().id(), "AUTO", List.of(), "CREATE",
-                    null, null, "PLAN", impressionId, requestId);
-            return buildQuote(userId, request, "CREATE", resource, slot, input.offer(), coupons, now, null);
-        }).toList();
+                now.plusSeconds(quoteSeconds), source, requestId);
     }
 
     void persistQuote(QuoteView quote) {
@@ -403,8 +352,6 @@ public class BookingPricingService {
                 """, quote.quoteId(), id(quote.userId()), id(quote.resourceId()), quote.offerId() == null ? null : id(quote.offerId()),
                 quote.purpose(), utc(quote.expiresAt()), encode(quote)));
     }
-
-    record PreviewInput(ResourceView resource, SlotView slot, OfferView offer) {}
 
     public QuoteView getQuote(String quoteId, long userId) {
         QuoteView quote = quoteRow(quoteId, false);
@@ -602,7 +549,10 @@ public class BookingPricingService {
         List<String> rows = jdbc.queryForList("SELECT snapshot_json FROM commerce_booking_quote WHERE id=?" + (lock ? " FOR UPDATE" : ""), String.class, quoteId);
         if (rows.isEmpty()) throw missing("报价不存在或已过期清理，请重新报价并确认新方案");
         try {
-            return json.readValue(rows.get(0), QuoteView.class);
+            // 历史报价快照可能带有已移除的 impressionId，读取时忽略未知字段。
+            return json.readerFor(QuoteView.class)
+                    .without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                    .readValue(rows.get(0));
         } catch (Exception error) {
             throw new IllegalStateException("Stored booking quote is invalid", error);
         }

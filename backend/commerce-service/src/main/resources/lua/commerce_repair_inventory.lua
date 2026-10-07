@@ -15,4 +15,5 @@ for index = 3, #ARGV do
   redis.call('sadd', KEYS[3], ARGV[index])
 end
 redis.call('set', KEYS[2], ARGV[2])
+redis.call('publish', 'commerce:inventory:restored', KEYS[2])
 return targetStock

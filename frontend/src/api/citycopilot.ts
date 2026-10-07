@@ -2,7 +2,6 @@ import { deleteData, getData, postData, putData } from './client';
 import type {
   ApiEndpoint,
   ApiErrorDefinition,
-  AiChatRequest,
   AmapPoi,
   AmapServiceStatus,
   AuditStatus,
@@ -22,12 +21,6 @@ import type {
   UserDTO,
   Voucher,
   VoucherOrder,
-  AgentSseEvent,
-  AgentTrace,
-  OpsCase,
-  OpsCaseDetail,
-  OpsPlanStep,
-  OpsPlanSubmission,
 } from '../types';
 
 interface PageResult<T> {
@@ -247,81 +240,6 @@ export function syncShopGeoIndex() {
   return postData<number>('/geo/shop-index/sync');
 }
 
-export async function streamAgentChat(
-  payload: AiChatRequest,
-  onEvent: (event: AgentSseEvent) => void,
-) {
-  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api';
-  const token = sessionStorage.getItem('token');
-  const response = await fetch(`${baseURL}/agent/chat`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: token } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(`Agent chat failed: HTTP ${response.status}`);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split(/\r?\n\r?\n/);
-    buffer = frames.pop() || '';
-    frames.forEach((frame) => {
-      const parsed = parseSseFrame(frame);
-      if (parsed) {
-        onEvent(parsed);
-      }
-    });
-  }
-  const tail = parseSseFrame(buffer);
-  if (tail) {
-    onEvent(tail);
-  }
-}
-
-export function confirmAgentAction(pendingId: string) {
-  return postData<Record<string, unknown>>(`/agent/confirm/${pendingId}`);
-}
-
-export function cancelAgentAction(pendingId: string) {
-  return postData<Record<string, unknown>>(`/agent/confirm/${pendingId}/cancel`);
-}
-
-function parseSseFrame(frame: string): AgentSseEvent | undefined {
-  if (!frame.trim()) {
-    return undefined;
-  }
-  let event = 'message';
-  const dataLines: string[] = [];
-  frame.split(/\r?\n/).forEach((line) => {
-    if (line.startsWith('event:')) {
-      event = line.slice(6).trim();
-    } else if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).trimStart());
-    }
-  });
-  const dataText = dataLines.join('\n');
-  if (!dataText) {
-    return { event };
-  }
-  try {
-    return { event, data: JSON.parse(dataText) };
-  } catch {
-    return { event, data: dataText };
-  }
-}
-
 export function fetchAmapStatus() {
   return getData<AmapServiceStatus>('/geo/amap/status');
 }
@@ -391,40 +309,6 @@ export function fetchAuditStatus() {
   return getData<AuditStatus>('/admin/audit-logs/status');
 }
 
-export function fetchOpsCases(limit = 50) {
-  return getData<OpsCase[]>('/agent/ops/v2/cases', { params: { limit } });
-}
-
-export function fetchOpsCase(caseId: string) {
-  return getData<OpsCaseDetail>(`/agent/ops/v2/cases/${caseId}`);
-}
-
-export function createOpsPlan(
-  caseId: string,
-  diagnosis: Record<string, unknown>,
-  steps: OpsPlanStep[],
-) {
-  return postData<OpsPlanSubmission>(`/agent/ops/v2/cases/${caseId}/plans`, {
-    diagnosis,
-    steps,
-  });
-}
-
-export function decideOpsApproval(approvalId: string, planHash: string, approved: boolean) {
-  return postData<OpsCase>(`/agent/ops/v2/approvals/${approvalId}/decision`, {
-    planHash,
-    approved,
-  });
-}
-
-export function retryOpsCase(caseId: string) {
-  return postData<OpsCase>(`/agent/ops/v2/cases/${caseId}/retry`);
-}
-
-export function cancelOpsCase(caseId: string) {
-  return postData<OpsCase>(`/agent/ops/v2/cases/${caseId}/cancel`);
-}
-
 export function cleanupAuditLogs() {
   return postData<number>('/admin/audit-logs/cleanup');
 }
@@ -460,20 +344,6 @@ export function fetchApiEndpoints() {
 
 export function fetchApiErrors() {
   return getData<ApiErrorDefinition[]>('/admin/api/errors');
-}
-
-export function fetchAgentPing() {
-  return getData<Record<string, unknown>>('/agent/ping');
-}
-
-export function fetchAgentTraces(limit = 50) {
-  return getData<AgentTrace[]>('/agent/traces', {
-    params: { limit },
-  });
-}
-
-export function fetchAgentTrace(traceId: string) {
-  return getData<AgentTrace>(`/agent/traces/${traceId}`);
 }
 
 export async function fetchAdminBlogs(current = 1, keyword?: string) {

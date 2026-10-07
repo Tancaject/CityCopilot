@@ -34,9 +34,10 @@ class CommerceRoleSwitchTest {
                 .withBean(CommerceAdmissionDurabilityService.class, () -> mock(CommerceAdmissionDurabilityService.class))
                 .withBean(CommerceOrderIdGenerator.class, () -> mock(CommerceOrderIdGenerator.class))
                 .withBean(CommerceRedisReplicationExecutor.class, () -> mock(CommerceRedisReplicationExecutor.class))
+                .withInitializer(context -> context.getBeanFactory()
+                        .registerSingleton("commerceReadCache", mock(CommerceReadCache.class)))
                 .withBean(CommerceRedisKeyspace.class, () -> new CommerceRedisKeyspace(1, "v1"))
-                .withBean(CommerceRuntimeMutationLeases.class, () -> mock(CommerceRuntimeMutationLeases.class))
-                .withBean(CommerceRoutingGuard.class, () -> mock(CommerceRoutingGuard.class))
+                .withBean(PlaceAuthorityClient.class, () -> mock(PlaceAuthorityClient.class))
                 .run(context -> {
                     assertThat(context).hasSingleBean(CommerceOrderService.class)
                             .hasSingleBean(CommerceOrderAdmissionService.class)
@@ -77,10 +78,9 @@ class CommerceRoleSwitchTest {
         assertThat(properties.getProperty("spring.task.scheduling.pool.size")).isEqualTo("${CITYCOPILOT_COMMERCE_SCHEDULER_POOL_SIZE:4}");
         assertThat(properties.getProperty("citycopilot.commerce.redis-physical-shard-count")).isEqualTo("${CITYCOPILOT_COMMERCE_REDIS_PHYSICAL_SHARD_COUNT:16}");
         assertThat(properties.getProperty("citycopilot.commerce.redis-routing-generation")).isEqualTo("${CITYCOPILOT_COMMERCE_REDIS_ROUTING_GENERATION:v1}");
-        assertThat(properties.getProperty("citycopilot.commerce.routing-control-auto-initialize")).isEqualTo("${CITYCOPILOT_COMMERCE_ROUTING_CONTROL_AUTO_INITIALIZE:false}");
         assertThat(properties.getProperty("citycopilot.commerce.redis-required-replicas")).isEqualTo("${CITYCOPILOT_COMMERCE_REDIS_REQUIRED_REPLICAS:1}");
         assertThat(properties.getProperty("citycopilot.commerce.redis-replication-timeout-ms")).isEqualTo("${CITYCOPILOT_COMMERCE_REDIS_REPLICATION_TIMEOUT_MS:1000}");
-        assertThat(properties.getProperty("management.endpoint.health.group.readiness.include")).isEqualTo("readinessState,db,redis,commerceRouting");
+        assertThat(properties.getProperty("management.endpoint.health.group.readiness.include")).isEqualTo("readinessState,db,redis");
     }
 
     private void assertSwitch(Class<?> type, String property) {

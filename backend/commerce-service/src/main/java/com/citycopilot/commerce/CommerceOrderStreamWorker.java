@@ -50,7 +50,6 @@ public class CommerceOrderStreamWorker {
     private final ObjectMapper objectMapper;
     private final CommerceAdmissionDurabilityService durableAdmissions;
     private final CommerceRedisKeyspace keyspace;
-    private final CommerceRuntimeMutationLeases runtimeLeases;
     private final CommerceOrderService orders;
     private final CommerceOrderAdmissionService admissions;
     private final CommerceOrderRecoveryStore recovery;
@@ -65,10 +64,12 @@ public class CommerceOrderStreamWorker {
     private static final DefaultRedisScript<Long> ACK_DELETE_SCRIPT =
             CommerceRedisScripts.longScript("lua/commerce_ack_delete.lua");
     private static final Duration PENDING_MIN_IDLE = Duration.ofSeconds(30);
+    /** 只在读取开始失败和恢复时各记一次日志，避免 50ms 轮询在故障期间刷屏。 */
+    private volatile boolean streamReadFailing;
 
     public CommerceOrderStreamWorker(JdbcTemplate jdbc, StringRedisTemplate redis, TransactionTemplate transactions,
             ObjectMapper objectMapper, CommerceAdmissionDurabilityService durableAdmissions,
-            CommerceRedisKeyspace keyspace, CommerceRuntimeMutationLeases runtimeLeases,
+            CommerceRedisKeyspace keyspace,
             CommerceOrderService orders, CommerceOrderAdmissionService admissions, CommerceOrderRecoveryStore recovery,
             @Value("${citycopilot.commerce.consumer-name:commerce-local}") String consumerName,
             @Value("${citycopilot.commerce.stream-worker-enabled:${citycopilot.commerce.stream-enabled:true}}") boolean streamEnabled,
@@ -80,7 +81,6 @@ public class CommerceOrderStreamWorker {
         this.objectMapper = objectMapper;
         this.durableAdmissions = durableAdmissions;
         this.keyspace = keyspace;
-        this.runtimeLeases = runtimeLeases;
         this.orders = orders;
         this.admissions = admissions;
         this.recovery = recovery;
@@ -140,12 +140,19 @@ public class CommerceOrderStreamWorker {
                         StreamReadOptions.empty().count(streamBatchSize),
                         StreamOffset.create(stream, ReadOffset.lastConsumed())
                 );
+                if (streamReadFailing) {
+                    streamReadFailing = false;
+                    log.info("Commerce shard stream {} is readable again", stream);
+                }
                 if (records == null) continue;
                 for (MapRecord<String, Object, Object> record : records) {
                     processSafely(record, 1L);
                 }
             } catch (Exception unavailable) {
-                log.debug("Commerce shard stream {} is temporarily unavailable", stream);
+                if (!streamReadFailing) {
+                    streamReadFailing = true;
+                    log.warn("Commerce shard stream {} is unavailable; new orders are not being consumed", stream, unavailable);
+                }
             }
         }
     }
@@ -831,9 +838,12 @@ public class CommerceOrderStreamWorker {
         }
     }
 
-    /**
-     * 重试取消/退款后仍处于 RESTORE_PENDING 的 Redis 库存恢复，不重复增加 MySQL 库存。
-     */
+    @Scheduled(fixedDelay = 5000, initialDelay = 5000)
+    public void expireDueOrders() {
+        if (streamEnabled) orders.expireDueOrders();
+    }
+
+    /** 重试取消/退款后仍处于 RESTORE_PENDING 的 Redis 库存恢复，不重复增加 MySQL 库存。 */
     @Scheduled(
             fixedDelayString = "${citycopilot.commerce.inventory-recovery-ms:5000}",
             initialDelayString = "${citycopilot.commerce.inventory-recovery-ms:5000}"
@@ -843,34 +853,37 @@ public class CommerceOrderStreamWorker {
         List<Map<String, Object>> pending;
         try {
             pending = jdbc.queryForList("""
-                    SELECT source_id,order_id,voucher_id,inventory_fence_token
-                    FROM commerce_order_recovery
-                    WHERE source_type='STATE_TRANSITION' AND phase=?
-                    ORDER BY created_at
+                    SELECT r.source_id,r.order_id,r.voucher_id,r.user_id,r.inventory_fence_token,o.status
+                    FROM commerce_order_recovery r JOIN commerce_order o ON o.id=r.order_id
+                    WHERE r.source_type='STATE_TRANSITION' AND r.phase=?
+                    ORDER BY r.created_at
                     LIMIT 100
                     """, PHASE_RESTORE_PENDING);
         } catch (Exception unavailable) {
+            log.warn("Unable to query pending Commerce inventory restores", unavailable);
             return;
         }
         for (Map<String, Object> row : pending) {
-            try (CommerceRuntimeMutationLeases.MutationLease lease =
-                         runtimeLeases == null ? null : runtimeLeases.acquireRecoveryMutation()) {
-                orders.attemptTransitionInventoryRestore(
+            try {
+                transactions.executeWithoutResult(tx -> {
+                    var claimed = jdbc.queryForList("""
+                            SELECT source_id FROM commerce_order_recovery
+                            WHERE source_id=? AND phase=? FOR UPDATE SKIP LOCKED
+                            """, String.class, row.get("source_id"), PHASE_RESTORE_PENDING);
+                    if (claimed.isEmpty()) return;
+                    orders.attemptTransitionInventoryRestore(
                         String.valueOf(row.get("source_id")),
                         ((Number) row.get("order_id")).longValue(),
                         ((Number) row.get("voucher_id")).longValue(),
-                        String.valueOf(row.get("inventory_fence_token")),
-                        lease
-                );
-                assertLease(lease);
+                        ((Number) row.get("user_id")).longValue(),
+                        ((Number) row.get("status")).intValue() == 4,
+                        String.valueOf(row.get("inventory_fence_token"))
+                    );
+                });
             } catch (Exception failure) {
                 log.warn("Unable to resume inventory restore for {}", row.get("source_id"));
             }
         }
-    }
-
-    private void assertLease(CommerceRuntimeMutationLeases.MutationLease lease) {
-        if (lease != null) lease.renewAndAssert();
     }
 
     /**
@@ -888,7 +901,7 @@ public class CommerceOrderStreamWorker {
         Integer existingPurchase = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM (
                     SELECT id AS order_id FROM commerce_order
-                    WHERE user_id=? AND voucher_id=? AND id<>?
+                    WHERE user_id=? AND voucher_id=? AND id<>? AND status<>4
                     UNION
                     SELECT order_id FROM commerce_reservation
                     WHERE user_id=? AND voucher_id=? AND order_id<>?

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { AlertCircle, BadgeCheck, Heart, Loader2, MapPin, Navigation, RefreshCw, Sparkles, Store, Ticket } from '@lucide/vue';
+import { AlertCircle, BadgeCheck, CalendarDays, Heart, Loader2, MapPin, Navigation, RefreshCw, Sparkles, Store, Ticket } from '@lucide/vue';
 import { fetchBlog, fetchHotBlogs, fetchShopTypes, likeBlog } from '../api/citycopilot';
 import ConsumerLocationSelector from '../components/ConsumerLocationSelector.vue';
 import { authState } from '../composables/auth';
@@ -268,9 +268,9 @@ onMounted(() => {
       <span>优惠券、秒杀、订单轮询和核销形成闭环，项目不再只是点评式内容页。</span>
     </article>
     <article>
-      <Sparkles :size="19" aria-hidden="true" />
-      <strong>AI 应该缩短路径</strong>
-      <span>助手会保留页面上下文，后续会继续升级成右侧任务面板而不是普通聊天窗。</span>
+      <CalendarDays :size="19" aria-hidden="true" />
+      <strong>预约先锁位</strong>
+      <span>选好时段先锁定名额，确认前不会被别人抢走；超时未确认自动释放。</span>
     </article>
   </section>
 </template>

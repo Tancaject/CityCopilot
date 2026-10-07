@@ -1,16 +1,14 @@
 # Resume Bullets - CityCopilot
 
-**Project: CityCopilot - Acting AI Agent for Local Life Services**  
-Tech: Java 17, Spring Boot 3.2, MyBatis-Plus, MySQL, Redis, Resilience4j, Micrometer, Prometheus, Vue 3, TypeScript
+**Project: CityCopilot - High-Concurrency Local-Life Transaction Backend**  
+Tech: Java 17, Spring Boot, MyBatis-Plus, MySQL, Redis, Lua, Redis Stream, RocketMQ, Prometheus, Vue 3
 
-- Built a modular-monolith AI Agent platform with 4 Maven backend modules (`core`, `agent`, `mcp-server`, `eval`) and a Vue 3 frontend, separating business services, agent orchestration, MCP exposure, and evaluation.
-- Designed a Spring bean based Tool Registry with `@AgentTool`, exposing 27 local-life business tools through both Agent orchestration and MCP-style tool surfaces with one registration model.
-- Implemented dual orchestration modes: ReAct for simple user intents and LLM-first Plan-Execute-Replan for multi-step flows, including `$stepN.field` reference resolution and retryable-failure replanning.
-- Added multi-agent safeguards: Dialog Agent over SSE, Ops Agent structured task processors with live ToolGateway execution, and Critic Agent review before high-risk operations such as order, payment, refund, follow, and batch geo tasks.
-- Hardened tool execution with permission checks, parameter validation, standardized tool errors, audit logging, Resilience4j retry/rate-limit/circuit-breaker/timeout controls, and protected trace APIs.
-- Implemented eval harness with 30 YAML cases, Markdown reporting, and failure-reason distribution. Latest offline run: 100% mode accuracy, 100% tool-call accuracy, 100% keyword accuracy, 0 ms average eval latency, and 27 estimated tokens per case.
-- Added observability through Actuator, Prometheus scrape config, Grafana dashboard JSON, and custom Micrometer metrics for tool and LLM calls.
-- Implemented mixed nearby discovery that merges orderable local shops with AMap POI results from the shared consumer location state, preserving source, orderability, and routing hints for UI and Agent flows.
-- Captured seckill load-test evidence: 200 concurrent users at about 2700 QPS with P99 105 ms and 0% errors; 5000 users competing for 100 stock completed with zero oversell.
+- Split the transaction domain into an independent Commerce service that exclusively owns voucher, order, and booking writes; Core handles identity, permissions, and public APIs, and fails closed instead of falling back to local writes when Commerce is unavailable.
+- Built seckill admission as one Redis Lua script that atomically checks the campaign window, stock, one-order-per-user, and the caller's idempotency key, then reserves stock and enqueues the order command; a MySQL admission ledger records every admission so an unknown outcome can be retried with the same key.
+- Moved order persistence off the request path with Redis Stream consumer groups; workers commit order, recovery state, and Outbox in one MySQL transaction, pending entries are reclaimed after a crash, and orders that exhaust retries land in a dead-letter table that admins can replay idempotently.
+- Delivered cross-service events with a transactional Outbox relay (claim tokens and fencing) to RocketMQ and an Inbox on the consumer side for deduplication.
+- Added scheduled MySQL/Redis stock reconciliation that fences new admissions on drift and lets an admin repair stock only with a fresh evidence hash, with every repair and replay written to the audit log.
+- Modeled venue and restaurant booking with conditional MySQL updates, a consistent lock order, and idempotent commands for capacity holds, atomic reschedules, expiry release, and check-in.
+- Kept shop GEO as a versioned Redis projection fed by a same-transaction Outbox with fenced rebuilds, so stale writes cannot overwrite newer data and nearby search falls back to MySQL when Redis is unavailable.
 
-Open before final resume use: run live provider eval with DashScope credentials using the eval provider mode, perform real MySQL/Redis/AMap/DashScope acceptance, capture MCP client smoke evidence, tune live Ops Agent task payloads, and record a final demo.
+Measured throughput, latency, workload sizes and fault-recovery results have one source: [E6 evidence](evidence/2026-07-26-e6-performance-and-recovery.md). Use the stated workload and environment alongside any number copied into a resume.

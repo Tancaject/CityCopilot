@@ -14,11 +14,7 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "citycopilot.projection")
 public class ShopProjectionProperties {
 
-    /** 在业务事务中追加 ShopChanged Outbox，避免同时双写 MySQL 与投影。 */
-    private boolean outboxEnabled = true;
 
-    /** 仅供兼容旧部署的事务后直写开关，生产环境应保持关闭。 */
-    private boolean legacyAfterCommitEnabled = false;
 
     /** 当前实例承担的 API、投影消费和对账角色。 */
     private Roles roles = new Roles();

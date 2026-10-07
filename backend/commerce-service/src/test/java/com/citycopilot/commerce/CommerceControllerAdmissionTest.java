@@ -9,7 +9,6 @@ import java.net.URI;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CommerceControllerAdmissionTest {
@@ -17,8 +16,7 @@ class CommerceControllerAdmissionTest {
     @Test
     void newlyAcceptedAdmissionUsesHttp202() {
         CommerceOrderAdmissionService orders = mock(CommerceOrderAdmissionService.class);
-        CommerceRoutingGuard routing = mock(CommerceRoutingGuard.class);
-        CommerceController controller = controller(orders, routing);
+        CommerceController controller = controller(orders);
         AdmissionAccepted body = new AdmissionAccepted("300", "processing", "COMMERCE_ORDER_ACCEPTED", "request-1");
         when(orders.seckill(100L, 200L, "request-1")).thenReturn(body);
 
@@ -29,14 +27,12 @@ class CommerceControllerAdmissionTest {
         assertThat(response.getHeaders().getLocation())
                 .isEqualTo(URI.create("/commerce/v1/orders/300"));
         assertThat(response.getBody()).isEqualTo(body);
-        verify(routing).requireAdmissionActive(100L);
     }
 
     @Test
     void idempotentReplayUsesHttp200() {
         CommerceOrderAdmissionService orders = mock(CommerceOrderAdmissionService.class);
-        CommerceRoutingGuard routing = mock(CommerceRoutingGuard.class);
-        CommerceController controller = controller(orders, routing);
+        CommerceController controller = controller(orders);
         AdmissionAccepted body = new AdmissionAccepted("300", "processing", "IDEMPOTENT_REPLAY", "request-1");
         when(orders.seckill(100L, 200L, "request-1")).thenReturn(body);
 
@@ -49,17 +45,14 @@ class CommerceControllerAdmissionTest {
         assertThat(response.getBody()).isEqualTo(body);
     }
 
-    private CommerceController controller(
-            CommerceOrderAdmissionService orders,
-            CommerceRoutingGuard routing
-    ) {
+    private CommerceController controller(CommerceOrderAdmissionService orders) {
         return new CommerceController(
                 mock(CommerceOrderService.class),
                 orders,
                 mock(CommerceVoucherService.class),
                 mock(CommerceConsistencyService.class),
                 mock(CommerceOperationsService.class),
-                routing
+                mock(CommercePaymentService.class)
         );
     }
 }

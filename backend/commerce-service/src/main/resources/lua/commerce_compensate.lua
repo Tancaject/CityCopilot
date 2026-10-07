@@ -43,4 +43,5 @@ else
 end
 redis.call('del', KEYS[3])
 redis.call('set', KEYS[4], '1')
+redis.call('publish', 'commerce:inventory:restored', KEYS[1])
 return 1

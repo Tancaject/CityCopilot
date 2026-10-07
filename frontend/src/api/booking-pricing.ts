@@ -22,12 +22,12 @@ export interface BookingQuote {
   offerId: string | null; offerVersion: number | null; offerTitle: string | null; includedItems: string | null;
   excludedItems: string | null; unitPriceCents: number | null; currency: string; baseCents: number | null;
   discountLines: BookingDiscount[]; totalCents: number | null; expiresAt: string;
-  source: string; impressionId: string | null; requestId: string | null;
+  source: string; requestId: string | null;
 }
 export interface QuoteRequest extends BookingTarget {
   offerId?: string; couponMode: 'AUTO' | 'NONE' | 'MANUAL'; couponIds: string[];
   purpose: 'CREATE' | 'RESCHEDULE'; bookingId?: string; expectedBookingVersion?: number; source: string;
-  impressionId?: string; requestId?: string;
+  requestId?: string;
 }
 export const fetchBookingOffers = (id: string, admin = false) => getData<BookingOffer[]>(`${admin ? '/admin' : ''}/booking-resources/${id}/offers`);
 export const fetchCouponRules = (id: string, admin = false) => getData<CouponRule[]>(`${admin ? '/admin' : ''}/shops/${id}/booking-coupon-rules`);

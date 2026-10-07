@@ -9,17 +9,17 @@
 - 后端启动时把 `shop.x`、`shop.y` 同步到 Redis GEO；只有 `geo_status = 'verified'` 的店铺可进入索引。
 - Redis GEO 同时维护全量索引 `shop:geo:all` 和类型索引 `shop:geo:{typeId}`。
 - 当前消费主链路统一使用 `/shop/discovery`：Redis GEO 先返回附近本地店铺 ID，MySQL 回表确认状态并补齐详情，再与高德 POI 合并。
-- `/shop/nearby` 和 `/shop/of/type` 的坐标查询仅作为兼容入口，内部委托同一个本地发现 Provider，不再维护独立 GEO 查询实现。
+- 旧的 `/shop/nearby` 和 `/shop/of/type` 兼容入口没有调用方，已于 2026-10 移除。
 - 本地发现支持 `mysql`、`shadow`、`redis` 三种模式；默认使用 Redis，索引未就绪或 Redis 异常时按经纬度包围盒查询 MySQL 并用 Haversine 精确过滤。
-- Redis GEO 全量或增量更新期间移除 generation 标记；成功后发布新 generation，查询前后代次不一致时丢弃结果并走 MySQL 降级。店铺写入在 MySQL 事务提交后更新索引，失败会把本进程标记为 stale，最长 60 秒自动尝试全量修复。
+- Redis GEO 全量或增量更新期间移除 generation 标记；成功后发布新 generation，查询前后代次不一致时丢弃结果并走 MySQL 降级。店铺写入与 `shop_projection_outbox` 同事务提交，由投影器按版本更新索引（见 ADR-0010）。
 - 当前 Compose 拓扑只运行一个 Core 写实例，因此使用 JVM 内同步即可；扩展为多 Core 写实例前，必须增加分布式互斥或版本化索引 Key 原子切换，不能直接横向扩容。
-- 新增 `/geo/geocode`，用于通过高德 Web 服务把地址解析为经纬度。
+- 地址解析能力由 `geocode_address` Tool 提供（原 `/geo/geocode` HTTP 接口已于 2026-10 移除）。
 - 新增 `POST /geo/shops/{id}/geocode`，用于按店铺地址调用高德 geocode 并写回 `x/y/adcode/geo_source/geo_status`。
 - 新增 `GET /geo/shops/{id}/pois`，用于按店铺名搜索高德 POI 候选。
 - 新增 `POST /geo/shops/{id}/poi`，用于确认某个 POI 并写回 `poi_id/x/y/adcode/geo_source/geo_status`。
 - 前端店铺列表新增“附近优先”入口，店铺详情新增位置面板。
 - 前端新增 `/admin/geo-shops` 店铺地理校准台，支持店铺搜索、状态筛选、POI 候选确认、地址解析、手动写回坐标和 Redis GEO 重建。
-- 地理校准台和 `/geo/**`、`/shop/{id}/geo`、`POST/PUT /shop`、`POST /voucher`、`POST /voucher/seckill` 等写接口已接入权限码校验，当前支持 `admin`、`geo_operator`、`auditor`、`merchant` 等角色映射。
+- 地理校准台和 `/geo/**`、`/shop/{id}/geo`、`POST/PUT /shop`、`POST /voucher` 等写接口已接入权限码校验，当前支持 `admin`、`geo_operator`、`auditor`、`merchant` 等角色映射。
 - 角色权限映射已升级为配置驱动，默认由 `citycopilot.security.role-permissions` 提供；`/user/me` 会返回当前用户权限，前端导航和路由守卫只做体验层判断。
 - 新增 `POST /geo/shops/batch-geocode`、`GET /geo/batch-jobs`、`GET /geo/batch-jobs/{jobId}`、`GET /geo/batch-jobs/{jobId}/items`、`POST /geo/batch-jobs/{jobId}/cancel`、`POST /geo/batch-jobs/{jobId}/retry`，用于批量解析缺坐标店铺、查询任务进度、取消任务和重试失败明细。
 - 批量任务落库到 `tb_geo_batch_job` 和 `tb_geo_batch_job_item`，服务重启后仍能查询任务和单店处理明细。

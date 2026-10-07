@@ -40,11 +40,9 @@ citycopilot:
     inventory-bootstrap-enabled: ${CITYCOPILOT_COMMERCE_INVENTORY_BOOTSTRAP_ENABLED:false}
     redis-physical-shard-count: ${CITYCOPILOT_COMMERCE_REDIS_PHYSICAL_SHARD_COUNT:16}
     redis-routing-generation: ${CITYCOPILOT_COMMERCE_REDIS_ROUTING_GENERATION:v1}
-    routing-control-auto-initialize: ${CITYCOPILOT_COMMERCE_ROUTING_CONTROL_AUTO_INITIALIZE:false}
     stream-max-deliveries: ${CITYCOPILOT_COMMERCE_STREAM_MAX_DELIVERIES:10}
     redis-required-replicas: ${CITYCOPILOT_COMMERCE_REDIS_REQUIRED_REPLICAS:1}
     redis-replication-timeout-ms: ${CITYCOPILOT_COMMERCE_REDIS_REPLICATION_TIMEOUT_MS:1000}
-    redis-require-all-replicas: ${CITYCOPILOT_COMMERCE_REDIS_REQUIRE_ALL_REPLICAS:true}
     admission-recovery-batch-size: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_BATCH_SIZE:100}
     admission-recovery-min-age-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_MIN_AGE_MS:5000}
     admission-recovery-lease-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_LEASE_MS:30000}
@@ -66,7 +64,7 @@ management:
         liveness:
           include: livenessState,ping
         readiness:
-          include: readinessState,db,redis,commerceRouting
+          include: readinessState,db,redis
   health:
     db:
       enabled: true

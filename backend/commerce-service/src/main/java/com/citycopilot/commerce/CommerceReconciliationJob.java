@@ -45,24 +45,31 @@ public class CommerceReconciliationJob {
     private final CommerceRedisCampaignMetadata campaignMetadata;
     /** 序列化 Outbox 事件信封。 */
     private final ObjectMapper objectMapper;
+    private final CommerceJobLease leases;
 
     public CommerceReconciliationJob(
             JdbcTemplate jdbc,
             StringRedisTemplate redis,
             CommerceConsistencyService consistency,
             CommerceRedisCampaignMetadata campaignMetadata,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            CommerceJobLease leases
     ) {
         this.jdbc = jdbc;
         this.redis = redis;
         this.consistency = consistency;
         this.campaignMetadata = campaignMetadata;
         this.objectMapper = objectMapper;
+        this.leases = leases;
     }
 
     /** 按主键分批扫描本轮上界内的 Voucher；单个失败不终止后续巡检。 */
     @Scheduled(fixedDelayString = "${citycopilot.commerce.reconciliation-ms:5000}")
     void reconcile() {
+        leases.acquire("stock-reconciliation").ifPresent(this::reconcile);
+    }
+
+    private void reconcile(CommerceJobLease.Lease lease) {
         Long highWatermark = jdbc.queryForObject("SELECT MAX(voucher_id) FROM commerce_seckill_voucher", Long.class);
         if (highWatermark == null) return;
         long afterId = 0;
@@ -76,7 +83,9 @@ public class CommerceReconciliationJob {
             if (voucherIds.isEmpty()) break;
             for (Long voucherId : voucherIds) {
                 try {
-                    reconcileVoucher(voucherId);
+                    lease.runFenced(() -> reconcileVoucher(voucherId));
+                } catch (CommerceJobLease.LeaseLostException lost) {
+                    throw lost;
                 } catch (RuntimeException failure) {
                     log.error(
                             "Commerce reconciliation failed for voucher {}; continuing with remaining vouchers",
@@ -95,7 +104,7 @@ public class CommerceReconciliationJob {
      * @param voucherId 待巡检的 Voucher ID
      */
     private void reconcileVoucher(long voucherId) {
-        // 该任务按单实例部署。以数据库为准重发元数据，可修复管理更新回滚或 afterCommit 刷新失败；
+        // 以数据库为准重发元数据，可修复管理更新回滚或 afterCommit 刷新失败；
         // 刷新异常会删除元数据键，使准入继续失败关闭。
         campaignMetadata.refreshAfterCommit(voucherId);
         Map<String, Object> snapshot = consistency.snapshotForReconciliation(voucherId);

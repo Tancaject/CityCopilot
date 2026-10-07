@@ -39,7 +39,8 @@ class PlaceAuthorityDeadlineTest {
             long start = System.nanoTime();
             var error = catchThrowableOfType(() -> client.requireWriteAuthority(7, 9, false), CommerceApiException.class);
             assertThat(error.code()).isEqualTo("COMMERCE_PLACE_UNAVAILABLE");
-            assertThat(seen.get()).isBetween(inherited - 5, inherited + 5);
+            // 透传的是上游截止时间（约 700ms 后），而非本地 5s 预算；时钟换算允许几十毫秒误差。
+            assertThat(seen.get()).isBetween(inherited - 50, inherited + 50);
             assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(2));
         } finally {
             release.countDown(); server.stop(0); workers.shutdownNow();

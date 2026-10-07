@@ -1,0 +1,32 @@
+{
+  "project": "citycopilot-redesign-load",
+  "scenarios": {
+    "topology": {
+      "core": 2,
+      "commerce": 2,
+      "coreUpstreams": [
+        "172.24.0.10:8081",
+        "172.24.0.11:8081"
+      ]
+    },
+    "stableLeader": {
+      "held": true,
+      "owner": "e2b84f99ea90:52d86e0d-b545-41ab-8308-5a97ca035c74",
+      "token": 1
+    },
+    "leaderFailover": {
+      "before": {
+        "held": true,
+        "owner": "e2b84f99ea90:52d86e0d-b545-41ab-8308-5a97ca035c74",
+        "token": 1
+      },
+      "after": {
+        "held": true,
+        "owner": "da33dfcc65e2:5d8dfeaf-2434-4f66-bb50-75edd88b92b6",
+        "token": 2
+      },
+      "observedSeconds": 32.062
+    }
+  },
+  "passed": true
+}

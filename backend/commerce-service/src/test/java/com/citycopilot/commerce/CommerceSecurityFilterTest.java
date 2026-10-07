@@ -4,8 +4,10 @@ import com.citycopilot.commerce.booking.BookingPolicy;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.RequestDispatcher;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -17,9 +19,11 @@ class CommerceSecurityFilterTest {
     void bindsReceiverOverlapAndAnIndependentBookingSecretFromApplicationConfiguration() throws Exception {
         var sources = new YamlPropertySourceLoader().load("commerce", new ClassPathResource("application.yaml"));
         new ApplicationContextRunner()
-                .withUserConfiguration(CommerceSecurityFilter.class, BookingPolicy.class)
-                .withInitializer(context -> sources
-                        .forEach(source -> context.getEnvironment().getPropertySources().addLast(source)))
+                .withUserConfiguration(CommerceWebConfig.class, BookingPolicy.class)
+                .withInitializer(context -> {
+                    context.getBeanFactory().setConversionService(ApplicationConversionService.getSharedInstance());
+                    sources.forEach(source -> context.getEnvironment().getPropertySources().addLast(source));
+                })
                 .withPropertyValues("CITYCOPILOT_INTERNAL_COMMERCE_TOKEN=new",
                         "CITYCOPILOT_INTERNAL_COMMERCE_PREVIOUS_TOKEN=old",
                         "CITYCOPILOT_BOOKING_CHECKIN_SECRET=stable-signing-secret")
@@ -28,8 +32,9 @@ class CommerceSecurityFilterTest {
                     assertThat(context.getBean(BookingPolicy.class).checkinSecret()).isEqualTo("stable-signing-secret");
                     MockHttpServletRequest request = new MockHttpServletRequest("GET", "/commerce/v1/orders/1");
                     request.addHeader("X-CityCopilot-Service-Token", "old");
-                    assertThat(context.getBean(CommerceSecurityFilter.class)
-                            .authenticate(request, new MockHttpServletResponse())).isTrue();
+                    assertThat(context.getBean("commerceAuthentication", FilterRegistrationBean.class)
+                            .getFilter() instanceof CommerceSecurityFilter filter
+                            && filter.authenticate(request, new MockHttpServletResponse())).isTrue();
                 });
     }
 

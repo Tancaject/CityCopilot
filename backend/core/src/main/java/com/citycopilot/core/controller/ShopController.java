@@ -5,10 +5,9 @@ import cn.hutool.core.util.StrUtil;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.ShopGeoUpdateDTO;
 import com.citycopilot.core.entity.Shop;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IShopService;
-import com.citycopilot.core.service.discovery.LegacyShopGeoQueryAdapter;
 import com.citycopilot.core.service.discovery.ShopDiscoveryQuery;
 import com.citycopilot.core.service.discovery.ShopDiscoveryService;
 import org.springframework.web.bind.annotation.*;
@@ -39,9 +38,6 @@ public class ShopController {
     @Resource
     private ShopDiscoveryService shopDiscoveryService;
 
-    /** 旧版附近接口适配器，保留既有店铺字段与距离排序响应。 */
-    @Resource
-    private LegacyShopGeoQueryAdapter legacyShopGeoQueryAdapter;
 
     /**
      * 查询店铺详情。
@@ -93,50 +89,6 @@ public class ShopController {
     public Result updateShopGeo(@PathVariable("id") Long id, @RequestBody ShopGeoUpdateDTO request) {
         request.setId(id);
         return shopService.updateShopGeo(request);
-    }
-
-    /**
-     * 按分类分页查询店铺；携带坐标时切换为附近查询。
-     *
-     * @param typeId 店铺分类主键
-     * @param current 页码，默认第 1 页
-     * @param size 可选页大小，受 GEO 配置上限约束
-     * @param x 可选中心经度，必须与纬度同时有效
-     * @param y 可选中心纬度，必须与经度同时有效
-     * @return 普通分类列表，或按距离排序的旧版 GEO 列表
-     */
-    @GetMapping("/of/type")
-    public Result queryShopByType(
-            @RequestParam("typeId") Integer typeId,
-            @RequestParam(value = "current", defaultValue = "1") Integer current,
-            @RequestParam(value = "size", required = false) Integer size,
-            @RequestParam(value = "x",required = false)Double x,
-            @RequestParam(value = "y",required = false)Double y
-    ) {
-        if (x == null && y == null) {
-            return shopService.queryShopByType(typeId, current, size);
-        }
-        // 旧 URL 的坐标语义集中交给适配器校验，避免控制器复制 GEO 查询规则。
-        return legacyShopGeoQueryAdapter.queryByType(typeId, current, size, x, y);
-    }
-
-    /**
-     * 查询中心点附近的本地可下单店铺。
-     *
-     * @param current 页码，默认第 1 页
-     * @param size 可选页大小
-     * @param x 中心经度
-     * @param y 中心纬度
-     * @return 兼容旧协议的距离排序店铺列表
-     */
-    @GetMapping("/nearby")
-    public Result queryNearbyShops(
-            @RequestParam(value = "current", defaultValue = "1") Integer current,
-            @RequestParam(value = "size", required = false) Integer size,
-            @RequestParam("x") Double x,
-            @RequestParam("y") Double y
-    ) {
-        return legacyShopGeoQueryAdapter.queryNearby(current, size, x, y);
     }
 
     /**

@@ -42,10 +42,9 @@ final class CommerceAdmissionDurabilityService {
 
     /** 持久化幂等身份、状态转换和恢复 claim。 */
     private final JdbcTemplate jdbc;
+    private final CommerceReadCache readCache;
     /** 新身份首次准备时分配订单 ID。 */
     private final CommerceOrderIdGenerator orderIds;
-    /** PREPARED 行跨代际重绑前后复核准入门禁。 */
-    private final CommerceRoutingGuard routingGuard;
     /** 当前实例拥有的路由代际指纹。 */
     private final String routingGeneration;
     /** 当前实例拥有的物理分片数指纹。 */
@@ -84,7 +83,6 @@ final class CommerceAdmissionDurabilityService {
             JdbcTemplate jdbc,
             CommerceOrderIdGenerator orderIds,
             CommerceRedisKeyspace keyspace,
-            CommerceRoutingGuard routingGuard,
             MeterRegistry metrics,
             @Value("${citycopilot.commerce.admission-recovery-batch-size:100}") int recoveryBatchSize,
             @Value("${citycopilot.commerce.admission-recovery-min-age-ms:5000}") long recoveryMinAgeMillis,
@@ -94,7 +92,8 @@ final class CommerceAdmissionDurabilityService {
             @Value("${citycopilot.commerce.admission-max-backlog:50000}") long maxAcceptedBacklog,
             @Value("${citycopilot.commerce.admission-max-oldest-age-ms:300000}") long maxAcceptedAgeMillis,
             @Value("${citycopilot.commerce.admission-capacity-cache-ms:1000}") long capacityCacheMillis,
-            @Value("${citycopilot.commerce.consumer-name:commerce-local}") String nodeName
+            @Value("${citycopilot.commerce.consumer-name:commerce-local}") String nodeName,
+            CommerceReadCache readCache
     ) {
         if (recoveryBatchSize < 1 || recoveryBatchSize > 10_000) {
             throw new IllegalArgumentException("Admission recovery batch size must be 1..10000");
@@ -107,8 +106,8 @@ final class CommerceAdmissionDurabilityService {
             throw new IllegalArgumentException("Admission durability thresholds must be positive");
         }
         this.jdbc = jdbc;
+        this.readCache = readCache;
         this.orderIds = orderIds;
-        this.routingGuard = routingGuard;
         this.routingGeneration = keyspace.routingGeneration();
         this.routingShardCount = keyspace.physicalShardCount();
         this.metrics = metrics;
@@ -162,17 +161,13 @@ final class CommerceAdmissionDurabilityService {
                 outcome = evaluated.wasAccepted() ? "accepted_replay" : "prepared_replay";
                 return evaluated;
             }
-            Admission legacyOrder = materializeLegacyOrderIfPresent(
-                    voucherId,
-                    userId,
-                    idempotencyKey,
-                    requestFingerprint,
-                    requiredOrderId
-            );
-            if (legacyOrder != null) {
-                outcome = "legacy_order_replay";
-                return legacyOrder;
+            // 售罄时尚未预扣任何资源，无需持久化决策：不写账本、不消耗订单号，避免售罄洪峰压到 MySQL。
+            // 已有同键身份已在上方返回，因此快速拒绝不会覆盖已接受的请求。
+            if (requiredOrderId == null && readCache.isSoldOut(voucherId)) {
+                outcome = "sold_out";
+                throw new CommerceApiException("SECKILL_STOCK_NOT_ENOUGH", "Voucher stock exhausted", 409);
             }
+            // 历史订单已由 V3 迁移回填为 ORDER_CREATED 账本，同步热路径不再查询订单事实表。
             assertRecoveryCapacity();
             long orderId = requiredOrderId == null ? orderIds.nextId() : requiredOrderId;
             // INSERT IGNORE 只解决并发创建；随后必须重读并逐字段验证究竟是哪一个身份获胜。
@@ -194,7 +189,7 @@ final class CommerceAdmissionDurabilityService {
             outcome = "prepared";
             return evaluated;
         } catch (CommerceApiException known) {
-            if (!"failure".equals(outcome)) {
+            if (!"failure".equals(outcome) && !"sold_out".equals(outcome)) {
                 outcome = "rejected_replay";
             }
             throw known;
@@ -600,16 +595,12 @@ final class CommerceAdmissionDurabilityService {
             );
         }
         Admission current = admission;
-        if (current.status() == Status.PREPARED
-                && !current.matchesRouting(routingGeneration, routingShardCount)) {
-            current = rebindPreparedToActiveRouting(current);
-        }
         return switch (current.status()) {
             case PREPARED -> {
                 if (!current.matchesRouting(routingGeneration, routingShardCount)) {
                     throw new CommerceApiException(
                             "COMMERCE_ADMISSION_ROUTING_CONFLICT",
-                            "Prepared Commerce admission could not be rebound to the active Redis routing generation",
+                            "Prepared Commerce admission belongs to another Redis keyspace configuration",
                             503
                     );
                 }
@@ -624,61 +615,6 @@ final class CommerceAdmissionDurabilityService {
                     503
             );
         };
-    }
-
-    /**
-     * 只把未接受的 PREPARED 身份重绑到本实例当前拥有的路由代际。
-     *
-     * <p>MySQL CAS 前后都检查 Redis 控制记录和分片门禁；并发接受或终态转换会获胜，
-     * 且其路由归属绝不会被该方法移动。</p>
-     */
-    private Admission rebindPreparedToActiveRouting(Admission prepared) {
-        routingGuard.requireAdmissionActive(prepared.voucherId());
-        int changed = jdbc.update("""
-                UPDATE commerce_admission_ledger
-                SET routing_generation=?,physical_shard_count=?,updated_at=CURRENT_TIMESTAMP(3)
-                WHERE order_id=? AND user_id=? AND voucher_id=? AND idempotency_key=?
-                  AND request_fingerprint=? AND status='PREPARED'
-                  AND routing_generation=? AND physical_shard_count=?
-                """, routingGeneration, routingShardCount,
-                prepared.orderId(), prepared.userId(), prepared.voucherId(),
-                prepared.idempotencyKey(), prepared.requestFingerprint(),
-                prepared.routingGeneration(), prepared.routingShardCount());
-
-        Admission current = find(prepared.userId(), prepared.idempotencyKey());
-        if (current == null || !current.sameOrderIdentity(
-                prepared.orderId(),
-                prepared.voucherId(),
-                prepared.userId(),
-                prepared.idempotencyKey(),
-                prepared.requestFingerprint()
-        )) {
-            throw durabilityUnavailable(
-                    "Prepared Commerce admission changed identity during routing rebind",
-                    null
-            );
-        }
-        if (changed == 1) {
-            routingGuard.requireAdmissionActive(prepared.voucherId());
-            if (!current.matchesRouting(routingGeneration, routingShardCount)) {
-                throw durabilityUnavailable(
-                        "Prepared Commerce admission routing rebind was not durable",
-                        null
-                );
-            }
-            count(METRIC_DECISION, "prepared_rebound");
-            return current;
-        }
-        if (changed != 0) {
-            throw durabilityUnavailable(
-                    "Prepared Commerce admission routing rebind affected multiple rows",
-                    null
-            );
-        }
-
-        // 并发请求可能已经重绑 PREPARED，或在原代际完成准入；此时返回重读状态，
-        // 绝不移动 ACCEPTED 或终态行的归属。
-        return current;
     }
 
     private Admission find(long userId, String idempotencyKey) {

@@ -20,12 +20,10 @@ import com.citycopilot.core.entity.User;
 import com.citycopilot.core.mapper.UserMapper;
 import com.citycopilot.core.service.IUserService;
 import com.citycopilot.core.utils.RegexUtils;
-import com.citycopilot.core.utils.UserHolder;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -242,62 +240,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String token = request.getHeader("authorization");
         stringRedisTemplate.delete(LOGIN_USER_KEY + token);
         return Result.ok();
-    }
-
-    @Override
-    public Result sign() {
-        Long userId = UserHolder.getUser().getId();
-        LocalDateTime time = LocalDateTime.now();
-        String keySuffix = time.format(DateTimeFormatter.ofPattern("yyyyMM"));
-        String key=USER_SIGN_KEY+userId+":"+keySuffix;
-        int dayofMonth=time.getDayOfMonth();
-        Boolean signed = stringRedisTemplate.opsForValue().getBit(key, dayofMonth - 1);
-        if (Boolean.TRUE.equals(signed)) {
-            return Result.fail("SIGN_ALREADY_DONE", "今天已经签到了");
-        }
-        // 每月一个 Bitmap，日期减一作为位偏移，单次签到只占一位。
-        stringRedisTemplate.opsForValue().setBit(key,dayofMonth-1,true);
-        return Result.ok();
-    }
-
-    @Override
-    public Result isSignedToday() {
-        Long userId = UserHolder.getUser().getId();
-        LocalDateTime time = LocalDateTime.now();
-        String key = USER_SIGN_KEY + userId + ":" + time.format(DateTimeFormatter.ofPattern("yyyyMM"));
-        Boolean signed = stringRedisTemplate.opsForValue().getBit(key, time.getDayOfMonth() - 1);
-        return Result.ok(Boolean.TRUE.equals(signed));
-    }
-
-    @Override
-    public Result signCount() {
-        Long userId = UserHolder.getUser().getId();
-        LocalDateTime time = LocalDateTime.now();
-        String keySuffix = time.format(DateTimeFormatter.ofPattern("yyyyMM"));
-        String key=USER_SIGN_KEY+userId+":"+keySuffix;
-        int dayofMonth=time.getDayOfMonth();
-        List<Long> results = stringRedisTemplate.opsForValue().bitField(
-                key, BitFieldSubCommands.create().get(BitFieldSubCommands.BitFieldType.unsigned(dayofMonth)).valueAt(0)
-        );
-        if (results==null||results.isEmpty()){
-            return Result.ok(0);
-        }
-        Long num=results.get(0);
-        if (num==null||num==0){
-            return Result.ok(0);
-        }
-
-        // BITFIELD 取出本月至今天的位段，从最低位向前统计连续的 1。
-        int count=0;
-        while (true) {
-            if ((num&1)==0){
-                break;
-            }else {
-                count++;
-            }
-            num>>>=1;
-        }
-        return Result.ok(count);
     }
 
     /**

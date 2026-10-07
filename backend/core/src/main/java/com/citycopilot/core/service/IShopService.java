@@ -1,6 +1,5 @@
 package com.citycopilot.core.service;
 
-import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.ShopGeoUpdateDTO;
 import com.citycopilot.core.dto.ShopViewDTO;
@@ -41,7 +40,6 @@ public interface IShopService {
      * @param id 店铺主键
      * @return 店铺详情或失败结果
      */
-    @AgentTool(name = "get_shop_detail", description = "Get shop detail by shop id")
     Result queryShopById(Long id);
 
     /**
@@ -59,16 +57,6 @@ public interface IShopService {
      * @return 更新结果
      */
     Result update(Shop shop);
-
-    /**
-     * 按店铺类型分页查询。
-     *
-     * @param typeId 店铺类型主键
-     * @param current 从 1 开始的页码
-     * @param size 每页条数
-     * @return 当前页店铺列表
-     */
-    Result queryShopByType(Integer typeId, Integer current, Integer size);
 
     /** @return 按名称模糊匹配的当前页店铺视图；空白名称不附加过滤 */
     Result queryShopByName(String name, Integer current, Integer size);

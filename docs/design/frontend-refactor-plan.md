@@ -1,5 +1,7 @@
 # CityCopilot 前端重构计划
 
+> 2026-10-06：Agent、MCP 与评测模块已从项目移除，本文中与 Agent 消费方案、确认卡片、行为反馈相关的内容仅作历史记录，对应代码已不存在。
+
 ## 目标
 
 把当前嵌在 Spring Boot resources 里的静态 HTML 前端，逐步迁移为独立的 Vue 3 + TypeScript + Vite 应用。后端保持 API 服务职责，Nginx 只作为部署层存在，负责静态资源、SPA fallback、API 反向代理和缓存策略。
@@ -153,7 +155,7 @@ Browser
 - 未支付订单取消已接入 `/voucher-order/{id}/cancel`，并同步回补秒杀库存和用户下单标记。
 - 站内模拟支付已接入 `/voucher-order/{id}/pay`，退款已接入 `/voucher-order/{id}/refund`，运营核销已接入 `/voucher-order/{id}/use`。
 - 运营核销台已接入 `/admin/orders` 和 `/admin/orders/{id}`，由 `order:write` 权限保护。
-- 优惠券配置台已接入 `/admin/vouchers`，由 `voucher:write` 权限保护；旧的 `POST /voucher` 和 `POST /voucher/seckill` 也纳入运营权限拦截。
+- 优惠券配置台已接入 `/admin/vouchers`，由 `voucher:write` 权限保护；旧的 `POST /voucher` 也纳入运营权限拦截（`POST /voucher/seckill` 已于 2026-10 移除）。
 - 秒杀下单前会校验券是否存在、是否上架、是否为秒杀券、是否在活动时间内，并在 Redis 库存缺失时按数据库库存做一次安全初始化。
 - 未登录点击秒杀会跳转登录并保留 redirect。
 - 下单过程中按钮会进入 loading 状态，成功后展示订单号。

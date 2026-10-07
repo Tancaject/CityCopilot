@@ -24,7 +24,7 @@ public final class BookingContracts {
     public record SlotView(String id, String resourceId, Instant startAt, Instant endAt,
                            int capacity, int occupied, int available, String status, long version) {}
     public record HoldRequest(String resourceId, String slotId, int partySize, String quoteId,
-                              String source, String impressionId, String requestId) {}
+                              String source, String requestId) {}
     public record ActionRequest(Long expectedVersion, String reason, String token) {}
     public record RescheduleRequest(Long expectedVersion, String resourceId, String slotId,
                                     int partySize, String quoteId) {}

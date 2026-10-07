@@ -18,10 +18,8 @@ import zipfile
 SERVICES = {
     "core": ("core", "com.citycopilot.core.CityCopilotCoreApplication"),
     "commerce": ("commerce-service", "com.citycopilot.commerce.CityCopilotCommerceApplication"),
-    "agent": ("agent", "com.citycopilot.agent.CityCopilotAgentApplication"),
-    "mcp": ("mcp-server", "com.citycopilot.mcp.CityCopilotMcpServerApplication"),
 }
-DATABASES = ("core", "commerce", "agent")
+DATABASES = ("core", "commerce")
 MANIFEST = "manifest.json"
 
 

@@ -1,0 +1,444 @@
+{
+  "scenario": "sold-out storm: one seckill voucher with stock 100, 5000 distinct users, one request each through Core, concurrency 100",
+  "topology": "Isolated local Compose project citycopilot-redesign-load: 2 Core + 2 Commerce behind nginx loopback listeners, single MySQL/Redis/RocketMQ",
+  "arms": {
+    "before": "Commerce image built with the previous prepare(): sold-out flag checked after an order id is allocated and a REJECTED ledger row is inserted",
+    "after": "Current prepare(): idempotency lookup first, then sold-out returns 409 without ledger write or order id"
+  },
+  "method": "Each arm runs three consecutive rounds on the same containers (round 1 includes JVM warm-up). MySQL counters are SHOW GLOBAL STATUS deltas on commerce-mysql during the storm; an idle window of equal length right after measures background relay/expiry/reconciliation polling.",
+  "client": "Single Python process with 100 threads on the same host; throughput may be client-bound and is not production capacity.",
+  "rounds": [
+    {
+      "arm": "before",
+      "round": 1,
+      "runId": "redesign-22e321e2692c",
+      "passed": true,
+      "capturedAtUtc": "2026-10-07T02:59:21.050474+00:00",
+      "commerceImage": "sha256:f2e8b234c7239cc8e6da1a4e43abe6c9827ad620fe825b25d68e1d082c5db302",
+      "qps": 720.85,
+      "latencyMs": {
+        "samples": 5000,
+        "mean": 136.61,
+        "p50": 115.48,
+        "p95": 283.95,
+        "p99": 392.98,
+        "max": 752.68
+      },
+      "httpStatuses": {
+        "202": 100,
+        "409": 4900
+      },
+      "codes": {
+        "COMMERCE_ORDER_ACCEPTED": 100,
+        "SECKILL_STOCK_NOT_ENOUGH": 4900
+      },
+      "ledgerRowsAdded": 5000,
+      "commerceMysqlDuringStorm": {
+        "Questions": 16233,
+        "Com_select": 10326,
+        "Com_insert": 5182,
+        "Com_update": 574,
+        "Innodb_rows_inserted": 5169
+      },
+      "commerceMysqlIdleSameDuration": {
+        "Questions": 2278,
+        "Com_select": 907,
+        "Com_insert": 246,
+        "Com_update": 780,
+        "Innodb_rows_inserted": 231
+      },
+      "netInsertsAboveIdle": 4936,
+      "netQuestionsAboveIdle": 13955,
+      "invariants": {
+        "users": 100,
+        "active": 100,
+        "ledger": 100,
+        "orders": 100,
+        "dbStock": 0,
+        "redisStock": 0
+      },
+      "cpuByContainer": {
+        "citycopilot-redesign-load-core-2": {
+          "meanPercent": 43.33,
+          "maxPercent": 125.9
+        },
+        "citycopilot-redesign-load-commerce-2": {
+          "meanPercent": 122.62,
+          "maxPercent": 448.44
+        },
+        "citycopilot-redesign-load-commerce-1": {
+          "meanPercent": 114.22,
+          "maxPercent": 430.21
+        },
+        "citycopilot-redesign-load-commerce-mysql-1": {
+          "meanPercent": 36.14,
+          "maxPercent": 77.48
+        },
+        "citycopilot-redesign-load-core-1": {
+          "meanPercent": 48.01,
+          "maxPercent": 137.72
+        }
+      }
+    },
+    {
+      "arm": "before",
+      "round": 2,
+      "runId": "redesign-a5b61cf6b097",
+      "passed": true,
+      "capturedAtUtc": "2026-10-07T02:59:38.837742+00:00",
+      "commerceImage": "sha256:f2e8b234c7239cc8e6da1a4e43abe6c9827ad620fe825b25d68e1d082c5db302",
+      "qps": 744.64,
+      "latencyMs": {
+        "samples": 5000,
+        "mean": 132.58,
+        "p50": 110.4,
+        "p95": 277.8,
+        "p99": 385.67,
+        "max": 701.93
+      },
+      "httpStatuses": {
+        "202": 100,
+        "409": 4900
+      },
+      "codes": {
+        "COMMERCE_ORDER_ACCEPTED": 100,
+        "SECKILL_STOCK_NOT_ENOUGH": 4900
+      },
+      "ledgerRowsAdded": 5000,
+      "commerceMysqlDuringStorm": {
+        "Questions": 16353,
+        "Com_select": 10432,
+        "Com_insert": 5146,
+        "Com_update": 590,
+        "Innodb_rows_inserted": 5136
+      },
+      "commerceMysqlIdleSameDuration": {
+        "Questions": 2373,
+        "Com_select": 908,
+        "Com_insert": 277,
+        "Com_update": 730,
+        "Innodb_rows_inserted": 264
+      },
+      "netInsertsAboveIdle": 4869,
+      "netQuestionsAboveIdle": 13980,
+      "invariants": {
+        "users": 100,
+        "active": 100,
+        "ledger": 100,
+        "orders": 100,
+        "dbStock": 0,
+        "redisStock": 0
+      },
+      "cpuByContainer": {
+        "citycopilot-redesign-load-core-2": {
+          "meanPercent": 32.5,
+          "maxPercent": 72.02
+        },
+        "citycopilot-redesign-load-commerce-1": {
+          "meanPercent": 51.04,
+          "maxPercent": 135.16
+        },
+        "citycopilot-redesign-load-core-1": {
+          "meanPercent": 31.68,
+          "maxPercent": 70.66
+        },
+        "citycopilot-redesign-load-commerce-2": {
+          "meanPercent": 35.54,
+          "maxPercent": 104.17
+        },
+        "citycopilot-redesign-load-commerce-mysql-1": {
+          "meanPercent": 40.31,
+          "maxPercent": 76.76
+        }
+      }
+    },
+    {
+      "arm": "before",
+      "round": 3,
+      "runId": "redesign-f8dbfd74f3bb",
+      "passed": true,
+      "capturedAtUtc": "2026-10-07T02:59:56.148975+00:00",
+      "commerceImage": "sha256:f2e8b234c7239cc8e6da1a4e43abe6c9827ad620fe825b25d68e1d082c5db302",
+      "qps": 760.55,
+      "latencyMs": {
+        "samples": 5000,
+        "mean": 129.9,
+        "p50": 105.1,
+        "p95": 282.24,
+        "p99": 403.68,
+        "max": 723.56
+      },
+      "httpStatuses": {
+        "202": 100,
+        "409": 4900
+      },
+      "codes": {
+        "COMMERCE_ORDER_ACCEPTED": 100,
+        "SECKILL_STOCK_NOT_ENOUGH": 4900
+      },
+      "ledgerRowsAdded": 5000,
+      "commerceMysqlDuringStorm": {
+        "Questions": 16415,
+        "Com_select": 10448,
+        "Com_insert": 5161,
+        "Com_update": 604,
+        "Innodb_rows_inserted": 5152
+      },
+      "commerceMysqlIdleSameDuration": {
+        "Questions": 2322,
+        "Com_select": 890,
+        "Com_insert": 266,
+        "Com_update": 734,
+        "Innodb_rows_inserted": 249
+      },
+      "netInsertsAboveIdle": 4895,
+      "netQuestionsAboveIdle": 14093,
+      "invariants": {
+        "users": 100,
+        "active": 100,
+        "ledger": 100,
+        "orders": 100,
+        "dbStock": 0,
+        "redisStock": 0
+      },
+      "cpuByContainer": {
+        "citycopilot-redesign-load-core-2": {
+          "meanPercent": 13.68,
+          "maxPercent": 64.57
+        },
+        "citycopilot-redesign-load-commerce-mysql-1": {
+          "meanPercent": 21.31,
+          "maxPercent": 78.45
+        },
+        "citycopilot-redesign-load-commerce-1": {
+          "meanPercent": 21.07,
+          "maxPercent": 110.26
+        },
+        "citycopilot-redesign-load-commerce-2": {
+          "meanPercent": 16.85,
+          "maxPercent": 105.81
+        },
+        "citycopilot-redesign-load-core-1": {
+          "meanPercent": 14.9,
+          "maxPercent": 72.28
+        }
+      }
+    },
+    {
+      "arm": "after",
+      "round": 1,
+      "runId": "redesign-41ecc31def5c",
+      "passed": true,
+      "capturedAtUtc": "2026-10-07T02:57:40.745886+00:00",
+      "commerceImage": "sha256:02b8dbe17ffd3bdf4be5f8207e1c9b490585c8dd704d0c05ca3d092cabbac4bf",
+      "qps": 1196.64,
+      "latencyMs": {
+        "samples": 5000,
+        "mean": 82.53,
+        "p50": 69.08,
+        "p95": 188.47,
+        "p99": 358.54,
+        "max": 657.09
+      },
+      "httpStatuses": {
+        "202": 100,
+        "409": 4900
+      },
+      "codes": {
+        "COMMERCE_ORDER_ACCEPTED": 100,
+        "SECKILL_STOCK_NOT_ENOUGH": 4900
+      },
+      "ledgerRowsAdded": 231,
+      "commerceMysqlDuringStorm": {
+        "Questions": 6849,
+        "Com_select": 5634,
+        "Com_insert": 433,
+        "Com_update": 622,
+        "Innodb_rows_inserted": 423
+      },
+      "commerceMysqlIdleSameDuration": {
+        "Questions": 1837,
+        "Com_select": 717,
+        "Com_insert": 216,
+        "Com_update": 585,
+        "Innodb_rows_inserted": 208
+      },
+      "netInsertsAboveIdle": 217,
+      "netQuestionsAboveIdle": 5012,
+      "invariants": {
+        "users": 100,
+        "active": 100,
+        "ledger": 100,
+        "orders": 100,
+        "dbStock": 0,
+        "redisStock": 0
+      },
+      "cpuByContainer": {
+        "citycopilot-redesign-load-commerce-mysql-1": {
+          "meanPercent": 35.94,
+          "maxPercent": 87.83
+        },
+        "citycopilot-redesign-load-commerce-1": {
+          "meanPercent": 170.34,
+          "maxPercent": 435.1
+        },
+        "citycopilot-redesign-load-core-2": {
+          "meanPercent": 155.89,
+          "maxPercent": 489.06
+        },
+        "citycopilot-redesign-load-commerce-2": {
+          "meanPercent": 155.11,
+          "maxPercent": 381.77
+        },
+        "citycopilot-redesign-load-core-1": {
+          "meanPercent": 153.97,
+          "maxPercent": 483.31
+        }
+      }
+    },
+    {
+      "arm": "after",
+      "round": 2,
+      "runId": "redesign-73d8c72df39e",
+      "passed": true,
+      "capturedAtUtc": "2026-10-07T02:58:07.128093+00:00",
+      "commerceImage": "sha256:02b8dbe17ffd3bdf4be5f8207e1c9b490585c8dd704d0c05ca3d092cabbac4bf",
+      "qps": 1453.47,
+      "latencyMs": {
+        "samples": 5000,
+        "mean": 67.84,
+        "p50": 62.76,
+        "p95": 106.9,
+        "p99": 206.73,
+        "max": 380.76
+      },
+      "httpStatuses": {
+        "202": 100,
+        "409": 4900
+      },
+      "codes": {
+        "COMMERCE_ORDER_ACCEPTED": 100,
+        "SECKILL_STOCK_NOT_ENOUGH": 4900
+      },
+      "ledgerRowsAdded": 185,
+      "commerceMysqlDuringStorm": {
+        "Questions": 6815,
+        "Com_select": 5628,
+        "Com_insert": 386,
+        "Com_update": 647,
+        "Innodb_rows_inserted": 381
+      },
+      "commerceMysqlIdleSameDuration": {
+        "Questions": 1624,
+        "Com_select": 621,
+        "Com_insert": 213,
+        "Com_update": 525,
+        "Innodb_rows_inserted": 204
+      },
+      "netInsertsAboveIdle": 173,
+      "netQuestionsAboveIdle": 5191,
+      "invariants": {
+        "users": 100,
+        "active": 100,
+        "ledger": 100,
+        "orders": 100,
+        "dbStock": 0,
+        "redisStock": 0
+      },
+      "cpuByContainer": {
+        "citycopilot-redesign-load-commerce-mysql-1": {
+          "meanPercent": 22.25,
+          "maxPercent": 73.85
+        },
+        "citycopilot-redesign-load-commerce-2": {
+          "meanPercent": 102.18,
+          "maxPercent": 237.55
+        },
+        "citycopilot-redesign-load-commerce-1": {
+          "meanPercent": 97.54,
+          "maxPercent": 228.35
+        },
+        "citycopilot-redesign-load-core-2": {
+          "meanPercent": 146.82,
+          "maxPercent": 426.42
+        },
+        "citycopilot-redesign-load-core-1": {
+          "meanPercent": 157.31,
+          "maxPercent": 454.47
+        }
+      }
+    },
+    {
+      "arm": "after",
+      "round": 3,
+      "runId": "redesign-093dbf970b3d",
+      "passed": true,
+      "capturedAtUtc": "2026-10-07T02:58:18.409610+00:00",
+      "commerceImage": "sha256:02b8dbe17ffd3bdf4be5f8207e1c9b490585c8dd704d0c05ca3d092cabbac4bf",
+      "qps": 1512.16,
+      "latencyMs": {
+        "samples": 5000,
+        "mean": 65.16,
+        "p50": 59.94,
+        "p95": 109.81,
+        "p99": 193.22,
+        "max": 291.84
+      },
+      "httpStatuses": {
+        "202": 100,
+        "409": 4900
+      },
+      "codes": {
+        "COMMERCE_ORDER_ACCEPTED": 100,
+        "SECKILL_STOCK_NOT_ENOUGH": 4900
+      },
+      "ledgerRowsAdded": 218,
+      "commerceMysqlDuringStorm": {
+        "Questions": 7106,
+        "Com_select": 5723,
+        "Com_insert": 474,
+        "Com_update": 710,
+        "Innodb_rows_inserted": 474
+      },
+      "commerceMysqlIdleSameDuration": {
+        "Questions": 1356,
+        "Com_select": 543,
+        "Com_insert": 154,
+        "Com_update": 484,
+        "Innodb_rows_inserted": 144
+      },
+      "netInsertsAboveIdle": 320,
+      "netQuestionsAboveIdle": 5750,
+      "invariants": {
+        "users": 100,
+        "active": 100,
+        "ledger": 100,
+        "orders": 100,
+        "dbStock": 0,
+        "redisStock": 0
+      },
+      "cpuByContainer": {
+        "citycopilot-redesign-load-commerce-1": {
+          "meanPercent": 74.83,
+          "maxPercent": 179.47
+        },
+        "citycopilot-redesign-load-core-1": {
+          "meanPercent": 105.36,
+          "maxPercent": 265.07
+        },
+        "citycopilot-redesign-load-commerce-mysql-1": {
+          "meanPercent": 34.45,
+          "maxPercent": 72.32
+        },
+        "citycopilot-redesign-load-core-2": {
+          "meanPercent": 104.2,
+          "maxPercent": 255.68
+        },
+        "citycopilot-redesign-load-commerce-2": {
+          "meanPercent": 60.95,
+          "maxPercent": 144.63
+        }
+      }
+    }
+  ]
+}

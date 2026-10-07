@@ -40,13 +40,13 @@ class CommerceOrderQueryContractTest {
         doAnswer(call -> List.of(((RowMapper<?>) call.getArgument(1)).mapRow(row, 0)))
                 .when(jdbc).query(anyString(), any(RowMapper.class), any(Object[].class));
         CommerceOrderService service = service(jdbc, null, null);
-        OrderView detail = service.order(ID, 7, false);
+        OrderView detail = service.order(ID, 7, false, false);
         assertThat(detail.id()).isEqualTo(Long.toString(ID));
         assertThat(detail.payValue()).isEqualTo(9900);
         assertThat(detail.payTime()).isNull();
-        verify(jdbc).query(contains("AND user_id=?"), any(RowMapper.class), eq(ID), eq(7L));
-        service.order(ID, 7, true);
-        verify(jdbc).query(argThat((String sql) -> !sql.contains("AND user_id=?")), any(RowMapper.class), eq(ID));
+        verify(jdbc).query(contains("AND user_id=?"), any(RowMapper.class), eq(ID), eq(7L), eq(ID), eq(7L));
+        service.order(ID, 7, true, false);
+        verify(jdbc).query(argThat((String sql) -> !sql.contains("AND user_id=?")), any(RowMapper.class), eq(ID), eq(ID));
         OrderSummary summary = service.myOrders(7, 2).get(0);
         verify(jdbc).query(contains("WHERE user_id=?"), any(RowMapper.class), eq(7L), eq(10));
         assertThat(summary.id()).isEqualTo(detail.id());
@@ -76,7 +76,7 @@ class CommerceOrderQueryContractTest {
                             .hasTime(CREATED.getTime());
                 });
         doReturn(List.of()).when(jdbc).query(anyString(), any(RowMapper.class), any(Object[].class));
-        assertThatThrownBy(() -> service.order(ID, 8, false)).isInstanceOfSatisfying(
+        assertThatThrownBy(() -> service.order(ID, 8, false, false)).isInstanceOfSatisfying(
                 CommerceApiException.class, error -> assertThat(error.code()).isEqualTo("COMMERCE_ORDER_NOT_FOUND"));
     }
 
@@ -98,7 +98,7 @@ class CommerceOrderQueryContractTest {
         when(redis.execute(any(org.springframework.data.redis.core.script.RedisScript.class), anyList(), any(Object[].class)))
                 .thenThrow(new IllegalStateException("Redis unavailable"));
 
-        OrderView result = service(jdbc, redis, transactions).transition(ID, 7, "cancel", null, false);
+        OrderView result = service(jdbc, redis, transactions).transition(ID, 7, "cancel", false, false);
         assertThat(result.inventoryRecovery()).isEqualTo("RESTORE_PENDING");
         assertThat(result.id()).isEqualTo(Long.toString(ID));
         verify(jdbc).update(contains("WHERE id=? AND status=? AND user_id=?"), eq(4), eq(ID), eq(1), eq(7L));
@@ -107,9 +107,67 @@ class CommerceOrderQueryContractTest {
                 anyString(), eq("RESTORE_PENDING"), anyString());
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void adminCancellationRecordsTheOrderOwnerNotTheOperator() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ResultSet row = row();
+        doAnswer(call -> List.of(((RowMapper<?>) call.getArgument(1)).mapRow(row, 0)))
+                .when(jdbc).query(anyString(), any(RowMapper.class), any(Object[].class));
+        when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+        TransactionTemplate transactions = mock(TransactionTemplate.class);
+        when(transactions.execute(any())).thenAnswer(call ->
+                ((TransactionCallback<?>) call.getArgument(0)).doInTransaction(new SimpleTransactionStatus()));
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> values = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.setIfAbsent(anyString(), anyString(), any(java.time.Duration.class))).thenReturn(true);
+        when(redis.execute(any(org.springframework.data.redis.core.script.RedisScript.class), anyList(), any(Object[].class)))
+                .thenThrow(new IllegalStateException("Redis unavailable"));
+
+        OrderView result = service(jdbc, redis, transactions).transition(ID, 99, "cancel", true, false);
+        assertThat(result.inventoryRecovery()).isEqualTo("RESTORE_PENDING");
+        assertThat(result.id()).isEqualTo(Long.toString(ID));
+        verify(jdbc).update(contains("WHERE id=? AND status=?"), eq(4), eq(ID), eq(1));
+        verify(jdbc).update(contains("INSERT INTO commerce_order_recovery"),
+                eq("transition:" + ID + ":cancel:2"), eq(ID), eq(10L), eq(7L),
+                anyString(), eq("RESTORE_PENDING"), anyString());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void merchantScopeRequiresOwnershipOfTheOrderShop() throws Exception {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        ResultSet row = row();
+        doAnswer(call -> List.of(((RowMapper<?>) call.getArgument(1)).mapRow(row, 0)))
+                .when(jdbc).query(anyString(), any(RowMapper.class), any(Object[].class));
+        PlaceAuthorityClient place = mock(PlaceAuthorityClient.class);
+        when(place.requireWriteAuthority(20L, 900L, false))
+                .thenThrow(new CommerceApiException("COMMERCE_SHOP_FORBIDDEN", "Actor does not own the shop", 403));
+        CommerceOrderService service = new CommerceOrderService(jdbc, null, null,
+                JsonMapper.builderWithJackson2Defaults().build(), null, new CommerceRedisKeyspace(1, "v1"), null, place);
+
+        assertThatThrownBy(() -> service.order(ID, 900, false, true))
+                .isInstanceOfSatisfying(CommerceApiException.class, error -> assertThat(error.status()).isEqualTo(403));
+        assertThatThrownBy(() -> service.transition(ID, 900, "use", false, true))
+                .isInstanceOfSatisfying(CommerceApiException.class, error -> assertThat(error.status()).isEqualTo(403));
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
+    }
+
+    @Test
+    void merchantScopeCannotCancelOrRefund() {
+        CommerceOrderService service = service(mock(JdbcTemplate.class), null, null);
+
+        for (String action : List.of("cancel", "refund", "pay")) {
+            assertThatThrownBy(() -> service.transition(ID, 900, action, false, true))
+                    .isInstanceOfSatisfying(CommerceApiException.class,
+                            error -> assertThat(error.code()).isEqualTo("COMMERCE_MERCHANT_ACTION_FORBIDDEN"));
+        }
+    }
+
     private CommerceOrderService service(JdbcTemplate jdbc, StringRedisTemplate redis, TransactionTemplate transactions) {
         return new CommerceOrderService(jdbc, redis, transactions, JsonMapper.builderWithJackson2Defaults().build(),
-                null, new CommerceRedisKeyspace(1, "v1"), null, null, null);
+                null, new CommerceRedisKeyspace(1, "v1"), null, null);
     }
 
     private ResultSet row() throws Exception {
@@ -123,6 +181,8 @@ class CommerceOrderQueryContractTest {
         when(row.getString("voucher_rules_snapshot")).thenReturn("预约后使用");
         when(row.getInt("pay_value_snapshot")).thenReturn(9900);
         when(row.getInt("actual_value_snapshot")).thenReturn(12000);
+        when(row.getObject("pay_value_snapshot", Integer.class)).thenReturn(9900);
+        when(row.getObject("actual_value_snapshot", Integer.class)).thenReturn(12000);
         when(row.getInt("status")).thenReturn(4);
         when(row.getInt("version")).thenReturn(2);
         when(row.getTimestamp("create_time")).thenReturn(CREATED);

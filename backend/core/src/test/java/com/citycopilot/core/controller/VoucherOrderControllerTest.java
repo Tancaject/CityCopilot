@@ -49,8 +49,7 @@ class VoucherOrderControllerTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "COMMERCE_ADMISSION_OUTCOME_UNKNOWN",
-            "COMMERCE_DURABLE_ADMISSION_UNAVAILABLE",
-            "COMMERCE_ROUTING_MUTATION_LEASE_LOST"
+            "COMMERCE_DURABLE_ADMISSION_UNAVAILABLE"
     })
     void exposesRetryableUnknownOutcomes(String code) {
         CommercePortClient.CommerceHttpException error = new CommercePortClient.CommerceHttpException(

@@ -4,14 +4,9 @@ Core 的命名凭据配置见 [application.yaml](../../backend/core/src/main/res
 
 | 调用方向 | 接收端 | 当前令牌环境变量 | 额外接收令牌环境变量 |
 | --- | --- | --- | --- |
-| Agent → Core | Core / `agent-service` | `CITYCOPILOT_INTERNAL_AGENT_TOKEN` | `CITYCOPILOT_INTERNAL_AGENT_PREVIOUS_TOKEN` |
-| Ops 兼容调用 → Core | Core / `ops-agent` | `CITYCOPILOT_INTERNAL_OPS_TOKEN` | `CITYCOPILOT_INTERNAL_OPS_PREVIOUS_TOKEN` |
-| Ops 读取 → Core | Core / `ops-reader` | `CITYCOPILOT_INTERNAL_OPS_READER_TOKEN` | `CITYCOPILOT_INTERNAL_OPS_READER_PREVIOUS_TOKEN` |
-| Ops 执行 → Core | Core / `ops-executor` | `CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN` | `CITYCOPILOT_INTERNAL_OPS_EXECUTOR_PREVIOUS_TOKEN` |
-| MCP → Core | Core / `mcp-server` | `CITYCOPILOT_INTERNAL_MCP_TOKEN` | `CITYCOPILOT_INTERNAL_MCP_PREVIOUS_TOKEN` |
 | Core ↔ Commerce | Core / `commerce-service`，Commerce | `CITYCOPILOT_INTERNAL_COMMERCE_TOKEN` | `CITYCOPILOT_INTERNAL_COMMERCE_PREVIOUS_TOKEN` |
 
-Core 根据匹配的令牌确定 actor，不信任客户端身份提示头。两个 actor 在当前或额外凭据中使用同一个令牌时，该令牌认证失败；同一 actor 的两个槽相同不会产生第二个身份。清空 actor 的当前令牌会同时停用其额外令牌。仅配置额外令牌不能启用 actor，也不会退回旧版共享令牌认证。用户会话、工具权限和业务归属校验仍按原调用链执行，服务认证不替代用户授权。
+Core 根据匹配的令牌确定 actor，不信任客户端身份提示头。两个 actor 在当前或额外凭据中使用同一个令牌时，该令牌认证失败；同一 actor 的两个槽相同不会产生第二个身份。清空 actor 的当前令牌会同时停用其额外令牌。仅配置额外令牌不能启用 actor，也不会退回旧版共享令牌认证。用户会话、权限和业务归属校验仍按原调用链执行，服务认证不替代用户授权。
 
 ## HTTP 入口边界
 
@@ -37,7 +32,6 @@ Core 根据匹配的令牌确定 actor，不信任客户端身份提示头。两
 
 - Core 未配置任何凭据时返回 503 / `INTERNAL_API_DISABLED`；令牌不匹配或 actor 歧义返回 401 / `SERVICE_AUTH_REQUIRED`。Commerce 业务接口未配置当前令牌或认证失败时返回 401 / `COMMERCE_SERVICE_AUTH_REQUIRED`，正文沿用 `success`、`code`、`message` 的失败结构。先检查请求到达的实例是否完成当前发布阶段，再核对密钥版本和 actor；不要记录请求中的密钥。认证拒绝不建议循环重试，需先修正调用方或接收实例的配置。
 - 重叠阶段可以把发送端退回旧令牌，前提是所有接收端仍接受它。完成撤销后，回滚程序也须继续使用新凭据，不能依赖已撤销令牌。
-- 旧版 `CITYCOPILOT_INTERNAL_SERVICE_TOKEN` 仅保留既有兼容行为，不提供跨 actor 的轮换槽。使用命名凭据后不接受该共享令牌作为替代身份。
 - 仓库定向检查覆盖两代身份一致性、跨 actor 碰撞拒绝、撤销与缺失当前令牌时拒绝。它们不证明实际部署已完成轮换。上线验收须覆盖每个接收实例及 Core ↔ Commerce 两个方向，并保留不含密钥的发布记录。健康检查不经过同样的业务鉴权，不能用健康检查成功替代凭据验收。
 
 ## Commerce 错误与重试契约

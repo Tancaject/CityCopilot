@@ -18,10 +18,10 @@ public final class CommerceContracts {
                                int status, String state, String statusText, int version,
                                Date createTime, Date updateTime) {}
 
-    /** Date 保留已有 HTTP 时间编码；inventoryRecovery 仅在返库存尚未完成时有值。 */
+    /** processing 仅有准入身份，成交快照为空；Date 保留 HTTP 时间编码，inventoryRecovery 表示待恢复库存。 */
     public record OrderView(String id, long userId, long voucherId, long shopId,
                             String shopName, String voucherTitle, String voucherSubTitle,
-                            String voucherRules, int payValue, int actualValue, Integer payType,
+                            String voucherRules, Integer payValue, Integer actualValue, Integer payType,
                             int status, String state, String statusText, int version,
                             Date createTime, Date payTime, Date useTime, Date refundTime,
                             Date updateTime, String inventoryRecovery) {}
@@ -47,6 +47,9 @@ public final class CommerceContracts {
     public record AdmissionRepairRequeued(String status, String orderId) {}
 
     public record ConsistencyRepairRequest(String expectedEvidenceHash) {}
+
+    public record PaymentReview(String paymentId, String orderId, String paymentState, int orderStatus,
+                                int amount, String channelTransactionId, String issue, String evidenceHash) {}
 
     public record ConsistencyRepairResult(long voucherId, int targetRedisStock, int rebuiltBuyerCount,
                                           int restoredRecoveryRows, String beforeEvidenceHash,

@@ -1,7 +1,7 @@
 package com.citycopilot.core.booking;
 
 import com.citycopilot.contract.booking.PricingContracts.*;
-import com.citycopilot.core.security.PermissionCodes;
+import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;

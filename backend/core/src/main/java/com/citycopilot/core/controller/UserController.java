@@ -6,19 +6,16 @@ import com.citycopilot.core.dto.LoginFormDTO;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.security.PermissionPolicy;
-import com.citycopilot.core.service.IUserInfoService;
 import com.citycopilot.core.service.IUserService;
 import com.citycopilot.core.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
-import com.citycopilot.core.utils.RedisConstants;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-import java.time.LocalDate;
 
 /**
  * 用户认证、资料与签到控制器。
@@ -35,9 +32,6 @@ public class UserController {
     @Resource
     private IUserService userService;
 
-    /** 用户扩展资料服务。 */
-    @Resource
-    private IUserInfoService userInfoService;
     /** Redis 客户端，用于读取按日期统计的 HyperLogLog UV。 */
     @Resource
     private StringRedisTemplate stringRedisTemplate;
@@ -99,17 +93,6 @@ public class UserController {
     }
 
     /**
-     * 查询指定用户的扩展资料，并隐藏内部维护时间。
-     *
-     * @param userId 用户主键
-     * @return 扩展资料；尚未创建时返回空数据
-     */
-    @GetMapping("/info/{id}")
-    public Result info(@PathVariable("id") Long userId){
-        return Result.ok(userInfoService.profile(userId));
-    }
-
-    /**
      * 查询指定用户的公开基础信息。
      *
      * @param userId 用户主键
@@ -118,48 +101,5 @@ public class UserController {
     @GetMapping("/{id}")
     public Result queryUserById(@PathVariable("id")Long userId){
         return Result.ok(userService.findUserProfile(userId));
-    }
-    /**
-     * 为当前登录用户记录今日签到。
-     *
-     * @return Redis 位图签到的处理结果
-     */
-    @PostMapping("/sign")
-    public Result sign(){
-        return userService.sign();
-    }
-    /**
-     * 统计当前用户截至今天的连续签到天数。
-     *
-     * @return 连续签到天数
-     */
-    @GetMapping("/sign/count")
-    public Result signCount(){
-        return userService.signCount();
-    }
-    /**
-     * 查询当前用户今天是否已经签到。
-     *
-     * @return 今日签到状态
-     */
-    @GetMapping("/sign/today")
-    public Result isSignedToday(){
-        return userService.isSignedToday();
-    }
-
-    /**
-     * 查询指定日期的近似独立访客数。
-     *
-     * <p>数据来自按日分片的 Redis HyperLogLog，适合低内存基数估算，不代表精确人数。</p>
-     *
-     * @param daysAgo 距今天的天数，{@code 0} 表示今天
-     * @return 目标日期的 UV 估算值
-     */
-    @GetMapping("/uv")
-    public Result queryUV(@RequestParam(defaultValue = "0") Integer daysAgo) {
-        String key = RedisConstants.UV_KEY +
-                LocalDate.now().minusDays(daysAgo).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
-        Long uv = stringRedisTemplate.opsForHyperLogLog().size(key);
-        return Result.ok(uv);
     }
 }

@@ -1,7 +1,0 @@
-{
-  "mcpServers": {
-    "citycopilot": {
-      "url": "http://localhost:8090/mcp/sse"
-    }
-  }
-}

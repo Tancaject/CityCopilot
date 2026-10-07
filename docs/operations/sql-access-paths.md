@@ -5,8 +5,6 @@
 | 查询 | 对应索引与用途 |
 |---|---|
 | Core 热门笔记 `ORDER BY liked DESC,id DESC` | [Core V6](../../deploy/mysql/core/V6__note_popularity_index.sql) 的 `(liked,id)` 与排序一致，可反向遍历；作者动态使用 V5 的 `(user_id,create_time,id)`，两条访问路径不同。 |
-| Agent 最近 Case `ORDER BY created_at DESC LIMIT ?` | [Agent V5](../../deploy/mysql/agent/V5__ops_case_list_index.sql) 的 `(created_at)`；状态前缀索引不能直接覆盖不筛选状态的最近列表。 |
-| Agent 自动积压、人工待处置与近期成功 Case | [Agent V3](../../deploy/mysql/agent/V3__ops_case_observation_indexes.sql) 分别按 `(status,created_at)` 和 `(status,resolved_at,created_at)` 支持后台采样。 |
 | Commerce 库存恢复 `WHERE source_type='STATE_TRANSITION' AND phase=? ORDER BY created_at LIMIT 100` | [Commerce V9](../../deploy/mysql/commerce/V9__commerce_read_path_indexes.sql) 的 `commerce_order_recovery(source_type,phase,created_at)` 对应 [StreamWorker](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOrderStreamWorker.java) 的恢复批次；既有 `(phase,claimed_until)` 仍用于按 claim 期限访问，保留。 |
 | Commerce 个人预约 `WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 20 OFFSET ?` | [Commerce V9](../../deploy/mysql/commerce/V9__commerce_read_path_indexes.sql) 的 `commerce_booking(user_id,created_at)` 对应 [BookingService](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/booking/BookingService.java) 的列表；InnoDB 二级索引隐含主键 `id`。V4 的 `(user_id,status,start_at)` 服务于另一种访问形态，不能直接承接创建时间排序。 |
 | Commerce 我的预约券 `WHERE c.user_id=? ORDER BY c.created_at DESC LIMIT 100` | [Commerce V9](../../deploy/mysql/commerce/V9__commerce_read_path_indexes.sql) 的 `commerce_user_booking_coupon(user_id,created_at)` 对应 [BookingPricingService](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/pricing/BookingPricingService.java) 的券列表，规则表仍按主键连接。指定店铺时的 `r.shop_id` 属于连接表过滤，不因此宣称扫描量已限定为 100 行。 |

@@ -30,14 +30,9 @@ def mysql_rows(args, sql: str):
 def message_rows(args, booking_id: str):
     require(str(uuid.UUID(booking_id)) == booking_id, "Expected a canonical test booking ID")
     return mysql_rows(args, "SELECT JSON_OBJECT('eventId',o.event_id,'eventType',o.event_type,'version',o.aggregate_version,"
-                      "'outboxStatus',o.status,'inboxStatus',p.status,'behaviorType',e.event_type,'attributed',e.attributed,"
-                      "'businessOccurredAt',JSON_UNQUOTE(JSON_EXTRACT(o.payload_json,'$.occurredAt')),"
-                      "'publishedAt',DATE_FORMAT(o.published_at,'%Y-%m-%dT%H:%i:%s.%fZ'),"
-                      "'processedAt',DATE_FORMAT(p.processed_at,'%Y-%m-%dT%H:%i:%s.%fZ'),"
-                      "'publishedToProcessedMs',TIMESTAMPDIFF(MICROSECOND,o.published_at,p.processed_at)/1000) "
+                      "'outboxStatus',o.status,'businessOccurredAt',JSON_UNQUOTE(JSON_EXTRACT(o.payload_json,'$.occurredAt')),"
+                      "'publishedAt',DATE_FORMAT(o.published_at,'%Y-%m-%dT%H:%i:%s.%fZ')) "
                       "FROM citycopilot_booking_ui_test.commerce_outbox_event o "
-                      "LEFT JOIN citycopilot_booking_core_test.processed_event p ON p.event_id=o.event_id AND p.consumer_group='booking-test-ui-v1' "
-                      "LEFT JOIN citycopilot_booking_core_test.user_behavior_event e ON e.event_id=o.event_id "
                       f"WHERE o.aggregate_id='{booking_id}' ORDER BY o.aggregate_version")
 
 
@@ -45,16 +40,16 @@ def observe_delivery(args, booking_id: str):
     deadline = time.monotonic() + args.mq_observation_seconds
     while True:
         events = message_rows(args, booking_id)
-        if len(events) == 2 and all(e["outboxStatus"] == "PUBLISHED" and e["inboxStatus"] in ("PROCESSED", "STALE") and e["behaviorType"] for e in events):
+        if len(events) == 2 and all(e["outboxStatus"] == "PUBLISHED" for e in events):
             return events
-        require(time.monotonic() < deadline, "Real MQ did not project both restart experiment events")
+        require(time.monotonic() < deadline, "Commerce did not publish both restart experiment events")
         time.sleep(2)
 
 
 def verify_report(args) -> dict:
     require(args.test_only, "Report verification is restricted to the isolated test databases")
     report = json.loads(Path(args.verify_report).read_text(encoding="utf-8"))
-    require(report.get("failure", {}).get("message") == "Real MQ did not project both restart experiment events",
+    require(report.get("failure", {}).get("message") == "Commerce did not publish both restart experiment events",
             "Only an MQ observation timeout can be completed by read-only report verification")
     require(report["restart"]["newPid"] != report["restart"]["oldPid"]
             and report["beforeRestart"]["status"] == report["afterRestartBeforeExpiry"]["status"] == "HELD"
@@ -63,15 +58,11 @@ def verify_report(args) -> dict:
             and all(report["cleanup"].values()), "The original restart and cleanup evidence must already have passed")
     booking_id = report["fixture"]["bookingId"]
     events = observe_delivery(args, booking_id)
-    require([(e["behaviorType"], e["version"]) for e in events] == [("HELD", 0), ("HOLD_EXPIRED", 1)], "Unexpected lifecycle event contract")
-    projection = mysql_rows(args, "SELECT JSON_OBJECT('status',current_status,'version',aggregate_version,'attributed',attributed) "
-                            f"FROM citycopilot_booking_core_test.booking_behavior_projection WHERE booking_id='{booking_id}'")[0]
-    require(projection["status"] == "HOLD_EXPIRED" and projection["version"] == 1, "Core projection is not the terminal booking version")
+    require([(e["eventType"], e["version"]) for e in events] == [("commerce.booking.held", 0), ("commerce.booking.hold_expired", 1)], "Unexpected lifecycle event contract")
     jar = Path(__file__).resolve().parents[2] / report["jar"]["path"]
     require(hashlib.sha256(jar.read_bytes()).hexdigest() == report["jar"]["sha256"], "The copied Commerce JAR changed")
     report["initialObservation"] = {"passed": False, "finishedAt": report["finishedAt"], "mqObservationSeconds": report.get("mqObservationSeconds", 35), "failure": report.pop("failure")}
     report["messageDelivery"] = events
-    report["projection"] = projection
     report["jar"]["unchanged"] = True
     report["extendedObservation"] = {"readOnly": True, "observedAt": utc_now(), "maxWaitSeconds": args.mq_observation_seconds}
     report["passed"] = True
@@ -91,8 +82,7 @@ def run(args) -> dict:
     run_id = "restart-" + uuid.uuid4().hex
     report = {"testOnly": True, "runId": run_id, "startedAt": utc_now(), "passed": False,
               "environment": {"core": "http://127.0.0.1:8081", "commerce": "http://127.0.0.1:8083",
-                              "mysql": "127.0.0.1:33319", "coreDatabase": "citycopilot_booking_core_test",
-                              "commerceDatabase": "citycopilot_booking_ui_test", "consumerGroup": "booking-test-ui-v1"},
+                              "mysql": "127.0.0.1:33319", "commerceDatabase": "citycopilot_booking_ui_test"},
               "jar": {"path": ".tools/booking-runtime/commerce-app.jar", "sha256": jar_hash},
               "mqObservationSeconds": args.mq_observation_seconds,
               "limitations": ["One isolated local JVM restart; no production recovery-time or availability claim.",
@@ -201,11 +191,8 @@ Set-Content -LiteralPath '.tools/booking-runtime/commerce.pid' -Value $replaceme
         report["afterExpiry"] = observed
         report["observedExpiryDelayMs"] = round((instant(observed["databaseNow"]) - deadline).total_seconds() * 1000)
         events = observe_delivery(args, booking["id"])
-        require([(e["behaviorType"], e["version"]) for e in events] == [("HELD", 0), ("HOLD_EXPIRED", 1)], "Unexpected lifecycle event contract")
+        require([(e["eventType"], e["version"]) for e in events] == [("commerce.booking.held", 0), ("commerce.booking.hold_expired", 1)], "Unexpected lifecycle event contract")
         report["messageDelivery"] = events
-        report["projection"] = db("SELECT JSON_OBJECT('status',current_status,'version',aggregate_version,'attributed',attributed) "
-                                  f"FROM citycopilot_booking_core_test.booking_behavior_projection WHERE booking_id='{booking['id']}'")[0]
-        require(report["projection"]["status"] == "HOLD_EXPIRED" and report["projection"]["version"] == 1, "Core projection did not reach the actual terminal state")
         require(hashlib.sha256(jar.read_bytes()).hexdigest() == jar_hash, "The copied Commerce JAR changed during the experiment")
         report["jar"]["unchanged"] = True
         report["passed"] = True

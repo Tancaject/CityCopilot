@@ -8,8 +8,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.servlet.HandlerInterceptor;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -48,9 +46,6 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
         // 每次有效访问滑动刷新 TTL，保持活跃用户会话。
         stringRedisTemplate.expire(RedisConstants.LOGIN_USER_KEY + token,
                 RedisConstants.LOGIN_USER_TTL, TimeUnit.MINUTES);
-        // HyperLogLog 按用户 ID 近似统计每日独立访客，避免存储完整访问集合。
-        String uvKey = RedisConstants.UV_KEY + LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        stringRedisTemplate.opsForHyperLogLog().add(uvKey, user.getId().toString());
         return true;
     }
 }

@@ -164,13 +164,17 @@ class CommerceVoucherOperationsContractTest {
     }
 
     private CommerceVoucherService vouchers(JdbcTemplate jdbc) {
+        CommerceReadCache cache = mock(CommerceReadCache.class);
+        when(cache.vouchers(anyLong(), any())).thenAnswer(call ->
+                ((java.util.function.Supplier<?>) call.getArgument(1)).get());
         return new CommerceVoucherService(jdbc, mock(PlaceAuthorityClient.class), mock(CommerceOrderIdGenerator.class),
-                mock(CommerceRedisInventoryBootstrap.class), mock(CommerceRedisCampaignMetadata.class));
+                mock(CommerceRedisInventoryBootstrap.class), mock(CommerceRedisCampaignMetadata.class), cache);
     }
 
     private CommerceOperationsService operations(JdbcTemplate jdbc, CommerceOrderAdmissionService admissions) {
         return new CommerceOperationsService(jdbc, admissions, JsonMapper.builderWithJackson2Defaults().build(),
-                mock(CommerceRoutingGuard.class), mock(CommerceAdmissionDurabilityService.class));
+                mock(CommerceAdmissionDurabilityService.class),
+                CommerceOperationsServiceTest.inlineTransactions());
     }
 
     private ApplicationContextRunner jsonContext() {

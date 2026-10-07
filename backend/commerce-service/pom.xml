@@ -12,6 +12,10 @@
     <artifactId>commerce-service</artifactId>
     <dependencies>
         <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.citycopilot</groupId>
             <artifactId>http-support</artifactId>
             <version>${project.version}</version>

@@ -1,0 +1,112 @@
+{
+  "capturedAtUtc": "2026-10-06T15:15:35.446807+00:00",
+  "container": "citycopilot-redesign-load-rocketmq-broker-1",
+  "runtime": {
+    "memoryBytes": 2147483648,
+    "startedAt": "2026-10-06T15:14:25.632296883Z",
+    "health": "healthy",
+    "jvmMemoryArguments": [
+      "-Xms2g",
+      "-Xmx2g",
+      "-XX:MaxDirectMemorySize=1g",
+      "-Xms512m",
+      "-Xmx512m",
+      "-XX:MaxDirectMemorySize=768m"
+    ],
+    "timezoneOffset": "+0000",
+    "effectiveVmFlags": {
+      "InitialHeapSize": 536870912,
+      "MaxDirectMemorySize": 805306368,
+      "MaxHeapSize": 536870912
+    },
+    "jvmTimezone": "Etc/UTC",
+    "brokerPid": 14
+  },
+  "before": {
+    "atUtc": "2026-10-06T15:15:35.446807+00:00",
+    "lag": 0,
+    "inflight": 0
+  },
+  "evidenceFiles": [
+    ".tools\\redesign-broker-recovery.before-lag.txt",
+    ".tools\\redesign-broker-recovery.after-lag.txt",
+    ".tools\\redesign-broker-recovery.log.txt"
+  ],
+  "after": {
+    "atUtc": "2026-10-06T15:17:42.308644+00:00",
+    "lag": 0,
+    "inflight": 0
+  },
+  "preRestartObserved": {
+    "lag": 2292,
+    "inflight": 0,
+    "consumeTps": 4.27,
+    "source": "Earlier read-only mqadmin consumerProgress output in this task before Broker recreation"
+  },
+  "postRestartDirectMemoryErrorCount": 0,
+  "brokerLogUtcOffset": "+08:00 (verified from current file-log timestamps)",
+  "readyForFullRun": true,
+  "postFullRun": {
+    "atUtc": "2026-10-06T15:24:44.176345+00:00",
+    "runId": "redesign-dc1f8d2099ab",
+    "loadReportPassed": true,
+    "loadReport": "tools/loadtest/results/redesign/load-final.json",
+    "brokerStartedAt": "2026-10-06T15:14:25.632296883Z",
+    "sameBrokerRestartAsBefore": true,
+    "lag": 0,
+    "inflight": 0,
+    "directMemoryErrorLinesSinceRestart": 0,
+    "containers": [
+      {
+        "name": "/citycopilot-redesign-load-core-1",
+        "running": true,
+        "health": "healthy",
+        "startedAt": "2026-10-06T14:49:13.104905679Z"
+      },
+      {
+        "name": "/citycopilot-redesign-load-core-2",
+        "running": true,
+        "health": "healthy",
+        "startedAt": "2026-10-06T14:49:12.902331624Z"
+      },
+      {
+        "name": "/citycopilot-redesign-load-commerce-1",
+        "running": true,
+        "health": "healthy",
+        "startedAt": "2026-10-06T15:23:10.363025271Z"
+      },
+      {
+        "name": "/citycopilot-redesign-load-commerce-2",
+        "running": true,
+        "health": "healthy",
+        "startedAt": "2026-10-06T15:22:35.94026599Z"
+      },
+      {
+        "name": "/citycopilot-redesign-load-redis-1",
+        "running": true,
+        "health": "healthy",
+        "startedAt": "2026-10-06T15:23:20.662093581Z"
+      },
+      {
+        "name": "/citycopilot-redesign-load-rocketmq-namesrv-1",
+        "running": true,
+        "health": "healthy",
+        "startedAt": "2026-10-06T14:21:28.251320469Z"
+      },
+      {
+        "name": "/citycopilot-redesign-load-rocketmq-broker-1",
+        "running": true,
+        "health": "healthy",
+        "startedAt": "2026-10-06T15:14:25.632296883Z"
+      },
+      {
+        "name": "/citycopilot-redesign-load-rocketmq-proxy-1",
+        "running": true,
+        "health": "healthy",
+        "startedAt": "2026-10-06T14:21:47.895647118Z"
+      }
+    ],
+    "allRequiredContainersHealthy": true,
+    "lagEvidenceFile": ".tools\\redesign-broker-recovery.post-full-run-lag.txt"
+  }
+}

@@ -19,5 +19,6 @@ RUN npm run build
 
 FROM nginx:1.29.8-alpine
 COPY deploy/nginx/citycopilot-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deploy/nginx/citycopilot-upstreams.conf /etc/nginx/conf.d/upstreams.conf
 COPY --from=build /workspace/dist /usr/share/nginx/html
 EXPOSE 8080

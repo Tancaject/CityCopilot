@@ -5,7 +5,6 @@ import com.citycopilot.core.controller.AdminController;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.service.*;
-import com.citycopilot.core.tool.CoreToolRegistry;
 import com.citycopilot.core.utils.UserHolder;
 import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
 import org.junit.jupiter.api.AfterEach;
@@ -13,7 +12,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -163,24 +161,6 @@ class CoreCommerceReadContractTest {
         when(port.operationsSummary(any(), any())).thenReturn(Result.ok(new OperationsSummary(null, 2L, 3L, 4L, 5L, 6L, 7L)));
         assertThatThrownBy(controller::opsSummary).isInstanceOf(IllegalStateException.class)
                 .hasMessage("Commerce operations summary is missing metric: orders");
-    }
-
-    @Test
-    void recoveryToolsPublishConcreteRecordSchemasIncludingDateWireFormat() {
-        try (GenericApplicationContext context = new GenericApplicationContext()) {
-            context.registerBean(SeckillRecoveryService.class, () -> new SeckillRecoveryService(client));
-            context.refresh();
-            CoreToolRegistry registry = new CoreToolRegistry(context);
-            registry.afterSingletonsInstantiated();
-            var list = registry.definitions().stream().filter(tool -> tool.name().equals("list_seckill_dead_letters")).findFirst().orElseThrow();
-            Map<?, ?> items = (Map<?, ?>) list.resultSchema().get("items");
-            Map<?, ?> fields = (Map<?, ?>) items.get("properties");
-            assertThat(((Map<?, ?>) fields.get("createdAt")).get("type")).isEqualTo("string");
-            assertThat(((Map<?, ?>) fields.get("createdAt")).get("format")).isEqualTo("date-time");
-            var replay = registry.definitions().stream().filter(tool -> tool.name().equals("replay_seckill_dead_letter")).findFirst().orElseThrow();
-            assertThat(((Map<?, ?>) replay.resultSchema().get("properties")).containsKey("deadLetterRecordId")).isTrue();
-            assertThat(replay.contractVersion()).isEqualTo(1);
-        }
     }
 
     @SuppressWarnings("unchecked")

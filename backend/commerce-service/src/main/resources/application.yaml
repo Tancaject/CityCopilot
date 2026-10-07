@@ -39,6 +39,7 @@ citycopilot:
       batch-size: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_BATCH_SIZE:100}
       interval-ms: ${CITYCOPILOT_COMMERCE_OUTBOX_ARCHIVE_INTERVAL_MS:60000}
     service-token: ${CITYCOPILOT_INTERNAL_COMMERCE_TOKEN:}
+    payment-signing-secret: ${CITYCOPILOT_PAYMENT_SIGNING_SECRET:}
     previous-service-token: ${CITYCOPILOT_INTERNAL_COMMERCE_PREVIOUS_TOKEN:}
     stream-enabled: ${CITYCOPILOT_COMMERCE_STREAM_ENABLED:true}
     api-enabled: ${CITYCOPILOT_COMMERCE_API_ENABLED:true}
@@ -48,22 +49,12 @@ citycopilot:
     inventory-bootstrap-enabled: ${CITYCOPILOT_COMMERCE_INVENTORY_BOOTSTRAP_ENABLED:true}
     redis-physical-shard-count: ${CITYCOPILOT_COMMERCE_REDIS_PHYSICAL_SHARD_COUNT:1}
     redis-routing-generation: ${CITYCOPILOT_COMMERCE_REDIS_ROUTING_GENERATION:v1}
-    routing-control-auto-initialize: ${CITYCOPILOT_COMMERCE_ROUTING_CONTROL_AUTO_INITIALIZE:true}
-    routing-operator:
-      enabled: ${CITYCOPILOT_COMMERCE_ROUTING_OPERATOR_ENABLED:false}
-      action: ${CITYCOPILOT_COMMERCE_ROUTING_OPERATOR_ACTION:status}
-      target-generation: ${CITYCOPILOT_COMMERCE_ROUTING_OPERATOR_TARGET_GENERATION:}
-      target-physical-shard-count: ${CITYCOPILOT_COMMERCE_ROUTING_OPERATOR_TARGET_PHYSICAL_SHARD_COUNT:0}
     consumer-name: ${HOSTNAME:commerce-local}
     stream-batch-size: ${CITYCOPILOT_COMMERCE_STREAM_BATCH_SIZE:100}
     stream-max-deliveries: ${CITYCOPILOT_COMMERCE_STREAM_MAX_DELIVERIES:10}
     # Local single-node Redis has no replica. Production overrides this to 1.
     redis-required-replicas: ${CITYCOPILOT_COMMERCE_REDIS_REQUIRED_REPLICAS:0}
     redis-replication-timeout-ms: ${CITYCOPILOT_COMMERCE_REDIS_REPLICATION_TIMEOUT_MS:1000}
-    redis-require-all-replicas: ${CITYCOPILOT_COMMERCE_REDIS_REQUIRE_ALL_REPLICAS:false}
-    runtime-mutation-lease-ttl-ms: ${CITYCOPILOT_COMMERCE_RUNTIME_MUTATION_LEASE_TTL_MS:600000}
-    routing-operator-lease-ttl-ms: ${CITYCOPILOT_COMMERCE_ROUTING_OPERATOR_LEASE_TTL_MS:3600000}
-    runtime-mutation-heartbeat-threads: ${CITYCOPILOT_COMMERCE_RUNTIME_MUTATION_HEARTBEAT_THREADS:4}
     admission-recovery-batch-size: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_BATCH_SIZE:100}
     admission-recovery-min-age-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_MIN_AGE_MS:5000}
     admission-recovery-lease-ms: ${CITYCOPILOT_COMMERCE_ADMISSION_RECOVERY_LEASE_MS:30000}

@@ -61,12 +61,6 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
-    path: '/booking/confirm/:id',
-    name: 'booking-confirmation',
-    component: () => import('../views/BookingConfirmationView.vue'),
-    meta: { requiresAuth: true },
-  },
-  {
     path: '/bookings/:id',
     name: 'booking-detail',
     component: () => import('../views/BookingsView.vue'),
@@ -124,18 +118,6 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/api',
     name: 'admin-api',
     component: () => import('../views/AdminApiView.vue'),
-    meta: { requiresAuth: true, requiredPermissions: ['audit:read'] },
-  },
-  {
-    path: '/admin/agent-traces',
-    name: 'admin-agent-traces',
-    component: () => import('../views/AdminAgentTracesView.vue'),
-    meta: { requiresAuth: true, requiredPermissions: ['audit:read'] },
-  },
-  {
-    path: '/admin/ops-cases',
-    name: 'admin-ops-cases',
-    component: () => import('../views/AdminOpsCasesView.vue'),
     meta: { requiresAuth: true, requiredPermissions: ['audit:read'] },
   },
   {

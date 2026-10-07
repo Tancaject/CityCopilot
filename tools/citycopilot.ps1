@@ -14,7 +14,6 @@ $ComposeFile = Join-Path $ProjectRoot "compose.yaml"
 $EnvFile = Join-Path $ProjectRoot ".env"
 $InfrastructureServices = @(
     "mysql",
-    "agent-mysql",
     "commerce-mysql",
     "redis",
     "rocketmq-namesrv",
@@ -24,8 +23,6 @@ $InfrastructureServices = @(
 $ApplicationServices = @(
     "core",
     "commerce",
-    "agent",
-    "mcp",
     "frontend"
 )
 
@@ -52,24 +49,17 @@ function Ensure-EnvironmentFile {
         }
         $newCredentials = @()
         foreach ($key in @(
-            "CITYCOPILOT_INTERNAL_AGENT_TOKEN",
-            "CITYCOPILOT_INTERNAL_OPS_TOKEN",
-            "CITYCOPILOT_INTERNAL_OPS_READER_TOKEN",
-            "CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN",
-            "CITYCOPILOT_INTERNAL_MCP_TOKEN",
-            "CITYCOPILOT_AGENT_DB_PASSWORD",
-            "CITYCOPILOT_AGENT_MYSQL_ROOT_PASSWORD",
             "CITYCOPILOT_COMMERCE_DB_PASSWORD",
             "CITYCOPILOT_COMMERCE_MYSQL_ROOT_PASSWORD",
             "CITYCOPILOT_COMMERCE_REDIS_PASSWORD",
-            "CITYCOPILOT_INTERNAL_COMMERCE_TOKEN"
+            "CITYCOPILOT_INTERNAL_COMMERCE_TOKEN",
+            "CITYCOPILOT_PAYMENT_SIGNING_SECRET"
         )) {
             if (-not $existingKeys.ContainsKey($key)) {
                 $newCredentials += "$key=$(New-CityCopilotSecret 48)"
             }
         }
         foreach ($setting in @(
-            "CITYCOPILOT_AGENT_MYSQL_PORT=3308",
             "CITYCOPILOT_COMMERCE_MYSQL_PORT=3309",
             "CITYCOPILOT_COMMERCE_REDIS_USERNAME=commerce",
             "CITYCOPILOT_ROCKETMQ_ENABLED=true"
@@ -102,46 +92,28 @@ function Ensure-EnvironmentFile {
         "CITYCOPILOT_TIMEZONE=Asia/Singapore",
         "CITYCOPILOT_HTTP_PORT=8080",
         "CITYCOPILOT_CORE_PORT=8081",
-        "CITYCOPILOT_AGENT_PORT=8082",
-        "CITYCOPILOT_MCP_PORT=8090",
         "CITYCOPILOT_MYSQL_PORT=3307",
-        "CITYCOPILOT_AGENT_MYSQL_PORT=3308",
         "CITYCOPILOT_COMMERCE_MYSQL_PORT=3309",
         "CITYCOPILOT_COMMERCE_PORT=8083",
         "CITYCOPILOT_REDIS_PORT=6380",
         "CITYCOPILOT_MYSQL_MEMORY_LIMIT=1g",
-        "CITYCOPILOT_AGENT_MYSQL_MEMORY_LIMIT=512m",
         "CITYCOPILOT_COMMERCE_MYSQL_MEMORY_LIMIT=512m",
         "CITYCOPILOT_COMMERCE_MEMORY_LIMIT=768m",
         "CITYCOPILOT_REDIS_MEMORY_LIMIT=256m",
         "CITYCOPILOT_CORE_MEMORY_LIMIT=1g",
-        "CITYCOPILOT_AGENT_MEMORY_LIMIT=768m",
-        "CITYCOPILOT_MCP_MEMORY_LIMIT=512m",
         "CITYCOPILOT_FRONTEND_MEMORY_LIMIT=128m",
         "CITYCOPILOT_DB_USERNAME=citycopilot",
         "CITYCOPILOT_DB_PASSWORD=$(New-CityCopilotSecret 24)",
         "CITYCOPILOT_MYSQL_ROOT_PASSWORD=$(New-CityCopilotSecret 24)",
-        "CITYCOPILOT_AGENT_DB_USERNAME=citycopilot_agent",
-        "CITYCOPILOT_AGENT_DB_PASSWORD=$(New-CityCopilotSecret 24)",
-        "CITYCOPILOT_AGENT_MYSQL_ROOT_PASSWORD=$(New-CityCopilotSecret 24)",
         "CITYCOPILOT_COMMERCE_DB_USERNAME=citycopilot_commerce",
         "CITYCOPILOT_COMMERCE_DB_PASSWORD=$(New-CityCopilotSecret 24)",
         "CITYCOPILOT_COMMERCE_MYSQL_ROOT_PASSWORD=$(New-CityCopilotSecret 24)",
         "CITYCOPILOT_REDIS_PASSWORD=$(New-CityCopilotSecret 24)",
         "CITYCOPILOT_COMMERCE_REDIS_USERNAME=commerce",
         "CITYCOPILOT_COMMERCE_REDIS_PASSWORD=$(New-CityCopilotSecret 24)",
-        "CITYCOPILOT_INTERNAL_SERVICE_TOKEN=$(New-CityCopilotSecret 48)",
-        "CITYCOPILOT_INTERNAL_AGENT_TOKEN=$(New-CityCopilotSecret 48)",
-        "CITYCOPILOT_INTERNAL_OPS_TOKEN=$(New-CityCopilotSecret 48)",
-        "CITYCOPILOT_INTERNAL_OPS_READER_TOKEN=$(New-CityCopilotSecret 48)",
-        "CITYCOPILOT_INTERNAL_OPS_EXECUTOR_TOKEN=$(New-CityCopilotSecret 48)",
-        "CITYCOPILOT_INTERNAL_MCP_TOKEN=$(New-CityCopilotSecret 48)",
         "CITYCOPILOT_INTERNAL_COMMERCE_TOKEN=$(New-CityCopilotSecret 48)",
-        "CITYCOPILOT_AI_ENABLED=false",
+        "CITYCOPILOT_PAYMENT_SIGNING_SECRET=$(New-CityCopilotSecret 48)",
         "CITYCOPILOT_ROCKETMQ_ENABLED=true",
-        "CITYCOPILOT_AI_API_KEY=",
-        "CITYCOPILOT_AI_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-        "CITYCOPILOT_AI_MODEL=qwen-plus",
         "CITYCOPILOT_AMAP_WEB_SERVICE_KEY=",
         "VITE_DEFAULT_CITY=杭州",
         "VITE_AMAP_JS_KEY=",
@@ -288,7 +260,7 @@ function Invoke-RedisInitialization {
 }
 
 function Invoke-SchemaMigrations {
-    foreach ($job in @("core-migrate", "commerce-migrate", "agent-migrate")) {
+    foreach ($job in @("core-migrate", "commerce-migrate")) {
         try {
             # Recreate the job so a previous successful container cannot skip new SQL.
             Invoke-Compose up --no-deps --force-recreate --abort-on-container-exit --exit-code-from $job $job
@@ -309,16 +281,15 @@ switch ($Action) {
         Invoke-SchemaMigrations
         Invoke-Compose ps
         $environment = Read-CityCopilotEnvironment
-        Write-Host ("Infrastructure is ready: MySQL {0}/{1}/{2}, Redis {3}, RocketMQ Proxy 18081." -f
+        Write-Host ("Infrastructure is ready: MySQL {0}/{1}, Redis {2}, RocketMQ Proxy 18081." -f
             $environment["CITYCOPILOT_MYSQL_PORT"],
-            $environment["CITYCOPILOT_AGENT_MYSQL_PORT"],
             $environment["CITYCOPILOT_COMMERCE_MYSQL_PORT"],
             $environment["CITYCOPILOT_REDIS_PORT"]) -ForegroundColor Green
-        Write-Host "Start Commerce, Core, Agent, MCP, and the Vue frontend from the IDE." -ForegroundColor Green
+        Write-Host "Start Commerce, Core, and the Vue frontend from the IDE." -ForegroundColor Green
     }
     "stop" {
         Ensure-DockerDaemon
-        $arguments = @("--profile", "app", "--profile", "search", "down", "--remove-orphans")
+        $arguments = @("--profile", "app", "down", "--remove-orphans")
         Invoke-Compose @arguments
         Write-Host "CityCopilot infrastructure stopped. Named volumes were preserved." -ForegroundColor Green
     }
@@ -337,29 +308,29 @@ switch ($Action) {
     "migrate" {
         Ensure-DockerDaemon
         Invoke-Compose config --quiet
-        Invoke-Compose up -d mysql agent-mysql commerce-mysql
-        Wait-ServicesHealthy -Names @("mysql", "agent-mysql", "commerce-mysql")
+        Invoke-Compose up -d mysql commerce-mysql
+        Wait-ServicesHealthy -Names @("mysql", "commerce-mysql")
         Invoke-SchemaMigrations
-        Write-Host "Core, Commerce, and Agent database migrations completed." -ForegroundColor Green
+        Write-Host "Core and Commerce database migrations completed." -ForegroundColor Green
     }
     "status" {
         Ensure-DockerDaemon
-        $arguments = @("--profile", "app", "--profile", "search", "ps", "-a")
+        $arguments = @("--profile", "app", "ps", "-a")
         Invoke-Compose @arguments
     }
     "logs" {
         Ensure-DockerDaemon
         $arguments = @("logs", "--tail", "200", "--follow")
         if (-not [string]::IsNullOrWhiteSpace($Service)) { $arguments += $Service }
-        $arguments = @("--profile", "app", "--profile", "search") + $arguments
+        $arguments = @("--profile", "app") + $arguments
         Invoke-Compose @arguments
     }
     "reset" {
         Ensure-DockerDaemon
         if (-not $Force) {
-            throw "Reset permanently deletes MySQL, Docker Redis, Elasticsearch, and uploaded-file volumes. WSL Redis is not affected. Rerun with -Force to confirm."
+            throw "Reset permanently deletes MySQL, Docker Redis, and uploaded-file volumes. WSL Redis is not affected. Rerun with -Force to confirm."
         }
-        $arguments = @("--profile", "app", "--profile", "search", "down", "--volumes", "--remove-orphans")
+        $arguments = @("--profile", "app", "down", "--volumes", "--remove-orphans")
         Invoke-Compose @arguments
         Write-Host "CityCopilot data volumes were deleted. Run start to initialize a clean stack." -ForegroundColor Yellow
     }

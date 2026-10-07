@@ -27,7 +27,7 @@ public final class PricingContracts {
     public record QuoteRequest(String resourceId, String slotId, int partySize, String offerId,
                                String couponMode, List<String> couponIds, String purpose,
                                String bookingId, Long expectedBookingVersion,
-                               String source, String impressionId, String requestId) {}
+                               String source, String requestId) {}
     public record DiscountView(String couponId, String ruleId, long ruleVersion, String type,
                                long thresholdCents, int payFactorBps, Long discountCapCents,
                                long eligibleBaseCents, long beforeCents, long discountCents,
@@ -38,7 +38,7 @@ public final class PricingContracts {
                             String offerTitle, String includedItems, String excludedItems,
                             Long unitPriceCents, String currency, Long baseCents,
                             List<DiscountView> discountLines, Long totalCents, Instant expiresAt,
-                            String source, String impressionId, String requestId) {
+                            String source, String requestId) {
         public QuoteView {
             discountLines = List.copyOf(discountLines);
         }

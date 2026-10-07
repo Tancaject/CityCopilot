@@ -1,6 +1,5 @@
 package com.citycopilot.core.service;
 
-import com.citycopilot.contract.tool.AgentTool;
 import com.citycopilot.core.dto.ShopTypeDTO;
 
 import java.util.List;
@@ -18,6 +17,5 @@ public interface IShopTypeService {
      *
      * @return 按 {@code sort} 升序排列的分类列表
      */
-    @AgentTool(name = "list_shop_types", description = "List supported local-life shop categories", contractVersion = 2)
     List<ShopTypeDTO> queryShopType();
 }

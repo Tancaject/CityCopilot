@@ -42,7 +42,6 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -130,88 +129,6 @@ class ShopGeoIndexServiceTest {
         assertFalse(service.isReady());
         assertFalse(service.isReady());
         assertFalse(service.isReady());
-    }
-
-    @Test
-    void refreshAddsVerifiedShop() {
-        Shop verified = shop(1L, 10L, 120.10, 30.10, "verified");
-
-        service.refreshShopGeoIndex(null, verified);
-
-        verify(geoOperations).remove(SHOP_GEO_ALL_KEY, "1");
-        verify(geoOperations).remove(SHOP_GEO_KEY + "10", "1");
-        verify(geoOperations).add(eq(SHOP_GEO_ALL_KEY), any(Point.class), eq("1"));
-        verify(geoOperations).add(eq(SHOP_GEO_KEY + "10"), any(Point.class), eq("1"));
-        verify(redisTemplate).delete(SHOP_GEO_INDEX_READY_KEY);
-        verify(valueOperations).set(eq(SHOP_GEO_INDEX_READY_KEY),
-                argThat(generation -> generation != null
-                        && generation.startsWith("v1:")
-                        && !"v1:initial".equals(generation)));
-    }
-
-    @Test
-    void refreshRemovesPendingAndFailedShopsWithoutAddingThem() {
-        Shop before = shop(1L, 10L, 120.10, 30.10, "verified");
-
-        service.refreshShopGeoIndex(before, shop(1L, 10L, 120.10, 30.10, "pending"));
-        verify(geoOperations).remove(SHOP_GEO_ALL_KEY, "1");
-        verify(geoOperations).remove(SHOP_GEO_KEY + "10", "1");
-        verify(geoOperations, never()).add(anyString(), any(Point.class), anyString());
-
-        reset(geoOperations);
-
-        service.refreshShopGeoIndex(before, shop(1L, 10L, 120.10, 30.10, "failed"));
-        verify(geoOperations).remove(SHOP_GEO_ALL_KEY, "1");
-        verify(geoOperations).remove(SHOP_GEO_KEY + "10", "1");
-        verify(geoOperations, never()).add(anyString(), any(Point.class), anyString());
-    }
-
-    @Test
-    void refreshMovesVerifiedShopWhenCoordinateAndCategoryChange() {
-        Shop before = shop(1L, 10L, 120.10, 30.10, "verified");
-        Shop after = shop(1L, 11L, 121.20, 31.20, "verified");
-
-        service.refreshShopGeoIndex(before, after);
-
-        verify(geoOperations).remove(SHOP_GEO_ALL_KEY, "1");
-        verify(geoOperations).remove(SHOP_GEO_KEY + "10", "1");
-        verify(geoOperations).remove(SHOP_GEO_KEY + "11", "1");
-        verify(geoOperations).add(eq(SHOP_GEO_ALL_KEY),
-                argThat(point -> point.getX() == 121.20 && point.getY() == 31.20), eq("1"));
-        verify(geoOperations).add(eq(SHOP_GEO_KEY + "11"),
-                argThat(point -> point.getX() == 121.20 && point.getY() == 31.20), eq("1"));
-    }
-
-    @Test
-    void incrementalFailureClearsReadyMarkerAndMarksIndexStale() {
-        Shop after = shop(1L, 10L, 120.10, 30.10, "verified");
-        when(geoOperations.remove(SHOP_GEO_ALL_KEY, "1"))
-                .thenThrow(new IllegalStateException("redis unavailable"));
-
-        assertThrows(IllegalStateException.class,
-                () -> service.refreshShopGeoIndex(null, after));
-
-        verify(redisTemplate, atLeastOnce()).delete(SHOP_GEO_INDEX_READY_KEY);
-        verify(hashOperations).putAll(eq(SHOP_GEO_INDEX_META_KEY),
-                argThat(metadata -> "stale".equals(metadata.get("status"))
-                        && "IllegalStateException".equals(metadata.get("error"))));
-        verify(valueOperations, never()).set(eq(SHOP_GEO_INDEX_READY_KEY), anyString());
-    }
-
-    @Test
-    void incrementalFailureDoesNotTrustSurvivingRemoteGeneration() {
-        Shop after = shop(1L, 10L, 120.10, 30.10, "verified");
-        when(geoOperations.remove(SHOP_GEO_ALL_KEY, "1"))
-                .thenThrow(new IllegalStateException("redis unavailable"));
-        when(redisTemplate.delete(SHOP_GEO_INDEX_READY_KEY))
-                .thenThrow(new IllegalStateException("redis unavailable"));
-        when(valueOperations.get(SHOP_GEO_INDEX_READY_KEY)).thenReturn("v1:old-generation");
-
-        assertThrows(IllegalStateException.class,
-                () -> service.refreshShopGeoIndex(null, after));
-
-        assertFalse(service.isReady());
-        verify(valueOperations, times(1)).get(SHOP_GEO_INDEX_READY_KEY);
     }
 
     @Test

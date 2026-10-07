@@ -13,11 +13,10 @@
 - Commerce 是优惠券、库存、Reservation、订单、Recovery 和 Outbox 的唯一 writer；Core 不保留本地回退 writer。
 - 秒杀同步路径不查询订单/券/库存事实表，也不持有热点库存行锁；它先在 MySQL admission ledger 持久化 `PREPARED` 身份，再用 Redis 建立跨券全局幂等身份并执行券分片同槽 Lua。常态 ID 从 JVM 本地 hi/lo 号段取得；号段耗尽时会摊销执行一次短 MySQL `commerce_id_segment` 分配事务（应用默认 1024，生产环境可在压测后通过 `CITYCOPILOT_COMMERCE_ID_SEGMENT_SIZE` 调大）。
 - 全局幂等注册与券 Lua 是可补完的两阶段流程，不是跨槽原子事务：注册成功后崩溃，重试沿用同一 orderId 完成准入；相同 user/key 的不同券或 fingerprint 永久冲突。Redis failover 的已确认写语义仍依赖运行环境。
-- API 只有在券 Lua 写入获得复制确认且 admission ledger 从 `PREPARED` 条件更新为 `ACCEPTED` 后才返回新的 `202 PROCESSING`；幂等重放返回 `200` 和同一 orderId。若 Lua 已写主节点但复制确认/响应失败，返回 `COMMERCE_ADMISSION_OUTCOME_UNKNOWN`、`Retry-After: 1`，客户端必须使用同一 `Idempotency-Key` 重试完成决议。若 admission 已持久确认但请求结束前无法续租，则返回 `COMMERCE_ROUTING_MUTATION_LEASE_LOST` 与相同重试提示，不能据此判断订单未被接纳。
+- API 只有在券 Lua 写入获得复制确认且 admission ledger 从 `PREPARED` 条件更新为 `ACCEPTED` 后才返回新的 `202 PROCESSING`；幂等重放返回 `200` 和同一 orderId。若 Lua 已写主节点但复制确认/响应失败，返回 `COMMERCE_ADMISSION_OUTCOME_UNKNOWN`、`Retry-After: 1`，客户端必须使用同一 `Idempotency-Key` 重试完成决议。
 - 券 Lua 使用 Redis `TIME`，原子完成活动/fence/时间窗、本券 fingerprint、一人一券、库存预扣、buyer、inflight 和 Stream XADD，成功返回 202 PROCESSING。
-- Commerce Redis 使用 Cluster。所有副本按 voucherId、固定 routing generation 和逻辑 shard-count 确定性路由；一次券 Lua 使用的 key 带相同 `{commerce:<generation>:<count>:<logicalShard>}` hash tag。logical shard 是 hash-tag bucket，不等同于物理 Redis master。
-- 路由切换由共享 control key、每 shard 同槽 gate 和分片 admission lease 三重栅栏控制。生产实例不自动创建 control；运维 CAS 执行 `ACTIVE(old) -> DRAINING(old) -> ACTIVE(new)`。DRAINING 停止新准入但保留旧 Stream/accepted-ledger 恢复，运维只有在所有 admission/runtime lease、Stream、Recovery、Outbox 和 ledger 都排空后才能激活目标代际。
-- 当前每券只有一个库存 bucket。超热点活动的多 bucket、escrow/transfer token 尚未实现；生产已对 admission lease、全局幂等和券 Lua 使用同连接 `WAIT`，并动态要求当前 master 的全部已配置副本确认，但其真实 Cluster p99/吞吐和故障转移仍必须实测。
+- 所有实例按 voucherId、固定 routing generation 和逻辑 shard-count 确定性定位键；一次券 Lua 使用的 key 带相同 `{commerce:<generation>:<count>:<logicalShard>}` hash tag，以便将来迁到 Redis Cluster 时满足同槽约束。generation 与 shard-count 是部署不变量，写入键名和账本，不支持运行中切换。
+- 当前每券只有一个库存 bucket。超热点活动的多 bucket、escrow/transfer token 尚未实现。全局幂等和券 Lua 在同一连接上按 `CITYCOPILOT_COMMERCE_REDIS_REQUIRED_REPLICAS` 执行 `WAIT`（默认 0，即单机不等待）；它只覆盖单 master 故障边界。
 - Redis Stream 只承载 Commerce 内部命令。每个逻辑 shard 一条 Stream，Group 从 0 创建；正常读取逐 Stream 使用 XREADGROUP，Pending 恢复使用完整 XPENDING cursor + XCLAIM。终态使用同槽 Lua `XACK` 后 `XDEL`，防止 Stream 永久增长。
 - Worker 创建订单的 MySQL 本地事务原子写入 Reservation、条件库存扣减、订单、Recovery 终态和 Outbox；事务内禁止 Redis、MQ 和 HTTP。失败补偿按“持久 DB 阶段 -> 事务外幂等 Redis marker/Lua -> 新 DB 事务终态 -> Redis finalization”重放。
 - DB 提交后执行幂等 Redis finalization、ACK 和 XDEL。响应丢失允许重放，数据库唯一约束和 Recovery 终态消除重复业务效果。超过 delivery 上限的 poison command 先核对 durable ORDER_CREATED；已落单只 finalization，能证明未落单才补偿，无法证明身份则持久化 DLQ 后保留 inflight 作为人工修复信号。
@@ -49,4 +48,13 @@
 
 系统以异步完成换取稳定峰值吞吐，并通过持久化 Recovery、唯一约束、Outbox/Inbox 和补偿得到可恢复的业务效果。代价是客户端必须接受 PROCESSING 状态，平台必须长期运行对账、积压告警和故障注入验证。
 
-生产启用前必须完成旧 generation key/PEL 迁移、`commerce_id_segment` 与 Outbox 聚合版本唯一索引迁移，并在真实 Redis Cluster 上验证 MOVED、主从切换、复制确认、脚本 cross-slot、Stream recovery 和 MySQL/RocketMQ 故障窗口。修改 routing generation 或 shard-count 等同于数据迁移，不能作为普通滚动配置变更。
+当前部署是单机 Redis。准入、补偿、重复投递、丢失 ACCEPTED 后重试和取消返库存由 [`SeckillLifecycleIT`](../../backend/commerce-service/src/test/java/com/citycopilot/commerce/SeckillLifecycleIT.java) 在真实 MySQL/Redis 上验证；Redis Cluster 下的 MOVED、主从切换和复制确认尚未验证。修改 routing generation 或 shard-count 等同于数据迁移，只能在停止准入并排空后整体重启，不能作为滚动配置变更。
+
+## 未实现：在线分片扩容
+
+单 Redis 成为瓶颈时，计划的在线扩容方式如下。它曾有实现，但因从未在 Cluster 上验证且每次准入增加 3～4 次 Redis 往返而移除（2026-10），需要时以本节为设计起点重新实现并在真实 Cluster 上验收：
+
+- 全局 control key 记录 `ACTIVE|DRAINING`、generation 与 shard-count；每个逻辑 shard 一个与券键同槽的 gate，准入 Lua 在同槽内复核，封住"API 读到 ACTIVE 后运维开始排空"的竞态。
+- 运维 CAS 执行 `ACTIVE(old) -> DRAINING(old) -> ACTIVE(new)`：DRAINING 拒绝新准入，但旧 Stream worker 与 ACCEPTED 账本恢复继续运行；只有 Stream/PEL、ACCEPTED 账本、Recovery、Outbox 与在途写请求全部归零后才激活目标代际。
+- 在途写请求用 Redis 租约计数（准入按 shard、其他写按全局），运维以独占租约阻止新写进入；尚未返回 202 的 `PREPARED` 账本在激活前后幂等改写到目标代际。
+- 库存、buyer、活动元数据和全局幂等键的迁移是独立数据迁移，排空为零不能替代它。

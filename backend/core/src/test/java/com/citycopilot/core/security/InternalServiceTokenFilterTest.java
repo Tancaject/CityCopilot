@@ -17,8 +17,8 @@ class InternalServiceTokenFilterTest {
     @Test
     void authenticatesEveryProtectedDispatchTargetAndScopesTheTrustedActor() throws Exception {
         var properties = new InternalApiProperties();
-        properties.setServiceTokens(java.util.Map.of("ops-reader", "current"));
-        properties.setPreviousServiceTokens(java.util.Map.of("ops-reader", "previous"));
+        properties.setServiceTokens(java.util.Map.of("commerce-service", "current"));
+        properties.setPreviousServiceTokens(java.util.Map.of("commerce-service", "previous"));
         var filter = new InternalServiceTokenFilter(properties);
         for (DispatcherType dispatch : DispatcherType.values()) {
             var request = new MockHttpServletRequest("GET", "/app/int%65rnal;x=1/no-handler");
@@ -35,9 +35,9 @@ class InternalServiceTokenFilterTest {
             assertEquals(401, response.getStatus());
             assertNull(chain.getRequest());
             request.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, "previous");
-            request.addHeader(InternalServiceTokenFilter.SERVICE_ACTOR_HEADER, "ops-executor");
+            request.addHeader(InternalServiceTokenFilter.SERVICE_ACTOR_HEADER, "batch-service");
             filter.doFilter(request, new MockHttpServletResponse(), (req, res) ->
-                    assertEquals("ops-reader", req.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE)));
+                    assertEquals("commerce-service", req.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE)));
             assertNull(request.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE));
         }
         var request = new MockHttpServletRequest("GET", "/internal-public");
@@ -57,15 +57,15 @@ class InternalServiceTokenFilterTest {
     @Test
     void acceptsBothGenerationsForTheSameActorUntilPreviousIsRemoved() throws Exception {
         InternalApiProperties properties = new InternalApiProperties();
-        properties.setServiceTokens(java.util.Map.of("ops-reader", "new-reader", "ops-executor", "executor"));
-        properties.setPreviousServiceTokens(java.util.Map.of("ops-reader", "old-reader"));
+        properties.setServiceTokens(java.util.Map.of("commerce-service", "new-reader", "batch-service", "executor"));
+        properties.setPreviousServiceTokens(java.util.Map.of("commerce-service", "old-reader"));
         InternalServiceTokenFilter interceptor = new InternalServiceTokenFilter(properties);
         for (String token : java.util.List.of("new-reader", "old-reader")) {
             MockHttpServletRequest request = new MockHttpServletRequest();
             request.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, token);
-            request.addHeader(InternalServiceTokenFilter.SERVICE_ACTOR_HEADER, "ops-executor");
+            request.addHeader(InternalServiceTokenFilter.SERVICE_ACTOR_HEADER, "batch-service");
             assertTrue(interceptor.authenticate(request, new MockHttpServletResponse()));
-            assertEquals("ops-reader", request.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE));
+            assertEquals("commerce-service", request.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE));
         }
         properties.setPreviousServiceTokens(java.util.Map.of());
         MockHttpServletRequest old = new MockHttpServletRequest();
@@ -76,30 +76,29 @@ class InternalServiceTokenFilterTest {
     @Test
     void rejectsCrossActorCollisionsAcrossBothGenerations() throws Exception {
         InternalApiProperties properties = new InternalApiProperties();
-        properties.setServiceTokens(java.util.Map.of("ops-reader", "reader", "ops-executor", "executor"));
+        properties.setServiceTokens(java.util.Map.of("commerce-service", "reader", "batch-service", "executor"));
         InternalServiceTokenFilter interceptor = new InternalServiceTokenFilter(properties);
         for (java.util.Map<String, String> previous : java.util.List.of(
-                java.util.Map.of("ops-reader", "executor"),
-                java.util.Map.of("ops-reader", "shared-old", "ops-executor", "shared-old"))) {
+                java.util.Map.of("commerce-service", "executor"),
+                java.util.Map.of("commerce-service", "shared-old", "batch-service", "shared-old"))) {
             properties.setPreviousServiceTokens(previous);
             MockHttpServletRequest request = new MockHttpServletRequest();
-            request.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, previous.get("ops-reader"));
+            request.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, previous.get("commerce-service"));
             assertFalse(interceptor.authenticate(request, new MockHttpServletResponse()));
             assertNull(request.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE));
         }
-        properties.setPreviousServiceTokens(java.util.Map.of("ops-reader", "reader"));
+        properties.setPreviousServiceTokens(java.util.Map.of("commerce-service", "reader"));
         MockHttpServletRequest sameActor = new MockHttpServletRequest();
         sameActor.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, "reader");
         assertTrue(interceptor.authenticate(sameActor, new MockHttpServletResponse()));
     }
 
     @Test
-    void previousAloneCannotEnableAnActorOrReactivateLegacyAuthentication() throws Exception {
+    void previousAloneCannotEnableAnActor() throws Exception {
         InternalApiProperties properties = new InternalApiProperties();
-        properties.setServiceToken("legacy");
-        properties.setPreviousServiceTokens(java.util.Map.of("ops-reader", "old-reader"));
+        properties.setPreviousServiceTokens(java.util.Map.of("commerce-service", "old-reader"));
         InternalServiceTokenFilter interceptor = new InternalServiceTokenFilter(properties);
-        for (String token : java.util.List.of("old-reader", "legacy")) {
+        for (String token : java.util.List.of("old-reader")) {
             MockHttpServletRequest request = new MockHttpServletRequest();
             request.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, token);
             assertFalse(interceptor.authenticate(request, new MockHttpServletResponse()));
@@ -121,7 +120,7 @@ class InternalServiceTokenFilterTest {
     @Test
     void requiresTheConfiguredServiceToken() throws Exception {
         InternalApiProperties properties = new InternalApiProperties();
-        properties.setServiceToken("shared-secret");
+        properties.setServiceTokens(java.util.Map.of("commerce-service", "shared-secret"));
         InternalServiceTokenFilter interceptor = new InternalServiceTokenFilter(properties);
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, "wrong-secret");
@@ -132,35 +131,20 @@ class InternalServiceTokenFilterTest {
     }
 
     @Test
-    void acceptsTheConfiguredServiceToken() throws Exception {
-        InternalApiProperties properties = new InternalApiProperties();
-        properties.setServiceToken("shared-secret");
-        InternalServiceTokenFilter interceptor = new InternalServiceTokenFilter(properties);
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        request.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, "shared-secret");
-
-        assertTrue(interceptor.authenticate(request, new MockHttpServletResponse()));
-        assertEquals(
-                "legacy-service",
-                request.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE)
-        );
-    }
-
-    @Test
     void bindsActorToNamedCredentialAndIgnoresSpoofedHeader() throws Exception {
         InternalApiProperties properties = new InternalApiProperties();
         properties.setServiceTokens(java.util.Map.of(
-                "agent-service", "agent-secret",
-                "ops-agent", "ops-secret"
+                "commerce-service", "commerce-secret",
+                "batch-service", "batch-secret"
         ));
         InternalServiceTokenFilter interceptor = new InternalServiceTokenFilter(properties);
         MockHttpServletRequest request = new MockHttpServletRequest();
-        request.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, "agent-secret");
-        request.addHeader(InternalServiceTokenFilter.SERVICE_ACTOR_HEADER, "ops-agent");
+        request.addHeader(InternalServiceTokenFilter.SERVICE_TOKEN_HEADER, "commerce-secret");
+        request.addHeader(InternalServiceTokenFilter.SERVICE_ACTOR_HEADER, "batch-service");
 
         assertTrue(interceptor.authenticate(request, new MockHttpServletResponse()));
         assertEquals(
-                "agent-service",
+                "commerce-service",
                 request.getAttribute(InternalServiceTokenFilter.AUTHENTICATED_ACTOR_ATTRIBUTE)
         );
     }
@@ -169,8 +153,8 @@ class InternalServiceTokenFilterTest {
     void rejectsCredentialSharedByMultipleActors() throws Exception {
         InternalApiProperties properties = new InternalApiProperties();
         properties.setServiceTokens(java.util.Map.of(
-                "agent-service", "shared",
-                "ops-agent", "shared"
+                "commerce-service", "shared",
+                "batch-service", "shared"
         ));
         InternalServiceTokenFilter interceptor = new InternalServiceTokenFilter(properties);
         MockHttpServletRequest request = new MockHttpServletRequest();

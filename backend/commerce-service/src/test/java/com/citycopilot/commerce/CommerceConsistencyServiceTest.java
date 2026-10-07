@@ -1,6 +1,5 @@
 package com.citycopilot.commerce;
 
-import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.SetOperations;
@@ -77,7 +76,7 @@ class CommerceConsistencyServiceTest {
 
     @Test
     void reconciliationFenceUsesStableTokenAndReplicaConfirmation() {
-        Fixture fixture = new Fixture(true);
+        Fixture fixture = new Fixture();
 
         fixture.service.ensureReconciliationFence(100L);
 
@@ -90,7 +89,7 @@ class CommerceConsistencyServiceTest {
 
     @Test
     void repairNeverOverwritesAnotherMaintenanceFenceOwner() {
-        Fixture fixture = new Fixture(true);
+        Fixture fixture = new Fixture();
         when(fixture.replicatedRedis.setIfAbsent(
                 eq("consistency_repair_fence"),
                 eq(CommerceRedisKeyspace.FENCE_PREFIX + 100L),
@@ -120,7 +119,7 @@ class CommerceConsistencyServiceTest {
 
     @Test
     void staleEvidenceLeavesAutomaticReconciliationFenceUntouched() {
-        Fixture fixture = new Fixture(true);
+        Fixture fixture = new Fixture();
         fixture.stubVoucher(100L, 5, "5", List.of(10L), Set.of("10"), 0);
         Map<String, Object> before = fixture.service.snapshot(100L);
         when(fixture.replicatedRedis.setIfAbsent(
@@ -155,7 +154,7 @@ class CommerceConsistencyServiceTest {
 
     @Test
     void staleEvidencePromotesNewRepairFenceToPersistentReconciliationFence() {
-        Fixture fixture = new Fixture(true);
+        Fixture fixture = new Fixture();
         fixture.stubVoucher(100L, 5, "5", List.of(10L), Set.of("10"), 0);
         Map<String, Object> before = fixture.service.snapshot(100L);
         when(fixture.values.get(CommerceRedisKeyspace.STOCK_PREFIX + 100L)).thenReturn("4");
@@ -194,7 +193,7 @@ class CommerceConsistencyServiceTest {
 
     @Test
     void failedRepairRestoresAutomaticFenceAndNeverReleasesIt() {
-        Fixture fixture = new Fixture(true);
+        Fixture fixture = new Fixture();
         fixture.stubVoucher(100L, 5, "4", List.of(10L), Set.of("10"), 0);
         Map<String, Object> before = fixture.service.snapshot(100L);
         when(fixture.replicatedRedis.setIfAbsent(
@@ -240,7 +239,7 @@ class CommerceConsistencyServiceTest {
 
     @Test
     void successfulVerifiedRepairDeletesTakenOverAutomaticFence() {
-        Fixture fixture = new Fixture(true);
+        Fixture fixture = new Fixture();
         fixture.stubVoucher(100L, 5, "4", List.of(10L), Set.of("10", "20"), 0);
         when(fixture.values.get(CommerceRedisKeyspace.STOCK_PREFIX + 100L))
                 .thenReturn("4", "4", "4", "5", "5");
@@ -409,10 +408,6 @@ class CommerceConsistencyServiceTest {
         private final CommerceConsistencyService service;
 
         private Fixture() {
-            this(false);
-        }
-
-        private Fixture(boolean useReplicatedRedis) {
             when(redis.opsForValue()).thenReturn(values);
             when(redis.opsForSet()).thenReturn(sets);
             when(redis.execute(
@@ -429,9 +424,7 @@ class CommerceConsistencyServiceTest {
                     redis,
                     JsonMapper.builderWithJackson2Defaults().build(),
                     new CommerceRedisKeyspace(1, "0"),
-                    useReplicatedRedis ? replicatedRedis : null,
-                    null,
-                    null
+                    replicatedRedis
             ) {
                 @Override
                 public Map<String, Object> globalStreamHealth() {
@@ -470,10 +463,6 @@ class CommerceConsistencyServiceTest {
             )).thenAnswer(invocation -> recoveryRows.get());
             when(values.get(CommerceRedisKeyspace.STOCK_PREFIX + voucherId)).thenReturn(redisStock);
             when(sets.size(CommerceRedisKeyspace.INFLIGHT_PREFIX + voucherId)).thenReturn(inFlight);
-            when(values.setIfAbsent(
-                    eq(CommerceRedisKeyspace.FENCE_PREFIX + voucherId),
-                    anyString()
-            )).thenReturn(true);
             when(sets.members(CommerceRedisKeyspace.BUYER_PREFIX + voucherId)).thenReturn(redisBuyers);
         }
     }

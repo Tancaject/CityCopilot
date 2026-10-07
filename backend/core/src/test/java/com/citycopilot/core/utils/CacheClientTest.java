@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -46,6 +47,8 @@ class CacheClientTest {
         redis = mock(StringRedisTemplate.class);
         values = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(values);
+        when(redis.execute(eq(CacheClient.WRITE_IF_OWNER_SCRIPT), anyList(), anyString(), anyString(), anyString()))
+                .thenReturn(1L);
         cacheClient = new CacheClient(redis, 200L, 1L);
     }
 
@@ -100,7 +103,8 @@ class CacheClientTest {
                 eq(LOCK_SHOP_TTL),
                 eq(TimeUnit.SECONDS)
         );
-        verify(values).set(eq(key), anyString(), any(Duration.class));
+        verify(redis).execute(eq(CacheClient.WRITE_IF_OWNER_SCRIPT), eq(List.of(lockKey, key)),
+                eq(token.getValue()), anyString(), anyString());
         verify(redis).execute(
                 eq(CacheClient.UNLOCK_IF_OWNER_SCRIPT),
                 eq(List.of(lockKey)),
@@ -120,7 +124,8 @@ class CacheClientTest {
 
         assertThat(query(10L, ignored -> null)).isNull();
 
-        verify(values).set(eq(key), eq(""), any(Duration.class));
+        verify(redis).execute(eq(CacheClient.WRITE_IF_OWNER_SCRIPT), eq(List.of(lockKey, key)),
+                anyString(), eq(""), anyString());
     }
 
     @Test
@@ -138,12 +143,13 @@ class CacheClientTest {
             throw new IllegalStateException("database unavailable");
         })).isInstanceOf(IllegalStateException.class);
 
-        verify(values, never()).set(eq(key), anyString(), any(Duration.class));
+        verify(redis, never()).execute(eq(CacheClient.WRITE_IF_OWNER_SCRIPT), anyList(), anyString(), anyString(), anyString());
 
         Shop result = query(14L, ignored -> recovered);
 
         assertThat(result).isSameAs(recovered);
-        verify(values).set(eq(key), anyString(), any(Duration.class));
+        verify(redis).execute(eq(CacheClient.WRITE_IF_OWNER_SCRIPT), eq(List.of(lockKey, key)),
+                anyString(), anyString(), anyString());
         verify(redis, org.mockito.Mockito.times(2)).execute(
                 eq(CacheClient.UNLOCK_IF_OWNER_SCRIPT),
                 eq(List.of(lockKey)),
@@ -222,10 +228,12 @@ class CacheClientTest {
         when(values.get(key)).thenAnswer(ignored -> cachedJson.get());
         when(values.setIfAbsent(eq(lockKey), anyString(), eq(LOCK_SHOP_TTL), eq(TimeUnit.SECONDS)))
                 .thenAnswer(invocation -> lockOwner.compareAndSet(null, invocation.getArgument(1, String.class)));
-        org.mockito.Mockito.doAnswer(invocation -> {
-            cachedJson.set(invocation.getArgument(1, String.class));
-            return null;
-        }).when(values).set(eq(key), anyString(), any(Duration.class));
+        when(redis.execute(eq(CacheClient.WRITE_IF_OWNER_SCRIPT), eq(List.of(lockKey, key)),
+                anyString(), anyString(), anyString())).thenAnswer(invocation -> {
+                    if (!invocation.getArgument(2, String.class).equals(lockOwner.get())) return 0L;
+                    cachedJson.set(invocation.getArgument(3, String.class));
+                    return 1L;
+                });
         when(redis.execute(eq(CacheClient.UNLOCK_IF_OWNER_SCRIPT), eq(List.of(lockKey)), anyString()))
                 .thenAnswer(invocation -> {
                     String token = invocation.getArgument(2, String.class);

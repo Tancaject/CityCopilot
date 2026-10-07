@@ -10,7 +10,7 @@ Commerce 是优惠券、秒杀准入、订单、Reservation、恢复记录和业
 
 [库存初始化](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceRedisInventoryBootstrap.java)、[活动元数据初始化](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceRedisCampaignMetadata.java)和[一致性巡检](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceReconciliationJob.java)先固定本轮最大主键，再按主键游标分批读取，不一次装入全库券列表。库存初始化只判断是否存在订单、预留或恢复历史，不统计全部历史行；发现任何历史仍保持准入关闭并交给既有修复流程。巡检仍在一轮内处理上界以内的全部券，分页不会重置单券异常连续次数或改变修订/fence 顺序。
 
-分批限制的是每次 SQL 返回规模，不代表整轮巡检耗时或单券证据大小已有上限。一致性修复需要完整买家与恢复证据，不能截断后仍宣称一致；对外全量列表也不能静默改为只返回首批。订单按页接口继续使用既有页码契约；引入游标接口应作为兼容的独立变更。历史订单缺失 ledger 时的身份补建仍保留，移除它需要下述回填 postflight 与所有旧 writer 退出的部署证据。
+分批限制的是每次 SQL 返回规模，不代表整轮巡检耗时或单券证据大小已有上限。一致性修复需要完整买家与恢复证据，不能截断后仍宣称一致；对外全量列表也不能静默改为只返回首批。订单按页接口继续使用既有页码契约；引入游标接口应作为兼容的独立变更。历史订单已由 V3 迁移回填为 `ORDER_CREATED` 账本，准入同步路径不再查询订单表；Worker 落单时仍会把与订单身份一致、但处于 `REJECTED`/`REPAIR_REQUIRED` 或缺失的账本纠正为 `ORDER_CREATED`。
 
 ## 完整性门禁
 
@@ -50,89 +50,23 @@ invariants migration 在校验列长度与唯一索引形状后，将 `commerce_
 这次发布不能做旧/新镜像混跑的普通 rolling：旧镜像不会写 admission ledger。
 维护顺序固定为：在网关封闭旧秒杀入口并把旧 API scale 到 0；保留旧 worker 排空
 旧 Stream/PEL；停止旧 worker并由 Flyway 执行 ledger 建表、回填和 postflight；全量替换所有旧
-API/worker；初始化并核验 routing control 与每 shard gate；最后才重新开放入口。
+API/worker；最后才重新开放入口。
 DDL 采用 expand/contract 只说明新旧进程可短暂连接同一扩展 schema，不代表旧准入
 语义可以与 ledger 版本并行服务。
 
-生产实例的 `CITYCOPILOT_COMMERCE_ROUTING_CONTROL_AUTO_INITIALIZE` 必须为
-`false`。首次启用路由栅栏时，由运维身份显式初始化当前 fingerprint；任意实例
-都不能通过启动竞态选择 generation：
+### 修改 Redis 键空间配置
 
-```powershell
-.\tools\migrations\commerce-runtime-drain-gate.ps1 `
-  -Action Initialize -Generation v1 -PhysicalShardCount 16
-```
+`CITYCOPILOT_COMMERCE_REDIS_ROUTING_GENERATION` 与 `CITYCOPILOT_COMMERCE_REDIS_PHYSICAL_SHARD_COUNT` 写入每个 Commerce Redis 键名和准入账本，所有实例必须一致。修改它们是维护窗口内的数据迁移，没有在线切换：
 
-每次秒杀准入先读取共享 control key，并在券所在 Redis Cluster slot 的 Lua 内
-再次校验 shard gate。切换协议固定为：
+1. 关闭秒杀入口（`CITYCOPILOT_COMMERCE_API_ENABLED=false` 或从网关摘除），保留 Worker 与 Relay 运行。
+2. 等待以下检查全部为零：
+   - 每条 `commerce:{commerce:<generation>:<count>:<shard>}:stream:orders` 的 pending、consumer lag 与单券 in-flight；
+   - `commerce_admission_ledger` 中 `ACCEPTED`、被认领或 `REPAIR_REQUIRED` 的记录；
+   - `commerce_order_recovery` 未终态的恢复阶段、未重放 DLQ、处理中的 Reservation；
+   - `commerce_outbox_event` 中待发布、已认领或失败的事件。
+3. 停止全部实例，迁移库存、buyer、活动元数据和全局幂等键到新键名并逐券核对，再以新配置整体启动。
 
-```powershell
-# 1. CAS ACTIVE(v1/16) -> DRAINING(v1/16)，同时关闭 16 个同槽 gate
-.\tools\migrations\commerce-runtime-drain-gate.ps1 `
-  -Action BeginDrain -Generation v1 -PhysicalShardCount 16
-
-# 2. 保留旧 worker/recovery 运行；先让旧 API 退出流量并等待在途 HTTP 请求结束，
-#    再重复检查直到全部积压归零
-.\tools\migrations\commerce-runtime-drain-gate.ps1 `
-  -Action VerifyDrain -Generation v1 -PhysicalShardCount 16
-
-# 3. 完成并独立核验业务 key 数据迁移后，再做最终排空检查和 CAS 激活
-.\tools\migrations\commerce-runtime-drain-gate.ps1 `
-  -Action Activate -Generation v1 -PhysicalShardCount 16 `
-  -TargetGeneration v2 -TargetPhysicalShardCount 32
-```
-
-`DRAINING` 拒绝新 seckill 和人工 DLQ replay，但旧 Stream worker 继续消费，
-durable admission recovery 也可在旧 fingerprint 的 DRAINING gate 下恢复已接受命令。
-激活以后，旧 API 实例的全局 fingerprint 和旧 shard gate 都不匹配，因此请求路径
-fail closed；这不是依赖实例启动时的一次性校验。
-
-`VerifyDrain` 和 `Activate` 都先执行完整性门禁，再按指定 generation/count 枚举
-所有 shard Stream 和 in-flight key，并要求：
-
-- `commerce_outbox_event` 没有待发布、已认领或失败事件；
-- 没有仍处于处理中或待释放的 Reservation；
-- 没有未重放 DLQ；
-- `commerce_order_recovery` 没有未解决恢复阶段；
-- 每条 `commerce:{commerce:<generation>:<count>:<shard>}:stream:orders` 的
-  pending、consumer lag 和该 shard 单券 in-flight 总数均为零；
-- durable admission ledger 没有仍待恢复、被认领或要求人工修复的记录；
-- 全局业务 mutation lease、每个物理 shard 的 admission lease 与活动元数据更新
-  fence 均为零。过期 lease 以 Redis `TIME` 清理，不依赖实例本地时钟。
-
-Ledger 的 `PREPARED` 只代表尚未向客户端返回 202 的身份预留，不阻断业务排空，
-但不能原样遗留在旧 fingerprint。`Activate` 在最终 CAS 前及 CAS 后都以
-`status='PREPARED' + source generation/count` 为条件，把它们幂等改写到目标
-generation/count；orderId、user、voucher、幂等键、fingerprint 和状态均保持不变。
-因此客户端重试可在新 generation 继续使用同一 orderId，并建立目标 generation 的
-全局幂等键。`ACCEPTED`、活动 claim 或 `REPAIR_REQUIRED` 必须归零，因为它们代表
-已经确认但尚未完成的业务效果。
-
-每个准入请求在写 ledger 前，先用券所在 Redis slot 的 Lua 原子校验 shard gate 并
-登记一个可续租 admission lease；prepare、全局幂等、准入 Lua、ledger 终态确认和
-稳定拒绝都在该 lease 内完成。`BeginDrain` 先关闭 control 与全部 shard gate，
-`VerifyDrain`/`Activate` 再要求所有 shard admission lease 归零，因此不会在最终
-PREPARED 搬迁后出现迟到的 source `PREPARED`。优惠券管理、订单状态变更、人工修复
-等写路径使用全局并发 mutation lease；operator 取得独占 lease 后，新的业务 lease
-无法进入，并等待既有 lease 释放或过期。已提交 CAS 的重跑会先把混合状态的目标
-gate 全部重新关闭，等待目标 admission lease 归零，再执行完整 target preflight、
-重新确认 control 复制和 PREPARED 搬迁；不会重新开放旧 generation。仓库仍建议在
-最终切换窗口从服务发现移除旧 API，作为减少在途时间的运维措施，而不是正确性前提。
-
-`BeginDrain` 和 `Activate` 会修改 control/gate；`VerifyDrain` 只读。`Activate`
-只额外迁移上述 `PREPARED` ledger fingerprint，不会迁移库存、buyer、一人一券、
-活动元数据或全局幂等记录。改变 generation/count 前必须
-另行完成这些业务 key 的可审计迁移；`Activate` 会在 CAS 前逐券核对目标 stock、
-metadata、buyer 集合，并确认目标 Stream/in-flight 为空，任何空 keyspace 或漂移都会
-fail closed。“排空为零”不能替代数据迁移。
-Redis Cluster 主从切换、脚本 cross-slot、实例强制终止和迁移中断恢复仍必须在真实集群验收。
-仓库中的 PowerShell 实现通过 Docker Compose 执行 MySQL/Redis 命令，是本地演练和
-协议参考；它没有分布式 operator lease 与 node-bound `WAIT`，禁止连接生产环境，
-也禁止和 Java operator 并行执行。受控迁移时应把
-`commerce.routingOperator` 作为一次性 Java 进程或容器单独运行；
-它复用 Commerce 制品中的 Java/Lettuce operator，在目标 key 所在当前 master 的同一
-物理连接上执行 Lua CAS/SET 与 `WAIT`，可沿用 Redis Cluster seed、TLS 和 ACL 配置。
-该进程使用独立受限的 MySQL/Redis 运维身份，业务实例不接收这些控制面凭据。
+旧配置留下的 `PREPARED` 账本不会被搬迁：同一幂等键重试会得到 `COMMERCE_ADMISSION_ROUTING_CONFLICT`（503），客户端需换新键重新下单。在线扩容的设计记录在 [ADR-0009](../adr/0009-commerce-high-concurrency-admission.md#未实现在线分片扩容)，当前未实现。
 
 ## 故障与恢复边界
 

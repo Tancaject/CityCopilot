@@ -14,13 +14,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from zoneinfo import ZoneInfo
-
-from run_seckill_baseline import percentile
 
 
 def require(condition: bool, message: str) -> None:
@@ -163,8 +159,7 @@ def run(args) -> dict:
               "fixture": {"userId": str(current["id"]), "otherUserId": str(other["id"]), "shopId": resource["shopId"],
                           "resourceId": resource["id"], "slotId": slot["id"], "startAt": slot["startAt"]},
               "security": {}, "lostResponse": {}, "cleanup": {"completed": False},
-              "limitations": ["Local isolated test services; no production throughput or CTR claim.",
-                              "Plan timings include Core HTTP, discovery, Commerce and quote persistence; no plan query performs HOLD."]}
+              "limitations": ["Local isolated test services; no production throughput claim."]}
     hold_key = run_id + ":hold"
     possible_keys = [run_id + ":anonymous", hold_key]
     booking_id = None
@@ -181,23 +176,8 @@ def run(args) -> dict:
         quote = quote_result["body"]
         require(quote["baseCents"] == offer["unitPriceCents"] * 2 and 0 <= quote["totalCents"] <= quote["baseCents"], "Personal package price contract failed")
         report["personalQuote"] = {"baseCents": quote["baseCents"], "totalCents": quote["totalCents"], "partySize": 2}
-        shop_response = api.call("GET", "/shop/" + resource["shopId"], token=token)
-        require(shop_response["status"] == 200 and shop_response["body"].get("success"), "Fixture shop could not be read")
-        shop = shop_response["body"]["data"]
-        local_start = instant(slot["startAt"]).astimezone(ZoneInfo(resource["timezone"]))
-        local_end = instant(slot["endAt"]).astimezone(ZoneInfo(resource["timezone"]))
-        preflight = api.call("POST", "/booking-plans", {
-            "scenario": "DINING_POOL", "date": local_start.date().isoformat(), "timeFrom": local_start.strftime("%H:%M"),
-            "timeTo": local_end.strftime("%H:%M"), "timezone": resource["timezone"], "partySize": 2,
-            "keyword": shop["name"], "budgetBasis": "TOTAL", "budgetCents": offer["unitPriceCents"] * 2, "preferences": []}, token)
-        require(preflight["status"] == 200 and preflight["body"].get("status") == "OPTIONS", "Attributed preflight plan did not return options")
-        quote = next(option["quote"] for option in preflight["body"]["options"]
-                     if option["resource"]["id"] == resource["id"] and option["slot"]["id"] == slot["id"])
-        require(quote.get("impressionId"), "Attribution proof needs a server-issued plan impression")
-        report["attribution"] = {"quoteId": quote["quoteId"], "impressionId": quote["impressionId"], "requestId": quote["requestId"],
-                                 "preflightPlanOutsideTimedWorkload": True}
         hold = {"resourceId": resource["id"], "slotId": slot["id"], "partySize": 2, "quoteId": quote["quoteId"],
-                "source": quote["source"], "impressionId": quote["impressionId"], "requestId": quote["requestId"]}
+                "source": quote["source"], "requestId": quote["requestId"]}
         forged = {"X-CityCopilot-User-Id": str(current["id"]), "X-CityCopilot-Admin": "true", "X-CityCopilot-Platform-Admin": "true"}
         anonymous = api.call("POST", "/bookings/holds", hold, key=possible_keys[0], headers=forged)
         report["security"]["anonymousForgedIdentity"] = summarize_response(anonymous)
@@ -241,51 +221,6 @@ def run(args) -> dict:
         require(slot_state(api, token, resource, slot)["occupied"] == baseline["occupied"], "Cancellation did not restore capacity")
         report["lostResponse"].update(confirmed=True, cancelled=True)
 
-        profiles = [(2, "TOTAL", offer["unitPriceCents"] * 2), (3, "PER_PERSON", offer["unitPriceCents"]), (4, "TOTAL", 1)]
-
-        def plan_sample(index: int) -> dict:
-            party, basis, budget = profiles[index % len(profiles)]
-            request = {"scenario": "DINING_POOL", "date": local_start.date().isoformat(), "timeFrom": local_start.strftime("%H:%M"),
-                       "timeTo": local_end.strftime("%H:%M"), "timezone": resource["timezone"], "partySize": party,
-                       "keyword": shop["name"], "budgetBasis": basis, "budgetCents": budget, "preferences": []}
-            result = api.call("POST", "/booking-plans", request, token)
-            body = result.get("body") or {}
-            options = body.get("options", [])
-            maximum = budget * party if basis == "PER_PERSON" else budget
-            valid = []
-            for option in options:
-                r, s, q = option["resource"], option["slot"], option["quote"]
-                valid.append(option["shopId"] == resource["shopId"] and r["kind"] == "DINING_POOL" and r["maxPartySize"] >= party and s["available"] >= party
-                             and instant(s["startAt"]) >= instant(slot["startAt"]) and instant(s["endAt"]) <= instant(slot["endAt"])
-                             and q["partySize"] == party and q["units"] == party and q["pricingMode"] == "FIXED" and q["currency"] == "CNY"
-                             and q["resourceId"] == r["id"] and q["slotId"] == s["id"] and q["userId"] == str(current["id"]) and type(q["totalCents"]) is int
-                             and 0 <= q["totalCents"] <= maximum and q["baseCents"] == q["unitPriceCents"] * party)
-            coherent = body.get("status") == "OPTIONS" and bool(options) or body.get("status") == "NO_MATCH" and not options
-            success = result["status"] == 200 and coherent and (index % 3 == 2 or bool(options))
-            return {"index": index, "request": request, "httpStatus": result["status"], "status": body.get("status"),
-                    "success": success, "latencyMs": round(result["latency_ms"], 3), "optionCount": len(options),
-                    "validOptionCount": sum(valid), "hardConstraintsPassed": all(valid), "rankingVersion": body.get("rankingVersion"),
-                    "sampleOptions": [{"shopId": o["shopId"], "resourceId": o["resource"]["id"], "slotId": o["slot"]["id"],
-                                       "partySize": o["quote"]["partySize"], "totalCents": o["quote"]["totalCents"],
-                                       "quoteId": o["quote"]["quoteId"], "impressionId": o["quote"].get("impressionId")} for o in options]}
-
-        with ThreadPoolExecutor(max_workers=args.concurrency) as workers:
-            samples = list(workers.map(plan_sample, range(args.requests)))
-        durations = [sample["latencyMs"] for sample in samples]
-        total_options = sum(sample["optionCount"] for sample in samples)
-        valid_options = sum(sample["validOptionCount"] for sample in samples)
-        success_count = sum(sample["success"] for sample in samples)
-        report["plans"] = {"requests": args.requests, "concurrency": args.concurrency, "successCount": success_count,
-                           "successRate": success_count / args.requests, "returnedOptions": total_options, "validOptions": valid_options,
-                           "hardConstraintRate": valid_options / total_options if total_options else None,
-                           "p50Ms": percentile(durations, .50), "p95Ms": percentile(durations, .95), "p99Ms": percentile(durations, .99),
-                           "samples": samples}
-        require(success_count == args.requests and total_options > 0 and valid_options == total_options, "Plan HTTP or hard constraint acceptance failed")
-        require(slot_state(api, token, resource, slot)["occupied"] == baseline["occupied"], "Read-only plan queries changed slot capacity")
-        visible = next(option for sample in samples for option in sample["sampleOptions"] if option.get("impressionId"))
-        feedback = api.call("POST", "/booking-feedback", {"impressionId": visible["impressionId"], "shopId": visible["shopId"], "eventType": "CONFIRMED"}, token)
-        report["security"]["clientForgedConfirmedFeedback"] = summarize_response(feedback)
-        require(feedback["status"] == 400 and feedback["body"].get("code") == "BOOKING_FEEDBACK_INVALID_REQUEST", "Client supplied CONFIRMED was not rejected by the event type boundary")
         report["passed"] = True
     except Exception as error:
         report["passed"] = False
@@ -328,12 +263,9 @@ def main() -> int:
     parser.add_argument("--redis-code-port", type=int, default=61380, help="Test-only loopback Redis containing login verification codes")
     parser.add_argument("--token-env", default="CITYCOPILOT_BOOKING_API_TOKEN")
     parser.add_argument("--other-token-env", default="CITYCOPILOT_BOOKING_API_OTHER_TOKEN")
-    parser.add_argument("--requests", type=int, default=30)
-    parser.add_argument("--concurrency", type=int, default=5)
     parser.add_argument("--timeout", type=float, default=20)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
-    require(1 <= args.requests <= 100 and 1 <= args.concurrency <= 10, "Acceptance workload must remain bounded")
     report = run(args)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
