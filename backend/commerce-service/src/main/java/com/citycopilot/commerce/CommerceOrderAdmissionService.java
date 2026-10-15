@@ -172,6 +172,10 @@ public class CommerceOrderAdmissionService {
         } catch (RuntimeException error) {
             throw admissionOutcomeUnknown(error);
         }
+        if (result != null && (result == 5L || result == 7L) && campaignArchived(voucherId)) {
+            // 已归档活动的 Redis 状态已释放：这是确定的“已结束”，不能当成可重试的暂时不可用。
+            throw new CommerceApiException("SECKILL_ENDED", "Seckill has ended", 409);
+        }
         if (result == null || result == 5L || result == 7L) {
             throw admissionUnavailable();
         }
@@ -208,6 +212,12 @@ public class CommerceOrderAdmissionService {
             throw admissionUnavailable();
         }
         return accepted(orderId, idempotencyKey, "COMMERCE_ORDER_ACCEPTED");
+    }
+
+    private boolean campaignArchived(long voucherId) {
+        return jdbc.queryForList(
+                "SELECT redis_archived_at IS NOT NULL FROM commerce_seckill_voucher WHERE voucher_id=?",
+                Boolean.class, voucherId).contains(Boolean.TRUE);
     }
 
     /**

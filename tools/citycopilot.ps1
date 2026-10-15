@@ -16,9 +16,11 @@ $InfrastructureServices = @(
     "mysql",
     "commerce-mysql",
     "redis",
-    "rocketmq-namesrv",
-    "rocketmq-broker",
-    "rocketmq-proxy"
+    "commerce-redis",
+    "commerce-redis-replica",
+    "kafka-1",
+    "kafka-2",
+    "kafka-3"
 )
 $ApplicationServices = @(
     "core",
@@ -62,7 +64,7 @@ function Ensure-EnvironmentFile {
         foreach ($setting in @(
             "CITYCOPILOT_COMMERCE_MYSQL_PORT=3309",
             "CITYCOPILOT_COMMERCE_REDIS_USERNAME=commerce",
-            "CITYCOPILOT_ROCKETMQ_ENABLED=true"
+            "CITYCOPILOT_KAFKA_ENABLED=true"
         )) {
             $parts = $setting.Split("=", 2)
             if (-not $existingKeys.ContainsKey($parts[0])) {
@@ -89,7 +91,8 @@ function Ensure-EnvironmentFile {
     $lines = @(
         "COMPOSE_PROJECT_NAME=citycopilot",
         "CITYCOPILOT_BIND_ADDRESS=127.0.0.1",
-        "CITYCOPILOT_TIMEZONE=Asia/Singapore",
+        "CITYCOPILOT_TIMEZONE=Asia/Shanghai",
+        "CITYCOPILOT_LOG_LOGIN_CODES=true",
         "CITYCOPILOT_HTTP_PORT=8080",
         "CITYCOPILOT_CORE_PORT=8081",
         "CITYCOPILOT_MYSQL_PORT=3307",
@@ -113,7 +116,7 @@ function Ensure-EnvironmentFile {
         "CITYCOPILOT_COMMERCE_REDIS_PASSWORD=$(New-CityCopilotSecret 24)",
         "CITYCOPILOT_INTERNAL_COMMERCE_TOKEN=$(New-CityCopilotSecret 48)",
         "CITYCOPILOT_PAYMENT_SIGNING_SECRET=$(New-CityCopilotSecret 48)",
-        "CITYCOPILOT_ROCKETMQ_ENABLED=true",
+        "CITYCOPILOT_KAFKA_ENABLED=true",
         "CITYCOPILOT_AMAP_WEB_SERVICE_KEY=",
         "VITE_DEFAULT_CITY=杭州",
         "VITE_AMAP_JS_KEY=",
@@ -252,11 +255,10 @@ function Start-Infrastructure {
     $arguments = @("up", "-d", "--remove-orphans") + $InfrastructureServices
     Invoke-Compose @arguments
     Wait-ServicesHealthy -Names $InfrastructureServices
-    Invoke-RedisInitialization
-}
-
-function Invoke-RedisInitialization {
-    Invoke-Compose run --rm --no-deps redis-init
+    # 建 topic 是幂等的一次性任务，每次启动都跑一遍，保证主题与分区、副本配置存在。
+    Invoke-Compose run --rm --no-deps kafka-init
+    # 定时备份依赖两个 MySQL 健康，没有自身健康检查，单独拉起。
+    Invoke-Compose up -d --no-deps backup
 }
 
 function Invoke-SchemaMigrations {
@@ -281,7 +283,7 @@ switch ($Action) {
         Invoke-SchemaMigrations
         Invoke-Compose ps
         $environment = Read-CityCopilotEnvironment
-        Write-Host ("Infrastructure is ready: MySQL {0}/{1}, Redis {2}, RocketMQ Proxy 18081." -f
+        Write-Host ("Infrastructure is ready: MySQL {0}/{1}, Redis {2}, Kafka 19092-19094." -f
             $environment["CITYCOPILOT_MYSQL_PORT"],
             $environment["CITYCOPILOT_COMMERCE_MYSQL_PORT"],
             $environment["CITYCOPILOT_REDIS_PORT"]) -ForegroundColor Green
@@ -301,7 +303,6 @@ switch ($Action) {
         $arguments = @("restart") + $InfrastructureServices
         Invoke-Compose @arguments
         Wait-ServicesHealthy -Names $InfrastructureServices
-        Invoke-RedisInitialization
         Invoke-SchemaMigrations
         Write-Host "CityCopilot infrastructure restarted and is healthy." -ForegroundColor Green
     }

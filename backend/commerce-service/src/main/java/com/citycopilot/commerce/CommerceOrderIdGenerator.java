@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -67,15 +68,16 @@ final class CommerceOrderIdGenerator {
      */
     private long allocateUpperBound(String namespace) {
         Long upperBound = transactions.execute(status -> {
-            jdbc.update("""
-                    INSERT IGNORE INTO commerce_id_segment(namespace,next_value)
-                    VALUES (?,0)
-                    """, namespace);
-            Long current = jdbc.queryForObject("""
-                    SELECT next_value FROM commerce_id_segment
-                    WHERE namespace=?
-                    FOR UPDATE
-                    """, Long.class, namespace);
+            // 先直接加排他锁读取；行已存在时不能先 INSERT IGNORE，那会持有共享锁再升级，
+            // 两个实例同时换号段就会互相等待成死锁。只有首次使用该命名空间时才插入。
+            Long current = lockedNextValue(namespace);
+            if (current == null) {
+                jdbc.update("""
+                        INSERT IGNORE INTO commerce_id_segment(namespace,next_value)
+                        VALUES (?,0)
+                        """, namespace);
+                current = lockedNextValue(namespace);
+            }
             // FOR UPDATE 串行化同一命名空间的号段分配，防止多实例拿到重叠区间。
             if (current == null || current < 0) {
                 throw new IllegalStateException("Commerce ID segment state is invalid");
@@ -101,6 +103,16 @@ final class CommerceOrderIdGenerator {
             throw new IllegalStateException("Unable to allocate a durable Commerce ID segment");
         }
         return upperBound;
+    }
+
+    /** @return 加排他锁读取的号段游标；该命名空间尚无记录时为 null */
+    private Long lockedNextValue(String namespace) {
+        List<Long> values = jdbc.queryForList("""
+                SELECT next_value FROM commerce_id_segment
+                WHERE namespace=?
+                FOR UPDATE
+                """, Long.class, namespace);
+        return values.isEmpty() ? null : values.get(0);
     }
 
     private final class LocalSegment {

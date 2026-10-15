@@ -1,12 +1,8 @@
 package com.citycopilot.core.controller;
 
-import com.citycopilot.core.commerce.CommercePortClient;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.service.IVoucherOrderService;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
@@ -44,48 +40,5 @@ class VoucherOrderControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getHeaders().getLocation()).isEqualTo(URI.create("/voucher-order/300"));
         assertThat(response.getBody()).isSameAs(replay);
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "COMMERCE_ADMISSION_OUTCOME_UNKNOWN",
-            "COMMERCE_DURABLE_ADMISSION_UNAVAILABLE"
-    })
-    void exposesRetryableUnknownOutcomes(String code) {
-        CommercePortClient.CommerceHttpException error = new CommercePortClient.CommerceHttpException(
-                503,
-                code,
-                "Retry with the same Idempotency-Key",
-                "1",
-                null
-        );
-
-        ResponseEntity<Result> response = controller.commerceFailure(error);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
-        assertThat(response.getHeaders().getFirst(HttpHeaders.RETRY_AFTER)).isEqualTo("1");
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().getSuccess()).isFalse();
-        assertThat(response.getBody().getCode()).isEqualTo(code);
-        assertThat(response.getBody().getErrorMsg()).contains("same Idempotency-Key");
-    }
-
-    @Test
-    void preservesNonRetryableFailureStatusWithoutRetryHeader() {
-        CommercePortClient.CommerceHttpException error = new CommercePortClient.CommerceHttpException(
-                409,
-                "SECKILL_STOCK_NOT_ENOUGH",
-                "Voucher stock exhausted",
-                null,
-                null
-        );
-
-        ResponseEntity<Result> response = controller.commerceFailure(error);
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(response.getHeaders().containsHeader(HttpHeaders.RETRY_AFTER)).isFalse();
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().getCode()).isEqualTo("SECKILL_STOCK_NOT_ENOUGH");
-        assertThat(response.getBody().getErrorMsg()).isEqualTo("Voucher stock exhausted");
     }
 }

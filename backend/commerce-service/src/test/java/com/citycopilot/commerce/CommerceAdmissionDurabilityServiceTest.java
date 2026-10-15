@@ -174,24 +174,26 @@ class CommerceAdmissionDurabilityServiceTest {
 
     @Test
     void claimFiltersToAcceptedRowsInTheLocalRoutingGeneration() {
-        when(jdbc.update(contains("UPDATE commerce_admission_ledger"), any(Object[].class)))
-                .thenReturn(0);
         ArgumentCaptor<Object[]> arguments = ArgumentCaptor.forClass(Object[].class);
 
-        service.claimAcceptedBatch();
+        assertThat(service.claimAcceptedBatch()).isEmpty();
 
-        verify(jdbc).update(
+        verify(jdbc).queryForList(
                 org.mockito.ArgumentMatchers.argThat(sql ->
-                        sql.contains("status='ACCEPTED'")
+                        sql.contains("SELECT order_id FROM commerce_admission_ledger")
+                                && sql.contains("status='ACCEPTED'")
                                 && sql.contains("routing_generation=?")
                                 && sql.contains("physical_shard_count=?")
                                 && !sql.contains("PREPARED")
                 ),
+                eq(Long.class),
                 arguments.capture()
         );
-        assertThat(arguments.getValue()).hasSize(7);
-        assertThat(arguments.getValue()[3]).isEqualTo("v7");
-        assertThat(arguments.getValue()[4]).isEqualTo(4);
+        assertThat(arguments.getValue()).hasSize(4);
+        assertThat(arguments.getValue()[0]).isEqualTo("v7");
+        assertThat(arguments.getValue()[1]).isEqualTo(4);
+        // 没有候选时不发出任何认领 UPDATE。
+        verify(jdbc, never()).update(contains("SET claim_token=?,claim_owner=?"), any(Object[].class));
     }
 
     @Test

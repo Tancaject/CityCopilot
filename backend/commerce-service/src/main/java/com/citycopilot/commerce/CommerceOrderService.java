@@ -16,6 +16,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Duration;
 import java.time.Instant;
 import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -100,7 +104,7 @@ public class CommerceOrderService {
                     LEFT JOIN shop_summary_projection p ON p.shop_id=v.shop_id
                     WHERE v.id=?
                     """, voucherId);
-            // 订单与事件同事务写入；RocketMQ 不可用时 Outbox Relay 可稍后重发。
+            // 订单与事件同事务写入；Kafka 不可用时 Outbox Relay 可稍后重发。
             jdbc.update("""
                     INSERT INTO commerce_order(
                         id,user_id,voucher_id,shop_id,shop_name_snapshot,
@@ -118,19 +122,8 @@ public class CommerceOrderService {
                     SET status='ORDER_CREATED', version=version+1
                     WHERE order_id=? AND status='RESERVED'
                     """, orderId);
-            Instant occurredAt = Instant.now();
-            OrderCreatedEvent payload = new OrderCreatedEvent(
-                    orderId,
-                    userId,
-                    voucherId,
-                    1,
-                    0,
-                    occurredAt
-            );
-            EventEnvelope<OrderCreatedEvent> event = new EventEnvelope<>(
-                    UUID.randomUUID().toString(), OrderCreatedEvent.EVENT_TYPE, OrderCreatedEvent.SCHEMA_VERSION,
-                    "commerce_order", String.valueOf(orderId), 0, "commerce-service",
-                    occurredAt.toString(), String.valueOf(orderId), payload);
+            EventEnvelope<OrderCreatedEvent> event = orderCreatedEvent(orderId, userId, voucherId,
+                    ((Number) voucher.get("shop_id")).longValue());
             jdbc.update("""
                     INSERT INTO commerce_outbox_event(
                         event_id,event_type,aggregate_type,aggregate_id,aggregate_version,
@@ -149,6 +142,174 @@ public class CommerceOrderService {
                     """, PHASE_ORDER_CREATED, sourceId, claimToken, PHASE_RECEIVED);
             if (terminal != 1) throw new LostRecoveryClaim();
         });
+    }
+
+    private EventEnvelope<OrderCreatedEvent> orderCreatedEvent(long orderId, long userId, long voucherId, long shopId) {
+        Instant occurredAt = Instant.now();
+        OrderCreatedEvent payload = new OrderCreatedEvent(orderId, userId, voucherId, 1, 0, occurredAt, shopId);
+        return new EventEnvelope<>(
+                UUID.randomUUID().toString(), OrderCreatedEvent.EVENT_TYPE, OrderCreatedEvent.SCHEMA_VERSION,
+                "commerce_order", String.valueOf(orderId), 0, "commerce-service",
+                occurredAt.toString(), String.valueOf(orderId), payload);
+    }
+
+    /** 批量建单的一条 Stream 订单消息。 */
+    record BatchOrder(String sourceId, String recordId, long orderId, long voucherId, long userId,
+                      String idempotencyKey, String payloadJson) {}
+
+    /**
+     * 批量建单结果。
+     *
+     * @param committed 本事务实际建单并终态化的订单，只有它们可以做 Redis 收尾
+     * @param skipped 未取得批量资格的订单（已认领、已终态、身份不符、账本不在 PREPARED/ACCEPTED），交逐条路径
+     * @param acceptedTransitions 账本中由 ACCEPTED 转出的数量，提交后用于扣减积压计数
+     */
+    record BatchResult(List<BatchOrder> committed, List<BatchOrder> skipped, int acceptedTransitions) {}
+
+    /** 批量事务因业务事实不满足批量前提而整体回滚；数据库确定未提交，可改走逐条路径。 */
+    static final class BatchRejected extends RuntimeException {
+        BatchRejected(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * 在一个 MySQL 事务中为同一 Voucher 的一批订单完成与 {@link #createOrder} 相同的全部写入。
+     *
+     * <p>热点库存行只锁一次、扣 N 份，整批只提交一次。Recovery 行用 {@code FOR UPDATE} 锁定代替逐条
+     * claim：锁定、身份核对、业务写入和终态化都在同一事务内完成。任何一步的结果与批量前提不符都抛出
+     * {@link BatchRejected} 回滚整批，由调用方在事务外改走逐条路径。</p>
+     *
+     * @param voucherId 本批共同的券
+     * @param batch 同券订单，调用方保证不超过单批上限
+     */
+    BatchResult createOrders(long voucherId, List<BatchOrder> batch) {
+        return transactions.execute(status -> {
+            List<Object> recoveryRows = new ArrayList<>();
+            for (BatchOrder order : batch) {
+                recoveryRows.addAll(List.of(order.sourceId(), order.orderId(), voucherId, order.userId(),
+                        order.idempotencyKey(), order.payloadJson(), PHASE_RECEIVED));
+            }
+            jdbc.update("""
+                    INSERT IGNORE INTO commerce_order_recovery(
+                        source_id,source_type,order_id,voucher_id,user_id,idempotency_key,payload_json,phase
+                    ) VALUES %s
+                    """.formatted(rows(batch.size(), "(?,'STREAM_ORDER',?,?,?,?,?,?)")), recoveryRows.toArray());
+            Map<String, Map<String, Object>> recoveries = new HashMap<>();
+            for (Map<String, Object> row : jdbc.queryForList("""
+                    SELECT source_id,order_id,voucher_id,user_id,idempotency_key,phase,
+                           (claim_token IS NULL OR claimed_until<CURRENT_TIMESTAMP(3)) IS TRUE AS claimable
+                    FROM commerce_order_recovery
+                    WHERE source_id IN (%s)
+                    ORDER BY source_id
+                    FOR UPDATE
+                    """.formatted(placeholders(batch.size(), 1)),
+                    batch.stream().map(order -> (Object) order.sourceId()).toArray())) {
+                recoveries.put(String.valueOf(row.get("source_id")), row);
+            }
+            Map<Long, CommerceAdmissionDurabilityService.Status> ledger =
+                    durableAdmissions.lockBatchCandidates(voucherId, batch);
+            List<BatchOrder> eligible = new ArrayList<>();
+            List<BatchOrder> skipped = new ArrayList<>();
+            for (BatchOrder order : batch) {
+                Map<String, Object> row = recoveries.get(order.sourceId());
+                boolean ready = row != null
+                        && PHASE_RECEIVED.equals(row.get("phase"))
+                        && ((Number) row.get("claimable")).intValue() == 1
+                        && ((Number) row.get("order_id")).longValue() == order.orderId()
+                        && ((Number) row.get("voucher_id")).longValue() == voucherId
+                        && ((Number) row.get("user_id")).longValue() == order.userId()
+                        && order.idempotencyKey().equals(row.get("idempotency_key"))
+                        && ledger.containsKey(order.orderId());
+                (ready ? eligible : skipped).add(order);
+            }
+            if (eligible.isEmpty()) return new BatchResult(List.of(), skipped, 0);
+            int n = eligible.size();
+            Object[] orderIds = eligible.stream().map(order -> (Object) order.orderId()).toArray();
+
+            List<Object> reservations = new ArrayList<>();
+            for (BatchOrder order : eligible) {
+                reservations.addAll(List.of(order.orderId(), voucherId, order.userId(), order.sourceId()));
+            }
+            jdbc.update("""
+                    INSERT INTO commerce_reservation(order_id,voucher_id,user_id,status,stream_record_id)
+                    VALUES %s
+                    """.formatted(rows(n, "(?,?,?,'RESERVED',?)")), reservations.toArray());
+            // 与逐条路径同一防超卖边界，只是一次扣 N 份；不足时整批回滚，由逐条路径逐单判定。
+            int stock = jdbc.update("""
+                    UPDATE commerce_seckill_voucher
+                    SET stock=stock-?, version=version+?
+                    WHERE voucher_id=? AND stock>=?
+                    """, n, n, voucherId, n);
+            if (stock != 1) throw new BatchRejected("database stock is below batch size " + n);
+            Map<String, Object> voucher = jdbc.queryForMap("""
+                    SELECT v.id, v.shop_id, v.title, v.sub_title, v.rules,
+                           v.pay_value, v.actual_value, p.shop_name
+                    FROM commerce_voucher v
+                    LEFT JOIN shop_summary_projection p ON p.shop_id=v.shop_id
+                    WHERE v.id=?
+                    """, voucherId);
+            List<Object> orderRows = new ArrayList<>();
+            List<Object> outboxRows = new ArrayList<>();
+            for (BatchOrder order : eligible) {
+                orderRows.addAll(Arrays.asList(order.orderId(), order.userId(), voucherId,
+                        voucher.get("shop_id"), value(voucher.get("shop_name")), value(voucher.get("title")),
+                        value(voucher.get("sub_title")), value(voucher.get("rules")),
+                        voucher.get("pay_value"), voucher.get("actual_value"), order.idempotencyKey()));
+                EventEnvelope<OrderCreatedEvent> event = orderCreatedEvent(order.orderId(), order.userId(), voucherId,
+                        ((Number) voucher.get("shop_id")).longValue());
+                outboxRows.addAll(List.of(event.eventId(), event.eventType(), event.aggregateType(),
+                        event.aggregateId(), event.aggregateVersion(), json(event)));
+            }
+            jdbc.update("""
+                    INSERT INTO commerce_order(
+                        id,user_id,voucher_id,shop_id,shop_name_snapshot,
+                        voucher_title_snapshot,voucher_sub_title_snapshot,voucher_rules_snapshot,
+                        pay_value_snapshot,actual_value_snapshot,status,version,idempotency_key
+                    ) VALUES %s
+                    """.formatted(rows(n, "(?,?,?,?,?,?,?,?,?,?,1,0,?)")), orderRows.toArray());
+            int reserved = jdbc.update("""
+                    UPDATE commerce_reservation
+                    SET status='ORDER_CREATED', version=version+1
+                    WHERE order_id IN (%s) AND status='RESERVED'
+                    """.formatted(placeholders(n, 1)), orderIds);
+            if (reserved != n) throw new BatchRejected("reservations changed " + reserved + " of " + n);
+            jdbc.update("""
+                    INSERT INTO commerce_outbox_event(
+                        event_id,event_type,aggregate_type,aggregate_id,aggregate_version,
+                        topic,payload_json,status
+                    ) VALUES %s
+                    """.formatted(rows(n, "(?,?,?,?,?,'citycopilot-commerce-events-v1',?,'READY')")),
+                    outboxRows.toArray());
+            int accepted = durableAdmissions.markOrdersCreated(voucherId, eligible, ledger);
+            int terminal = jdbc.update("""
+                    UPDATE commerce_order_recovery
+                    SET phase=?, terminal_at=CURRENT_TIMESTAMP(3),
+                        claim_token=NULL, claim_owner=NULL, claimed_until=NULL
+                    WHERE source_id IN (%s) AND phase=?
+                    """.formatted(placeholders(n, 1)), concat(PHASE_ORDER_CREATED,
+                    eligible.stream().map(BatchOrder::sourceId).toArray(), PHASE_RECEIVED));
+            if (terminal != n) throw new BatchRejected("recovery rows changed " + terminal + " of " + n);
+            return new BatchResult(eligible, skipped, accepted);
+        });
+    }
+
+    /** @return {@code count} 组括号占位，每组 {@code width} 个参数，例如 (?,?),(?,?)；width 为 1 时不加括号 */
+    static String placeholders(int count, int width) {
+        String group = width == 1 ? "?" : "(" + String.join(",", Collections.nCopies(width, "?")) + ")";
+        return String.join(",", Collections.nCopies(count, group));
+    }
+
+    private static String rows(int count, String row) {
+        return String.join(",", Collections.nCopies(count, row));
+    }
+
+    private static Object[] concat(Object first, Object[] middle, Object last) {
+        Object[] all = new Object[middle.length + 2];
+        all[0] = first;
+        System.arraycopy(middle, 0, all, 1, middle.length);
+        all[all.length - 1] = last;
+        return all;
     }
 
     /**
@@ -462,6 +623,17 @@ public class CommerceOrderService {
             }
             return PHASE_RESTORED;
         }
+        if (restored != null && restored == -2L && Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT redis_archived_at IS NOT NULL FROM commerce_seckill_voucher WHERE voucher_id=?",
+                Boolean.class, voucherId))) {
+            // 活动已归档、Redis 状态已释放；MySQL 库存已在状态事务内返还，无需再恢复 Redis。
+            jdbc.update("""
+                    UPDATE commerce_order_recovery
+                    SET phase=?, compensation_delta=0, terminal_at=CURRENT_TIMESTAMP(3)
+                    WHERE source_id=? AND phase=?
+                    """, PHASE_RESTORED, sourceId, PHASE_RESTORE_PENDING);
+            return PHASE_RESTORED;
+        }
         String reason = restored != null && restored == -2L
                  ? "redis_stock_missing_during_transition_restore"
                 : "inventory_fence_expired_before_transition_restore";
@@ -478,13 +650,17 @@ public class CommerceOrderService {
     /** 在订单状态事务内追加 Outbox 事件，交由 Relay 异步发布。 */
     void appendStateEvent(long orderId, long userId, String action, int state) {
         String eventId = UUID.randomUUID().toString();
+        // 同一事务内按主键读出店铺和券，消费端（如店铺销量）无需回查 Commerce。schemaVersion 2 只新增这两个字段。
+        Map<String, Object> order = jdbc.queryForMap("SELECT shop_id,voucher_id FROM commerce_order WHERE id=?", orderId);
         EventEnvelope<Map<String, Object>> event = new EventEnvelope<>(
-                eventId, "commerce.order." + action, 1, "commerce_order", String.valueOf(orderId), state,
+                eventId, "commerce.order." + action, 2, "commerce_order", String.valueOf(orderId), state,
                 "commerce-service", Instant.now().toString(), String.valueOf(orderId), Map.of(
                 "orderId", orderId,
                 "userId", userId,
                 "action", action,
-                "status", state
+                "status", state,
+                "shopId", ((Number) order.get("shop_id")).longValue(),
+                "voucherId", ((Number) order.get("voucher_id")).longValue()
         ));
         jdbc.update("""
                 INSERT INTO commerce_outbox_event(

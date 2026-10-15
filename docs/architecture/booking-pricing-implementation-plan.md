@@ -1,10 +1,10 @@
-# CityCopilot 预约、优惠报价与消费方案实施计划
+# CityCopilot 预约与优惠报价实施计划
 
 本文是功能与技术演进的执行依据。目标是形成可以由真实商家维护、真实用户完成预约的产品，并积累可核查的后端项目成果。勾选任务表示对应实现与本地验收已完成，具体范围以[交付证据](../evidence/booking-delivery-evidence.md)为准，不代表生产部署或真实商户试用。
 
-> 2026-10-06：Agent、MCP、评测模块与 Elasticsearch 检索已从项目移除，本文中与 Agent 消费方案、确认卡片、行为反馈、批量方案查询和 ES 召回相关的内容仅作历史记录，对应代码已不存在。
+> 2026-10-15：Agent、MCP、评测模块、Elasticsearch 检索与行为推荐已从项目移除，相关章节已删除；跨服务消息现由 Kafka 承载（[ADR-0012](../adr/0012-kafka-replaces-rocketmq.md)）。
 
-范围已确定为运动场馆和餐厅；美容门店暂缓。先交付预约与报价，再接入 Agent 消费方案，个性化推荐作为后续里程碑。实施顺序见第 9 节；默认业务参数只在第 3 节维护。
+范围已确定为运动场馆和餐厅；美容门店暂缓。实施顺序见第 9 节；默认业务参数只在第 3 节维护。
 
 阅读顺序：第 1～3 节确定产品和技术边界，第 4～8 节约定数据与业务契约，第 9 节直接用于任务执行，第 10～12 节用于验收、迁移和简历证据。HOLD 表示临时占位机制，数据库和 API 中的对应状态统一命名为 HELD。
 
@@ -35,8 +35,6 @@
 
 1. 预约：两种容量模型、并发占位、原子改期、过期释放、核销。
 2. 报价：确定性优惠计算、版本化规则、券与名额的事务协同、可解释价格。
-3. Agent：把自然语言约束转成真实可预约方案，复用同一报价与预约 API。
-4. 推荐：在前三项产生行为数据后，建立归因、特征和排序评测。
 
 ## 2. 技术选型与模块边界
 
@@ -47,13 +45,10 @@
 | 应用框架 | 复用 Spring Boot、现有 JDBC/事务和 Maven 模块 | 本轮不把框架升级与业务开发绑成一个大变更 |
 | 预约库存 | MySQL InnoDB 条件更新、短事务、固定锁顺序 | 新业务需要多时段、券与报价的一致提交，先不建立 Redis 预约库存镜像 |
 | 请求幂等 | Commerce 内操作记录、唯一键和请求指纹 | 覆盖新建、确认、改期、取消、核销，并能在响应丢失后查询原操作 |
-| 跨服务事件 | 复用 Transactional Outbox 与 RocketMQ | 预约事实与事件同事务；继续保留既有秒杀内部 Redis Stream，不将其扩展为通用工作流 |
+| 跨服务事件 | 复用 Transactional Outbox 与 Kafka | 预约事实与事件同事务；继续保留既有秒杀内部 Redis Stream，不将其扩展为通用工作流 |
 | 到期处理 | 数据库截止时间与有索引的分批扫描 | 截止时间为事实源，调度延迟不改变业务是否已经过期 |
 | 优惠计算 | Java 纯计算函数、整数金额、有限组合枚举 | 固定规则种类足以支撑首版，不引入 Drools 或脚本执行引擎 |
-| 搜索 | 现有 Elasticsearch/GEO 召回，Commerce 批量校验时段和价格 | ES 提供候选，不持有实时可预约性和最终报价的权威事实 |
-| Agent | 复用工具契约、Core 工具入口、确认卡片与 SSE | 新业务规则落在 Commerce，模型不计算金额、不决定库存 |
-| 推荐后续 | MySQL 行为数据与聚合、Redis 特征缓存、Java 候选重排 | 先验证可解释排序，不引入 Kafka、Flink、ClickHouse 或新的向量库 |
-| 并发技术实验 | 核心业务完成后单独评估 Java 21 虚拟线程 | 仅针对地图、模型等阻塞 I/O 聚合，保持并发配额；用同负载对照判断是否采用 |
+| 并发技术实验 | 核心业务完成后单独评估 Java 21 虚拟线程 | 仅针对地图等外部阻塞 I/O 聚合，保持并发配额；用同负载对照判断是否采用 |
 
 虚拟线程解决的是大量等待型任务的线程成本，不能预先承诺单次请求更快；实验依据见 [Oracle 虚拟线程文档](https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html)。
 
@@ -62,23 +57,19 @@
 ```mermaid
 flowchart LR
     WEB["用户端与商家后台"] --> CORE["Core：身份、店铺、发现、业务入口"]
-    WEB --> AGENT["Agent：需求提取、方案解释、确认"]
-    AGENT --> CORE
-    MCP["MCP：复用工具"] --> CORE
     CORE --> BOOK["Commerce / booking"]
     CORE --> PRICE["Commerce / pricing"]
     BOOK <--> PRICE
     BOOK --> DB[("Commerce MySQL")]
     PRICE --> DB
     DB --> RELAY["现有 Outbox Relay"]
-    RELAY --> MQ["RocketMQ"]
-    MQ --> FEEDBACK["Core 行为消费者"]
-    CORE --> SEARCH["现有 Search / GEO"]
+    RELAY --> MQ["Kafka"]
+    MQ --> CONSUMER["Core 事件消费者"]
+    CORE --> GEO["店铺 GEO 发现"]
 ```
 
-- Core：身份、商户店铺归属、店铺资料、搜索入口、浏览行为和推荐特征。
+- Core：身份、商户店铺归属、店铺资料与发现入口。
 - Commerce：资源排期、预约、预约券、报价、核销和站内预约提醒的唯一写入方。
-- Agent：不直接查询 Commerce 数据库，工具通过 Core 调用 Commerce。
 - 新预约与报价在同一个 Commerce 数据库事务中协同，不拆成预约微服务和优惠微服务，不引入分布式事务。
 - 使用 `Booking` 命名新业务。现有 `commerce_reservation` 表服务于秒杀准入，不作为到店预约表。
 
@@ -90,12 +81,10 @@ Commerce 内的 [BookingResourceService](../../backend/commerce-service/src/main
 |---|---|---|
 | Core → Commerce | [CommercePortClient](../../backend/core/src/main/java/com/citycopilot/core/commerce/CommercePortClient.java) | 增加类型明确的方法；新增 DTO 放 contracts，不重写全部旧 Map 接口 |
 | 商户归属 | [PlaceAuthorityClient](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/PlaceAuthorityClient.java) | 管理操作复用权威店铺校验，远程调用放在数据库锁外 |
-| 消息发布 | [CommerceOutboxRelay](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOutboxRelay.java) | 复用 claim、fencing、重试；增加预约事件 tag，保留旧订单 tag 的语义 |
-| 搜索条件 | [ShopSearchRequest](../../backend/search/src/main/java/com/citycopilot/search/ShopSearchRequest.java) | 增加业务查询适配，复用现有关键词与地理召回 |
-| 工具协议 | [AgentTool](../../backend/contracts/src/main/java/com/citycopilot/contract/tool/AgentTool.java) | 注册少量预约/报价工具，共用普通 API 的服务方法 |
+| 消息发布 | [CommerceOutboxRelay](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOutboxRelay.java) | 复用 claim、fencing、重试；预约事件与订单事件共用主题，按 eventType 区分 |
 | 前端 | [路由](../../frontend/src/router/index.ts)、[API](../../frontend/src/api/citycopilot.ts) | 复用用户端和后台布局，增加预约页面及方案卡片 |
 | 数据升级 | [数据库迁移运行手册](../database-migrations.md) | Commerce 版本化 SQL 覆盖空库和已有数据卷 |
-| 验收 | [Commerce 压测脚本](../../tools/loadtest/run_jmeter_commerce.ps1)、[EvalRunner](../../backend/eval/src/main/java/com/citycopilot/eval/EvalRunner.java) | 复用工具，新增预约数据与不变量、结构化方案断言 |
+| 验收 | [Commerce 压测脚本](../../tools/loadtest/run_jmeter_commerce.ps1) | 复用工具，新增预约数据与不变量 |
 
 现有一致性和搜索边界继续引用 [Commerce ADR](../adr/0009-commerce-high-concurrency-admission.md) 与 [搜索投影 ADR](../adr/0010-versioned-shop-search-geo-projections.md)。本计划不重复维护既有服务部署状态、依赖版本或历史测试成绩。
 
@@ -126,7 +115,6 @@ Commerce 内的 [BookingResourceService](../../backend/commerce-service/src/main
 | 默认商家时区 | Asia/Shanghai；数据存 UTC，接口使用带偏移的 ISO-8601 时间 |
 | 预约到期扫描 | 每 5 秒按截止时间取最多 100 个候选，逐单短事务复核 |
 | 站内提醒扫描 | 每 10 秒按提醒时间取最多 100 个候选，逐单检查预约当前状态与排期版本 |
-| 反馈保留与特征窗口 | 浏览行为、候选曝光与近期特征窗口默认 30 天；业务事实随预约保留，不自动删除；负反馈保留至用户清除 |
 | 派生特征缓存 | 默认 60 秒；Redis 只作可重建缓存，这是数据库特征更新后的缓存时效，不是 MQ 发布到消费的端到端时限 |
 | 反馈清理扫描 | 默认每小时；实际生效的保留期、窗口与缓存时间由反馈规则 API 返回 |
 
@@ -139,7 +127,7 @@ Commerce 内的 [BookingResourceService](../../backend/commerce-service/src/main
 - 改期失败时旧时段、旧报价、旧券、旧核销码和预约状态均保留。
 - 核销、取消、过期释放每次至多产生一次业务效果；业务记录与 Outbox 同事务提交。
 - 已确认预约的价格快照不可被后续调价覆盖；改期使用新报价，经用户确认后替换。
-- 商家归属、金额、容量与确认均由服务端校验，模型和前端不提供权威值。
+- 商家归属、金额、容量与确认均由服务端校验，前端不提供权威值。
 
 ## 4. 数据模型与并发设计
 
@@ -151,7 +139,7 @@ Commerce 内的 [BookingResourceService](../../backend/commerce-service/src/main
 |---|---|---|
 | `commerce_booking_resource` | id、shop_id、kind、name、timezone、max_party_size、status、version | kind 为 COURT 或 DINING_POOL；status 为 OPEN、STOP_NEW、UNAVAILABLE；店铺归属创建后不可任意转移；索引 shop_id/status |
 | `commerce_booking_slot` | id、resource_id、start_at、end_at、capacity、occupied、status、version | 唯一 resource_id/start_at；CHECK 容量边界和结束晚于开始；索引 resource_id/start_at/status |
-| `commerce_booking` | id、user_id、shop_id、resource_id、slot_id、party_size、units、status、reason_code、hold_expires_at、version、schedule_version、price_snapshot、checkin_token_hash、source、impression_id、request_id、created_at | 索引 user_id/status/start_at、shop_id/start_at、status/hold_expires_at；写入预约时间快照供查询；归因字段可空 |
+| `commerce_booking` | id、user_id、shop_id、resource_id、slot_id、party_size、units、status、reason_code、hold_expires_at、version、schedule_version、price_snapshot、checkin_token_hash、source、request_id、created_at | 索引 user_id/status/start_at、shop_id/start_at、status/hold_expires_at；写入预约时间快照供查询；归因字段可空 |
 | `commerce_booking_user_guard` | user_id | 主键 user_id；只用于本用户配额与预约变更的事务串行化 |
 | `commerce_booking_command` | actor_id、idempotency_key、action、request_hash、booking_id、result_json、created_at | 唯一 actor_id/idempotency_key；结果与业务变更同事务保存 |
 | `commerce_booking_reminder` | booking_id、schedule_version、kind、due_at、status、delivered_at、read_at | 唯一 booking_id/schedule_version/kind；索引 status/due_at |
@@ -167,7 +155,7 @@ Commerce 内的 [BookingResourceService](../../backend/commerce-service/src/main
 | `commerce_booking_offer` | id、resource_id、shop_id、kind、title、unit_price_cents、version、status | kind 为 COURT_SLOT 或 PER_PERSON_PACKAGE；场馆每资源一个有效价目，餐厅可有多个套餐；调价递增 version |
 | `commerce_booking_coupon_rule` | id、campaign_key、rule_version、shop_id、offer_scope、type、threshold_cents、reduction_cents、pay_factor_bps、discount_cap_cents、stackable、service_from/to、issuance_status | 唯一 campaign_key/rule_version；发布后经济规则不可修改，变更创建新版本；发行状态与经济规则分离 |
 | `commerce_user_booking_coupon` | id、user_id、rule_id、status、expires_at、booking_id、revoked_at | 唯一 user_id/rule_id 用于首版每版本限领一张；索引 user_id/status；规则适用范围与个人券状态均参与校验 |
-| `commerce_booking_quote` | id、user_id、purpose、booking_id、expected_booking_version、resource_id、slot_id、party_size、offer_id、offer_version、coupon_ids、breakdown_json、total_cents、expires_at、consumed_booking_id、request_hash、source、impression_id、request_id | purpose 为 CREATE 或 RESCHEDULE；条件更新消费；完整保存本次报价依据和明细；归因字段随预约持久化 |
+| `commerce_booking_quote` | id、user_id、purpose、booking_id、expected_booking_version、resource_id、slot_id、party_size、offer_id、offer_version、coupon_ids、breakdown_json、total_cents、expires_at、consumed_booking_id、request_hash、source、request_id | purpose 为 CREATE 或 RESCHEDULE；条件更新消费；完整保存本次报价依据和明细；归因字段随预约持久化 |
 
 餐厅纯订位的报价使用 `pricingMode=ON_SITE`，totalCents 为 null，不能参与“预算内套餐方案”的比较。有商品价格的报价使用 FIXED，totalCents 允许为 0；不得把 null 和 0 混用。
 
@@ -189,7 +177,7 @@ Commerce 内的 [BookingResourceService](../../backend/commerce-service/src/main
 - 新建在完成目标时段和券校验后插入 booking；不要在持有时段锁后再寻找并锁定另一笔已有预约。
 - 排期管理只锁资源与时段，价目管理只锁对应元数据；批量商家取消先取 ID，再逐单进入公共锁序，禁止反向持锁遍历预约。
 - 配额在用户 guard 内检查；不再增加另一组活跃预约生成列唯一键来重复维护配额。
-- 远程商户归属校验、模型调用、MQ 发送均在本地事务之外。事务内通过资源关系、版本、截止时间和条件更新确认本地约束。
+- 远程商户归属校验、MQ 发送均在本地事务之外。事务内通过资源关系、版本、截止时间和条件更新确认本地约束。
 - 事务外拿到的查询结果仅用于定位；真正变更前必须在上述锁序下重读必要记录。
 - 截止时间在取得锁后使用数据库 UTC 时钟判断，不能沿用排队前的应用时间。
 - 固定锁序减少死锁，但不声明绝不会死锁。数据库死锁或锁超时使整笔操作回滚，返回可重试结果，客户端沿用同一幂等键；依据见 [MySQL 锁顺序与死锁处理说明](https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlocks-handling.html)。
@@ -216,7 +204,7 @@ stateDiagram-v2
     CONFIRMED --> NO_SHOW: 结束仍未核销
 ```
 
-浏览、搜索、试算不产生 HELD。普通页面和 Agent 都只有在用户选择“暂留名额”后才占用容量，并展示截止时间；最终确认卡片说明场馆、时段、人数、固定报价或到店结算说明。对已暂留方案的最终确认不再重复生成一个新的暂留动作。
+浏览、搜索、试算不产生 HELD。页面只有在用户选择“暂留名额”后才占用容量，并展示截止时间；最终确认卡片说明场馆、时段、人数、固定报价或到店结算说明。对已暂留方案的最终确认不再重复生成一个新的暂留动作。
 
 纯预约阶段允许不带报价的 HELD；此时统一为 ON_SITE，已有历史预约以后也不自动转换成固定报价。报价功能启用后，提供固定价的资源创建 HELD 必须引用有效 quoteId。
 
@@ -263,7 +251,7 @@ P2 纯预约阶段执行同样的原子时段变更，但使用 ON_SITE；P3 为
 
 确认和改期在同一事务登记新 schedule_version 的提醒；取消和核销撤销待提醒。调度按索引取到期候选，锁预约后检查状态与 schedule_version，再标记可见。消息列表只返回仍与当前预约排期相匹配的有效提醒，已过时的提醒不继续显示为可执行事项。
 
-长期预约的提醒依赖数据库 due_at。后续若将近期调度改成 RocketMQ 延时消息，也只把消息当唤醒信号，执行时仍查当前事实；默认延时范围和投递约束见 [RocketMQ 延时消息文档](https://rocketmq.apache.org/docs/featureBehavior/02delaymessage/)。
+长期预约的提醒依赖数据库 due_at。后续若将近期调度改成延时消息，也只把消息当唤醒信号，执行时仍查当前事实；Kafka 没有原生延时消息，需要另行实现。
 
 ## 6. 确定性报价与券规则
 
@@ -272,7 +260,7 @@ P2 纯预约阶段执行同样的原子时段变更，但使用 ON_SITE；P3 为
 - 场馆：发布的场地时段价，人数不改变占用场地数量。
 - 餐厅固定套餐：发布的按人单价 × 预约人数；明确包含项目与另收费项目。
 - 餐厅纯订位：无固定总价，不能使用预约营销券抵扣一个尚不存在的商品金额。
-- 不使用店铺 avgPrice、评论文字或模型估价生成应结算金额。
+- 不使用店铺 avgPrice 或评论文字生成应结算金额。
 - 商家调价递增 offer.version；已发个人券引用不可变 rule 版本，新发布规则只影响新发券。
 - 商家“停发券”与“撤销个人券资格”分开处理；停止发行不会让已领取的券自动失效。
 - 发券在用户 guard 内计算 AVAILABLE 与 RESERVED 合计；过期或撤销的 AVAILABLE 券应先终态化。已锁定并仍可能释放回可用的券必须计入配额，不能靠暂留名额绕过持券上限。
@@ -314,7 +302,7 @@ P2 纯预约阶段执行同样的原子时段变更，但使用 ON_SITE；P3 为
 
 示例值不代表运行配置。创建 HELD 接收 quoteId 和幂等键，不接收客户端指定 totalCents；到店页面明确显示“按预约约定线下结算”。
 
-## 7. API、页面与 Agent 契约
+## 7. API 与页面
 
 ### 7.1 对外 API
 
@@ -355,66 +343,13 @@ P2 纯预约阶段执行同样的原子时段变更，但使用 ON_SITE；P3 为
 - 商家后台增加资源排期、套餐、券规则、预约列表和核销面板；日历采用现有组件或原生日期输入。
 - 站内提醒链接至预约当前详情，不在消息里生成可直接绕过状态校验的写入口。
 
-### 7.3 Agent 消费方案
-
-先支持两个固定任务：
-
-- “周六晚上，两个人，附近有没有 200 元以内的羽毛球场？”
-- “今晚四个人，人均 100 元以内，附近有能预约的餐厅套餐吗？”
-
-结构化需求包括场景、日期、时段、人数、地理范围、预算口径（总额/人均）与显式偏好。缺日期、时段、人数或预算含义时先澄清。店铺仅有直线距离时不声称“步行 15 分钟”；步行时间约束需要实际路线服务数据，否则明确尚未验证。
-
-业务链固定为：
-
-```text
-解析和澄清硬约束
-→ Core 获取本地可预约候选
-→ Commerce 批量查询时段和固定价方案
-→ 同一报价计算器筛选预算内方案
-→ 展示包含真实资源、时段、人数、金额的卡片
-→ 用户选择暂留
-→ 用户最终确认
-→ 查询预约结果
-```
-
-不将实时库存写进 ES 当作下单依据，也不为每个搜索结果逐个调用 Commerce；新增批量候选能力并限定每轮候选规模。没有符合条件的方案时说明约束，不以外部 POI 或模型编造的价目补齐。
-
-工具控制在 search_bookable_options、list_booking_slots、quote_booking、hold_booking、confirm_booking、reschedule_booking、cancel_booking、get_my_bookings；商家核销先只开放后台，不交给普通对话。
-
-所有占位、确认、改期和取消都通过确定性写操作入口。批准记录绑定当前用户、动作、quote/booking ID、目标参数、价格摘要及有效期；ReAct 与 Plan-Execute 必须遵守同一约束，不能仅靠关键词分流。复用现有确认 UI 和目录，按新操作契约补充稳定 operationId 与结果查询，不搭新的通用工作流引擎。
-
-## 8. 事件与后续行为推荐
-
-### 8.1 预约事件
+## 8. 预约事件
 
 新增 BookingChangedEvent，信封包含 eventId、eventType、schemaVersion、aggregateType、aggregateId、aggregateVersion、occurredAt、correlationId。载荷包含 bookingId、shopId、userId、状态、scheduleVersion、排期与人数快照、quoteId 和价格模式。
 
 aggregateVersion 使用预约递增 version，从 0 开始，不能使用状态码；改期虽保持 CONFIRMED，也必须产生新版本。scheduleVersion 的初始值同样允许为 0，不能把合法的新建事件当成无效消息。核销凭证、手机号不进入事件载荷。
 
-只从现有订单私有 Outbox 写入逻辑提取必要的共用方法，不重建事件总线。Relay 增加明确的 BookingEvent tag；既有订单和 discrepancy tag、消费组行为保持兼容。发布至少一次，消费者按 eventId 去重。
-
-### 8.2 推荐的启动条件与数据归属
-
-P1～P4 只在新流程携带 requestId、impressionId、quoteId、bookingId 等可选归因字段；source、impressionId 和原始 requestId 随报价、预约持久化，并出现在相应领域事件中，不提前建设完整埋点平台。P6 在预约与报价已完成验收后实施，不阻塞核心发布。
-
-P6 的曝光由服务端生成并绑定用户、候选及排序版本；后续请求只能引用该记录，不能自报曝光位置或冒用他人曝光。来源字段不参与金额与权限判断。历史没有有效曝光记录的预约不回填成已归因转化；只有验证归因有效后才进入转化统计。
-
-Core 新增浏览行为入口与独立的预约业务事件消费者：
-
-- 服务端曝光记录表示实际返回的候选集合；用户是否看过另以 VIEW 记录。客户端只报告 VIEW、CLICK、FAVORITE、NOT_INTERESTED，userId、候选位置和来源必须服务端关联验证。
-- 预约确认、取消、核销由 Commerce Outbox 产生，不信任前端自报成交或履约。
-- Inbox 登记与行为落库在同一个消费者事务中完成，再 ACK；不能在现有 Inbox 方法提交后另起事务写业务。
-- 预约当前状态投影按 aggregateVersion 防旧覆盖；累计行为按 eventId 完整入账，不能把晚到的真实事件仅因版本较低丢掉。
-
-P6 数据模型为 search_impression、user_behavior_event、user_preference_feature 和 booking_behavior_projection。原始行为只保存排序所需字段，保留期和特征窗口见第 3 节。没有历史特征的候选批量返回零值，不逐店重建；过期窗口可从 MySQL 事实重算。
-
-### 8.3 第一版排序
-
-Elasticsearch/GEO 召回候选 → Commerce 批量过滤真实时段、人数和预算 → Java 融合相关性、距离、显式偏好、近期履约质量 → 输出确定排序和原因。
-
-无行为的新用户使用显式偏好、距离与公共质量；没有真实行为时不模拟“猜你喜欢”。负反馈优先影响未来排序，并提供清除入口。Redis 只缓存可重建特征。
-
-先做可解释规则重排，记录 rankingVersion，比较固定候选集下的 NDCG@10、硬约束满足率和延迟。有足够真实曝光后再比较有效点击和预约/履约转化；不将合成数据写成线上 CTR 提升。只有语义召回不足被标注集证明时，才在现有 ES 评估向量召回，能力边界参考 [Elasticsearch kNN 文档](https://www.elastic.co/docs/solutions/search/vector/knn)。
+只从现有订单私有 Outbox 写入逻辑提取必要的共用方法，不重建事件总线。预约事件与订单事件共用 Commerce 事件主题，消费者按 eventType 区分；既有消费组行为保持兼容。发布至少一次，消费者按 eventId 去重。
 
 ## 9. 分阶段实施任务
 
@@ -426,17 +361,15 @@ Elasticsearch/GEO 召回候选 → Commerce 批量过滤真实时段、人数和
 | P1 资源与双场景最薄预约链 | 4～6 日 | P0 | 商家发布排期，用户暂留、确认、查看预约 |
 | P2 完整预约状态机 | 6～8 日 | P1 | 原子改期、取消、核销、到期释放和站内提醒 |
 | P3 优惠券与报价 | 5～7 日 | P1；联动依赖 P2 | 两场景报价与预约/券原子协同 |
-| P4 Agent 消费方案与页面整合 | 5～7 日 | P2、P3 | 普通页面和对话使用同一份方案与交易能力 |
-| P5 业务与容量验收 | 3～5 日 | P4 | 可复现的并发、故障与方案评测证据 |
-| P6 行为反馈与推荐 | 5～8 日起 | P5 | 归因、特征、规则排序和离线评测 |
+| P5 业务与容量验收 | 3～5 日 | P2、P3 | 可复现的并发与故障证据 |
 
-核心 P0～P5 合计约 24～35 个有效工程日；P6 另计，真实行为积累无法压缩为固定开发工期。资源充足时 P3 计算器与 P2 页面可并行，但事务集成必须等共同契约稳定。
+P0～P3 与 P5 合计约 19～28 个有效工程日（原 P4 Agent、P6 推荐已随功能移除，编号保留以对应历史证据）。资源充足时 P3 计算器与 P2 页面可并行，但事务集成必须等共同契约稳定。
 
 ### P0：冻结范围和契约
 
 - [x] P0-1 建立两份商家样例：运动场馆的多块场地；餐厅的多个餐次、按人套餐和纯订位模式。
 - [x] P0-2 将第 3 节参数映射到配置/商家规则 DTO，输出展示示例，明确哪些是平台规则、哪些允许商家修改。
-- [x] P0-3 确定 Booking DTO、错误码、事件信封、权限和命令幂等协议；普通页面与 Agent 共同使用。
+- [x] P0-3 确定 Booking DTO、错误码、事件信封、权限和命令幂等协议。
 - [x] P0-4 检查工作树与既有测试基线，标记与本次无关的改动；只在 main 工作，不自行新建分支或提交。见[执行基线](../evidence/booking-implementation-baseline.md)。
 - [x] P0-5 固定本轮验证环境与数据生成方法，将实际环境信息写入后续证据文件而非本文。
 
@@ -449,7 +382,7 @@ Elasticsearch/GEO 召回候选 → Commerce 批量过滤真实时段、人数和
 - [x] P1-3 实现纯预约的 HELD、CONFIRMED、本人查询和基本取消，统一为 ON_SITE。
 - [x] P1-4 实现用户配额、请求幂等与数据库时间判定；到期回收随 HELD 同时交付，不能先发布不会过期的占位。
 - [x] P1-5 扩展 Core 端口与公开接口，新增店铺预约区域和我的预约页面。
-- [x] P1-6 新增 BookingChangedEvent，复用 Outbox 并显式支持预约 tag，保留现有消费者兼容性。
+- [x] P1-6 新增 BookingChangedEvent，复用 Outbox，与订单事件共用主题，保留现有消费者兼容性。
 
 退出条件：真实浏览器中可以分别完成“订一个场地”和“订一个餐次的多人名额”；响应丢失可用同一操作键恢复，超时占位会释放。
 
@@ -476,43 +409,20 @@ Elasticsearch/GEO 召回候选 → Commerce 批量过滤真实时段、人数和
 
 退出条件：同一输入可重算同一结果；变价不能静默成交；一张券不能同时用于两笔预约；改期失败不丢券或旧预约。
 
-### P4：Agent 消费方案和渠道统一
-
-- [x] P4-1 增加结构化需求 DTO，覆盖场景、人数、日期、时段、距离与总额/人均预算。
-- [x] P4-2 增加本地可预约候选与 Commerce 批量查询，先完成后端确定性方案 API，再接模型。
-- [x] P4-3 注册第 7 节的工具；普通 API、Agent、MCP 使用同一业务实现。
-- [x] P4-4 为新写动作接入绑定具体方案的确认记录和稳定 operationId；明确暂留、最终确认、改期各自的用户动作。
-- [x] P4-5 在 AiAssistantPanel 展示结构化方案、逐项优惠、名额截止和实际结果，模型只生成解释文字。
-- [x] P4-6 在现有 YAML eval 上增加双场景用例，并补充结构化硬约束和最终业务状态断言。
-
-退出条件：用户可以从一句需求走到实际预约；同一输入在页面和 Agent 中得到相同报价；缺失必要信息不会自动占名额。确定性 API、工具确认边界及页面已验收；“一句需求到预约”的真实模型退出条件按用户决定暂缓，不能宣称通过。
-
-- [ ] 上线前：恢复可用模型配置后，复用现有真实 Agent eval 验证双场景澄清、硬约束、分别批准暂留和确认，以及最终业务状态；记录实际供应商成功率、usage 与延迟。保留本轮失败证据，不以回退结果计为成功。
-
 ### P5：形成交付证据
 
 - [x] P5-1 执行第 10 节关键验收场景，定位失败后修正对应实现，不为失败另建替代业务链。
 - [x] P5-2 为现有压测工具增加 booking 数据、负载模型和不变量核对；保留场馆热点与餐厅多人两类场景。
 - [x] P5-3 完成数据库事务、响应丢失、调度重启和 MQ 停机恢复的针对性验证；[实际重启报告](../evidence/booking-restart-2026-09-10.md)单独保留首次消息观察超时、最终入账及消费延迟。
 - [x] P5-4 从空库安装和已有数据卷升级各跑一次，验证关闭新业务入口后已有订单仍可读取和处理。
-- [x] P5-5 记录普通 API 和 Agent 的独立延迟、成功率、冲突率及资源消耗；标明数据规模、环境、负载与样本量。
+- [x] P5-5 记录普通 API 的延迟、成功率、冲突率及资源消耗；标明数据规模、环境、负载与样本量。
 - [x] P5-6 产出两条演示路径、架构说明与可复现实验命令，依据证据更新简历素材。
 
 退出条件：所有正确性不变量通过；性能数字只陈述实际测得的范围；两类业务能够从商家发布走到用户履约。
 
-### P6：行为反馈与个性化发现
-
-- [x] P6-1 定义曝光、点击、报价、预约和履约的归因口径、事件去重键及数据保留规则。
-- [x] P6-2 实现客户端浏览入口与 Commerce 业务消费者，保证 Inbox 和行为记录同事务。
-- [x] P6-3 用 MySQL 增量聚合建立用户/店铺特征，Redis 缓存派生结果。
-- [x] P6-4 实现冷启动、负反馈、规则排序与 rankingVersion；排序不能突破预算、人数和时段硬条件。
-- [x] P6-5 建立标注查询集和离线 NDCG 对照；有真实流量后再验证转化，未形成数据时保留基础排序。
-
-退出条件：能够解释一次排序的特征与版本，曝光可归因到真实业务结果，排序质量与延迟有可重现实验。本轮离线集为人工构造的规则回归集；真实用户相关性与转化效果需要后续数据，未作效果提升声明。
-
 ## 10. 最小但有业务意义的验收矩阵
 
-复用已有 JUnit、Maven、JMeter、浏览器与 eval；不增加新测试框架，不以 getter、DTO 字段镜像测试充数。数据库并发与回滚结论必须使用真实 MySQL，Mock 只验证请求适配等边界。
+复用已有 JUnit、Maven、JMeter 与浏览器；不增加新测试框架，不以 getter、DTO 字段镜像测试充数。数据库并发与回滚结论必须使用真实 MySQL，Mock 只验证请求适配等边界。
 
 | 场景 | 操作 | 必须观察到的结果 |
 |---|---|---|
@@ -528,12 +438,9 @@ Elasticsearch/GEO 召回候选 → Commerce 批量过滤真实时段、人数和
 | 时区与边界 | 跨日期、相邻餐次、截止时刻 | 时间显示和服务端判断一致，区间无重叠误判 |
 | 响应丢失 | 提交成功后切断响应，再用原键查询/重试 | 返回同一预约及原操作结果 |
 | 进程与消息 | 重启到期任务、暂停 MQ 再恢复、重复投递 | 到期仍由数据库判定；Outbox 可续发且业务效果不重复 |
-| Agent | 缺字段、总额/人均歧义、无可用套餐、选择后容量变化 | 澄清或返回真实限制，不编造可预约性或金额 |
 | 迁移 | 空库启动、旧库升级、关闭入口 | schema 完整、旧订单保留、新数据不因回滚入口而删除 |
 
-性能实验分别覆盖单槽热点、多店多槽、餐厅多人请求和只读方案查询。记录吞吐、P95/P99、成功/拒绝/冲突数量、锁等待、连接池、CPU 和内存。先得到安全容量基线，再确定发布容量；不预设“万级 QPS”作为通过标准。
-
-真实模型评测单独记录 provider、模型、输入集、调用次数、实际 usage 和预算。离线路由与工具用例通过不等于真实模型方案生成通过。
+性能实验分别覆盖单槽热点、多店多槽、餐厅多人请求和只读查询。记录吞吐、P95/P99、成功/拒绝/冲突数量、锁等待、连接池、CPU 和内存。先得到安全容量基线，再确定发布容量；不预设“万级 QPS”作为通过标准。
 
 ## 11. 代码落点、迁移与交付组织
 
@@ -545,18 +452,16 @@ Elasticsearch/GEO 召回候选 → Commerce 批量过滤真实时段、人数和
 | `backend/contracts/.../contract/event` | 新预约领域事件 |
 | `backend/commerce-service/.../commerce/booking` | 资源、排期、状态迁移、命令幂等、到期和提醒 |
 | `backend/commerce-service/.../commerce/pricing` | 价目、预约券、纯计算器与报价；和 booking 共用本地事务 |
-| `backend/core/.../controller`、`service`、`commerce` | 业务 facade、商户权限、Commerce API 适配与工具绑定 |
-| `backend/agent` | 新任务的约束提取、工具使用和确认卡片适配，不放价格算法 |
-| `backend/search` | 搜索字段/查询的必要扩展，保持事实源边界 |
-| `frontend/src/views`、`components`、`api` | 店铺预约、我的预约、商家排期、优惠解释、Agent 卡片 |
+| `backend/core/.../controller`、`service`、`commerce` | 业务 facade、商户权限与 Commerce API 适配 |
+| `frontend/src/views`、`components`、`api` | 店铺预约、我的预约、商家排期、优惠解释 |
 | `deploy/mysql/commerce`、`deploy/mysql/core` | Flyway 版本化 schema 的唯一来源 |
-| `tools/loadtest`、`backend/eval` | 新业务场景的数据、负载与断言 |
+| `tools/loadtest` | 新业务场景的数据、负载与断言 |
 
 这些是计划中的落点，不要求预先生成所有类。每个小任务只添加当下被调用的 controller/service/DTO，避免单实现接口、通用库存框架和通用规则平台。
 
 ### 11.2 迁移策略
 
-- 按“预约核心 → 提醒 → 报价与券 → 后续行为”拆增量 SQL；从现有迁移编号继续分配，实施时核对实际编号。
+- 按“预约核心 → 提醒 → 报价与券”拆增量 SQL；从现有迁移编号继续分配，实施时核对实际编号。
 - 新增 SQL 使用对应服务迁移目录中的 `V<版本>__<说明>.sql` 命名，由 Flyway 迁移任务执行；操作要求见 [数据库迁移运行手册](../database-migrations.md)。
 - 每个增量文件成为该 schema 变化的唯一来源；空库也运行同一组增量，不在初始化大 SQL 再抄一份定义。
 - 增量校验覆盖表、唯一键、必要 CHECK 和索引；Flyway 记录已成功执行的版本及校验和，部分应用的 DDL 必须先核对再处置。
@@ -578,8 +483,6 @@ Elasticsearch/GEO 召回候选 → Commerce 批量过滤真实时段、人数和
 |---|---|---|
 | 双场景预约 | 设计面向运动场馆与餐厅的资源时段预约模型，基于条件更新与本地事务实现容量控制、原子改期和过期释放 | 两场景闭环、并发人数/容量核对、改期失败保留原预约 |
 | 价格与优惠 | 实现支持叠加互斥的预约优惠计算，结合不可变规则版本、报价快照及券名额原子绑定保证价格可追溯 | 黄金价格用例、调价差异、券竞争、取消/核销和改期一致性 |
-| 消息与恢复 | 基于既有 Outbox/RocketMQ 扩展预约领域事件，通过操作幂等与聚合版本支持响应丢失恢复及重复事件处理 | 实际进程/MQ 中断、同键重试、Outbox 续发与消费断言 |
-| Agent 消费方案 | 将自然语言中的人数、时间和预算转成结构化约束，复用确定性报价及确认流程完成真实预约 | 页面/Agent 同价、硬约束评测、真实模型完整调用与业务结果 |
-| 推荐后续 | 融合地理相关性、显式偏好与履约行为构建可解释排序，通过曝光归因与离线评测验证效果 | 可追溯事件、标注集、排序基线；线上效果另需真实流量 |
+| 消息与恢复 | 基于既有 Outbox 与消息队列（现为 Kafka）扩展预约领域事件，通过操作幂等与聚合版本支持响应丢失恢复及重复事件处理 | 实际进程/MQ 中断、同键重试、Outbox 续发与消费断言 |
 
-核心交付完成后，简历优先突出“已有秒杀一致性 + 新预约事务建模 + 新报价规则与 Agent 集成”三条主线。P6 有真实数据和效果证据时再增加推荐成果。
+核心交付完成后，简历优先突出“已有秒杀一致性 + 新预约事务建模 + 新报价规则”三条主线。

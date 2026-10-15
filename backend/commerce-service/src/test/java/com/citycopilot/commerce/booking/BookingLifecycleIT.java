@@ -173,14 +173,14 @@ class BookingLifecycleIT {
         sql.update("UPDATE commerce_outbox_event SET status='READY' WHERE event_id='archive-old-1'");
         var registry = new SimpleMeterRegistry();
         try {
-            var relay = new com.citycopilot.commerce.CommerceOutboxRelay(sql, registry, false,
-                    "127.0.0.1:18081", false, "", "");
+            var relay = new com.citycopilot.commerce.CommerceOutboxRelay(sql, registry, null, false);
             Object claim = org.springframework.test.util.ReflectionTestUtils.invokeMethod(relay, "claim", "archive-old-1");
-            org.apache.rocketmq.client.apis.message.Message message =
-                    org.springframework.test.util.ReflectionTestUtils.invokeMethod(relay, "claimedMessage", claim);
-            assertNotNull(message);
-            assertEquals(body, java.nio.charset.StandardCharsets.UTF_8.decode(message.getBody()).toString());
-            assertTrue(message.getKeys().contains("archive-old-1"));
+            org.apache.kafka.clients.producer.ProducerRecord<String, String> record =
+                    org.springframework.test.util.ReflectionTestUtils.invokeMethod(relay, "claimedRecord", claim);
+            assertNotNull(record);
+            assertEquals(body, record.value());
+            assertEquals("archive-old-1", new String(record.headers().lastHeader("eventId").value(),
+                    java.nio.charset.StandardCharsets.UTF_8));
         } finally { registry.close(); }
         assertThrows(DataAccessException.class, () -> sql.update("""
                 INSERT INTO commerce_outbox_event(event_id,event_type,aggregate_type,aggregate_id,

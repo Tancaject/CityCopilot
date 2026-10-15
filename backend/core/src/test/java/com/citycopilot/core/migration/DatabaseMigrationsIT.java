@@ -25,14 +25,14 @@ class DatabaseMigrationsIT {
     private static final String SERVER = System.getenv("CITYCOPILOT_MIGRATION_TEST_URL");
     private static final String USER = System.getenv().getOrDefault("CITYCOPILOT_MIGRATION_TEST_USER", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("CITYCOPILOT_MIGRATION_TEST_PASSWORD", "");
-    private static final String OPTIONS = "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
+    private static final String OPTIONS = "?useSSL=false&allowPublicKeyRetrieval=true&connectionTimeZone=LOCAL&forceConnectionTimeZoneToSession=true";
     private static final Path ROOT = Path.of("../..").toAbsolutePath().normalize();
 
     @ParameterizedTest
-    @ValueSource(strings = {"core", "commerce", "agent"})
+    @ValueSource(strings = {"core", "commerce"})
     void freshAndLegacyDatabasesConvergeWithoutLosingBusinessRows(String service) throws Exception {
         String expectedShape = null;
-        for (String mode : new String[]{"fresh", "legacy-v1", "legacy-current"}) {
+        for (String mode : new String[]{"fresh", "legacy-v1"}) {
             String database = "cc_migration_" + UUID.randomUUID().toString().replace("-", "");
             try (Connection admin = DriverManager.getConnection(SERVER + OPTIONS, USER, PASSWORD)) {
                 execute(admin, "CREATE DATABASE " + database + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
@@ -60,16 +60,14 @@ class DatabaseMigrationsIT {
                         assertEquals("4", scalar(connection, "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='shop' AND CONSTRAINT_TYPE='CHECK' AND ENFORCED='YES'"));
                         assertEquals("0", scalar(connection, "SELECT fencing_token FROM shop_projection_lease WHERE lease_name='shop-projection-cutover'"));
                     }
-                    if (mode.equals("fresh") && !service.equals("agent")) {
+                    if (mode.equals("fresh")) {
                         var seed = new ResourceDatabasePopulator(new FileSystemResource(ROOT.resolve("deploy/mysql/seed/" + service + ".sql")));
                         seed.setSqlScriptEncoding("UTF-8");
                         seed.populate(connection);
                     }
-                    assertEquals("preserve-me", scalar(connection, switch (service) {
-                        case "core" -> "SELECT nick_name FROM user_account WHERE id=900001";
-                        case "commerce" -> "SELECT idempotency_key FROM commerce_order WHERE id=900001";
-                        default -> "SELECT incident_key FROM ops_case WHERE id='migration-probe'";
-                    }));
+                    assertEquals("preserve-me", scalar(connection, service.equals("core")
+                            ? "SELECT nick_name FROM user_account WHERE id=900001"
+                            : "SELECT idempotency_key FROM commerce_order WHERE id=900001"));
                     if (service.equals("commerce") && !mode.equals("fresh")) {
                         assertEquals("ORDER_CREATED", scalar(connection, "SELECT status FROM commerce_admission_ledger WHERE order_id=900001"));
                         assertTrue(Long.parseLong(scalar(connection, "SELECT next_value FROM commerce_id_segment WHERE namespace='order'")) >= 900001);
@@ -126,7 +124,6 @@ class DatabaseMigrationsIT {
                 execute(connection, "INSERT INTO commerce_voucher(id,shop_id,title,pay_value,actual_value) VALUES (900001,1,'migration',100,200)");
                 execute(connection, "INSERT INTO commerce_order(id,user_id,voucher_id,shop_id,shop_name_snapshot,voucher_title_snapshot,pay_value_snapshot,actual_value_snapshot,status,idempotency_key) VALUES (900001,1,900001,1,'shop','voucher',100,200,1,'preserve-me')");
             }
-            default -> execute(connection, "INSERT INTO ops_case(id,incident_key,event_id,case_type,status) VALUES ('migration-probe','preserve-me','migration-event','TEST','OPEN')");
         }
     }
 

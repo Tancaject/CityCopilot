@@ -6,6 +6,10 @@ public class RedisConstants {
     public static final String LOGIN_CODE_KEY = "login:code:";
     /** 验证码发送限流键前缀。 */
     public static final String LOGIN_CODE_RATE_LIMIT_KEY = "limit:login:code:";
+    /** 按来源 IP 的验证码发送计数键前缀。 */
+    public static final String LOGIN_CODE_IP_RATE_LIMIT_KEY = "limit:login:code-ip:";
+    /** 当前验证码的错误尝试次数键前缀，随验证码一起失效。 */
+    public static final String LOGIN_CODE_ATTEMPTS_KEY = "login:code-attempts:";
     /** 验证码有效期，单位分钟。 */
     public static final Long LOGIN_CODE_TTL = 2L;
     /** 登录会话 Hash 键前缀，后接 token。 */

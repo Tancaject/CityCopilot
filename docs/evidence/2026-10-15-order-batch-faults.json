@@ -1,0 +1,151 @@
+{
+  "runId": "redesign-6aa19bccf206",
+  "scenarios": {
+    "stream-kill": {
+      "requests": 1000,
+      "durationSeconds": 1.863,
+      "qps": 536.69,
+      "latencyMs": {
+        "samples": 1000,
+        "mean": 175.0,
+        "p50": 148.98,
+        "p95": 332.89,
+        "p99": 455.07,
+        "max": 540.76
+      },
+      "accepted": 939,
+      "httpStatuses": {
+        "202": 939,
+        "502": 61
+      },
+      "interruptedRequestsReplayed": 61,
+      "killedPendingOwner": "853f256f170a-f7b540d6",
+      "invariants": {
+        "users": 1000,
+        "active": 1000,
+        "ledger": 1000,
+        "orders": 1000,
+        "dbStock": 0,
+        "redisStock": 0
+      }
+    },
+    "outbox-kill": {
+      "acceptanceAttempts": [
+        {
+          "status": 202,
+          "code": "COMMERCE_ORDER_ACCEPTED",
+          "latency_ms": 136.77929999903427
+        }
+      ],
+      "eventId": "4f50bc5c-8d6a-41d6-97d2-e65b8d48e307",
+      "inboxUnchangedOnReplay": true,
+      "duplicateDeliveriesObserved": 1.0,
+      "invariants": {
+        "users": 1,
+        "active": 1,
+        "ledger": 1,
+        "orders": 1,
+        "dbStock": 0,
+        "redisStock": 0
+      }
+    },
+    "redis-restart": {
+      "outageHttpStatus": 503,
+      "fixtureStockLossInjected": true,
+      "invariants": {
+        "users": 1,
+        "active": 1,
+        "ledger": 1,
+        "orders": 1,
+        "dbStock": 1,
+        "redisStock": 1
+      }
+    }
+  },
+  "passed": true,
+  "capturedAtUtc": "2026-10-15T05:30:48.158782+00:00",
+  "mode": "faults-only",
+  "workload": {
+    "users": 1000,
+    "concurrency": 100,
+    "readRequests": 0
+  },
+  "images": {
+    "commerce": [
+      "sha256:a8d36627cf0390004077a173cb983edda17dc38d9cbc91280f8735cfe7538aaf"
+    ],
+    "commerce-mysql": [
+      "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d"
+    ],
+    "commerce-redis": [
+      "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99"
+    ],
+    "core": [
+      "sha256:68173927e440069e700e2012501df90ca2eb924af17881e5884a042f5e0b66d9"
+    ],
+    "mysql": [
+      "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d"
+    ],
+    "redis": [
+      "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99"
+    ],
+    "rocketmq-broker": [
+      "sha256:7e8f6c9dbd9df742ed26ba69c00d4ad69e2f86a56f3ca7782ff8144dd0798132"
+    ],
+    "rocketmq-proxy": [
+      "sha256:7e8f6c9dbd9df742ed26ba69c00d4ad69e2f86a56f3ca7782ff8144dd0798132"
+    ]
+  },
+  "brokerBudget": {
+    "containerBytes": 2147483648,
+    "jvmOptions": "-Xms512m -Xmx512m -Xmn192m -XX:MaxDirectMemorySize=768m"
+  },
+  "dockerResources": {
+    "cpus": 32,
+    "memoryBytes": 16653606912
+  },
+  "scope": "Isolated local 2 Core + 2 Commerce; Stream/Outbox/Redis fault checks only, with fresh fixtures; excludes baseline load, cache comparisons, booking, IP limit and two-instance timeout checks",
+  "cpuSamples": 510,
+  "cpuByContainer": {
+    "citycopilot-redesign-load-mysql-1": {
+      "meanPercent": 4.75,
+      "maxPercent": 11.9
+    },
+    "citycopilot-redesign-load-rocketmq-proxy-1": {
+      "meanPercent": 4.85,
+      "maxPercent": 18.34
+    },
+    "citycopilot-redesign-load-redis-1": {
+      "meanPercent": 0.68,
+      "maxPercent": 2.92
+    },
+    "citycopilot-redesign-load-commerce-redis-1": {
+      "meanPercent": 1.12,
+      "maxPercent": 9.27
+    },
+    "citycopilot-redesign-load-core-1": {
+      "meanPercent": 2.43,
+      "maxPercent": 12.12
+    },
+    "citycopilot-redesign-load-commerce-1": {
+      "meanPercent": 27.11,
+      "maxPercent": 409.54
+    },
+    "citycopilot-redesign-load-commerce-mysql-1": {
+      "meanPercent": 7.31,
+      "maxPercent": 77.7
+    },
+    "citycopilot-redesign-load-commerce-2": {
+      "meanPercent": 20.28,
+      "maxPercent": 410.85
+    },
+    "citycopilot-redesign-load-core-2": {
+      "meanPercent": 2.37,
+      "maxPercent": 19.87
+    },
+    "citycopilot-redesign-load-rocketmq-broker-1": {
+      "meanPercent": 12.39,
+      "maxPercent": 40.83
+    }
+  }
+}

@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
@@ -258,9 +259,10 @@ class CommercePortClientTest {
                                 {"success":false,"code":"COMMERCE_SHOP_FORBIDDEN","message":"Actor does not own the shop"}
                                 """));
 
-        Result result = client.transition(300L, "use", null, true);
+        CommercePortClient.CommerceHttpException error = assertThrows(CommercePortClient.CommerceHttpException.class,
+                () -> client.transition(300L, "use", null, true));
 
-        assertThat(result.getSuccess()).isFalse();
-        assertThat(result.getCode()).isEqualTo("COMMERCE_SHOP_FORBIDDEN");
+        assertThat(error.status()).isEqualTo(403);
+        assertThat(error.code()).isEqualTo("COMMERCE_SHOP_FORBIDDEN");
     }
 }

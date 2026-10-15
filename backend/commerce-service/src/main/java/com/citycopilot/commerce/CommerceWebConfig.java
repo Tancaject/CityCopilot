@@ -6,6 +6,8 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import com.citycopilot.http.DeadlineHandlerInterceptor;
+import com.citycopilot.http.RequestIdFilter;
+import org.springframework.core.Ordered;
 import java.time.Duration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -19,6 +21,16 @@ public class CommerceWebConfig implements WebMvcConfigurer {
             @Value("${citycopilot.http.request-timeout:8s}") Duration requestTimeout,
             @Value("${citycopilot.http.max-concurrent:128}") int maxConcurrent) {
         this.deadline = new DeadlineHandlerInterceptor(requestTimeout, maxConcurrent, request -> true);
+    }
+
+    /** 最先执行，让后续过滤器和业务日志都带上同一个请求 ID。 */
+    @Bean
+    FilterRegistrationBean<RequestIdFilter> requestId() {
+        var registration = new FilterRegistrationBean<>(new RequestIdFilter());
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        registration.addUrlPatterns("/*");
+        registration.setAsyncSupported(true);
+        return registration;
     }
 
     @Bean

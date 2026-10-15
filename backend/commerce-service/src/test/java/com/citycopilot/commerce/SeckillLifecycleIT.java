@@ -140,6 +140,194 @@ class SeckillLifecycleIT {
     }
 
     @Test
+    void concurrentSegmentAllocationAcrossInstancesNeitherDeadlocksNorOverlaps() throws Exception {
+        // 号段大小为 1，每次取号都换段，模拟两个实例同时耗尽号段的最坏情况。
+        var transactions = new TransactionTemplate(new DataSourceTransactionManager(pool));
+        var instances = List.of(new CommerceOrderIdGenerator(sql, transactions, 1),
+                new CommerceOrderIdGenerator(sql, transactions, 1));
+        ExecutorService threads = Executors.newFixedThreadPool(8);
+        try {
+            List<Future<List<Long>>> results = new ArrayList<>();
+            for (int t = 0; t < 8; t++) {
+                CommerceOrderIdGenerator ids = instances.get(t % 2);
+                results.add(threads.submit(() -> {
+                    List<Long> taken = new ArrayList<>();
+                    for (int i = 0; i < 50; i++) taken.add(ids.nextId());
+                    return taken;
+                }));
+            }
+            Set<Long> unique = new HashSet<>();
+            for (Future<List<Long>> result : results) unique.addAll(result.get(60, TimeUnit.SECONDS));
+            assertThat(unique).hasSize(400);
+        } finally {
+            threads.shutdownNow();
+        }
+    }
+
+    @Test
+    void batchCreatesOrdersForMixedPreparedAndAcceptedAdmissions() {
+        long voucherId = seckillVoucher(10);
+        List<Long> orderIds = admitUsers(voucherId, 60_001, 6);
+        // Lua 写入 Stream 早于 markAccepted，Worker 读到 PREPARED 是正常竞争，批量路径必须接受。
+        sql.update("UPDATE commerce_admission_ledger SET status='PREPARED',accepted_at=NULL WHERE order_id IN (?,?)",
+                orderIds.get(0), orderIds.get(3));
+
+        drainUntilOrders(voucherId, 6);
+
+        assertThat(databaseStock(voucherId)).isEqualTo(4);
+        assertThat(count("SELECT COUNT(*) FROM commerce_admission_ledger WHERE voucher_id=? AND status='ORDER_CREATED'",
+                voucherId)).isEqualTo(6);
+        // 批量路径用行锁代替逐条 claim，claim_version 不变，证明这些订单确实走了批量事务。
+        assertThat(count("SELECT COUNT(*) FROM commerce_order_recovery WHERE voucher_id=? AND phase='ORDER_CREATED' AND claim_version=0",
+                voucherId)).isEqualTo(6);
+        assertThat(count("SELECT COUNT(*) FROM commerce_reservation WHERE voucher_id=? AND status='ORDER_CREATED'",
+                voucherId)).isEqualTo(6);
+        assertThat(orderCreatedEvents(voucherId)).isEqualTo(6);
+        assertThat(consistency.snapshot(voucherId)).containsEntry("consistent", true);
+    }
+
+    @Test
+    void concurrentAndRepeatedBatchDeliveriesCreateEachOrderOnce() throws Exception {
+        long voucherId = seckillVoucher(5);
+        admitUsers(voucherId, 61_001, 5);
+        String stream = keyspace.stream(voucherId);
+        var records = streamRecords(voucherId);
+
+        concurrently(2, index -> {
+            worker.processBatch(stream, records);
+            return "done";
+        });
+        // 已终态的记录再次投递时只做收尾。
+        worker.processBatch(stream, records);
+
+        assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=?", voucherId)).isEqualTo(5);
+        assertThat(databaseStock(voucherId)).isZero();
+        assertThat(orderCreatedEvents(voucherId)).isEqualTo(5);
+        assertThat(redis.opsForSet().members(keyspace.inflight(voucherId))).isEmpty();
+        assertThat(consistency.snapshot(voucherId)).containsEntry("consistent", true);
+    }
+
+    @Test
+    void batchSkipsARecordClaimedByAnotherWorkerUntilItsClaimExpires() {
+        long voucherId = seckillVoucher(3);
+        admitUsers(voucherId, 62_001, 3);
+        String stream = keyspace.stream(voucherId);
+        var records = streamRecords(voucherId);
+        MapRecord<String, Object, Object> claimed = records.get(0);
+        String sourceId = keyspace.recoverySourceId(stream, claimed.getId().getValue());
+        sql.update("""
+                INSERT INTO commerce_order_recovery(
+                    source_id,source_type,order_id,voucher_id,user_id,idempotency_key,payload_json,phase,
+                    claim_token,claim_owner,claimed_until
+                ) VALUES (?,'STREAM_ORDER',?,?,?,?,'{}','RECEIVED',?,'other-worker',
+                          TIMESTAMPADD(SECOND,60,CURRENT_TIMESTAMP(3)))
+                """, sourceId, field(claimed, "orderId"), voucherId, field(claimed, "userId"),
+                claimed.getValue().get("idempotencyKey"), UUID.randomUUID().toString());
+
+        worker.processBatch(stream, records);
+
+        assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=?", voucherId)).isEqualTo(2);
+        assertThat(sql.queryForObject("SELECT claim_owner FROM commerce_order_recovery WHERE source_id=?",
+                String.class, sourceId)).isEqualTo("other-worker");
+
+        sql.update("UPDATE commerce_order_recovery SET claimed_until=TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP(3)) WHERE source_id=?",
+                sourceId);
+        worker.processBatch(stream, List.of(claimed));
+
+        assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=?", voucherId)).isEqualTo(3);
+        assertThat(databaseStock(voucherId)).isZero();
+        assertThat(consistency.snapshot(voucherId)).containsEntry("consistent", true);
+    }
+
+    @Test
+    void failureAfterTheStockDeductionRollsBackTheWholeBatch() {
+        long voucherId = seckillVoucher(4);
+        List<Long> orderIds = admitUsers(voucherId, 63_001, 4);
+        String stream = keyspace.stream(voucherId);
+        var records = streamRecords(voucherId);
+        sql.execute("""
+                CREATE TRIGGER it_fail_batch_outbox BEFORE INSERT ON commerce_outbox_event FOR EACH ROW
+                BEGIN
+                  IF NEW.aggregate_id = '%d' THEN
+                    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected outbox failure';
+                  END IF;
+                END
+                """.formatted(orderIds.get(3)));
+        try {
+            worker.processBatch(stream, records);
+
+            // Outbox 写在扣库存之后；整批回滚后库存、预留、订单、Recovery 和账本都不应有痕迹。
+            assertThat(databaseStock(voucherId)).isEqualTo(4);
+            assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=?", voucherId)).isZero();
+            assertThat(count("SELECT COUNT(*) FROM commerce_reservation WHERE voucher_id=?", voucherId)).isZero();
+            assertThat(count("SELECT COUNT(*) FROM commerce_order_recovery WHERE voucher_id=?", voucherId)).isZero();
+            assertThat(count("SELECT COUNT(*) FROM commerce_admission_ledger WHERE voucher_id=? AND status='ORDER_CREATED'",
+                    voucherId)).isZero();
+        } finally {
+            sql.execute("DROP TRIGGER IF EXISTS it_fail_batch_outbox");
+        }
+
+        worker.processBatch(stream, records);
+
+        assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=?", voucherId)).isEqualTo(4);
+        assertThat(databaseStock(voucherId)).isZero();
+        assertThat(orderCreatedEvents(voucherId)).isEqualTo(4);
+        assertThat(consistency.snapshot(voucherId)).containsEntry("consistent", true);
+    }
+
+    @Test
+    void committedBatchWhoseRedisFinalizationWasLostIsOnlyFinalizedOnTakeover() {
+        long voucherId = seckillVoucher(3);
+        admitUsers(voucherId, 64_001, 3);
+        String stream = keyspace.stream(voucherId);
+        var records = streamRecords(voucherId);
+        // 模拟批量事务已提交、进程在 Redis 收尾前崩溃。
+        var batch = records.stream().map(record -> new CommerceOrderService.BatchOrder(
+                keyspace.recoverySourceId(stream, record.getId().getValue()), record.getId().getValue(),
+                field(record, "orderId"), voucherId, field(record, "userId"),
+                String.valueOf(record.getValue().get("idempotencyKey")), "{}")).toList();
+        assertThat(orders.createOrders(voucherId, batch).committed()).hasSize(3);
+        assertThat(redis.opsForSet().members(keyspace.inflight(voucherId))).hasSize(3);
+
+        worker.processBatch(stream, records);
+
+        assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=?", voucherId)).isEqualTo(3);
+        assertThat(databaseStock(voucherId)).isZero();
+        assertThat(orderCreatedEvents(voucherId)).isEqualTo(3);
+        assertThat(redis.opsForSet().members(keyspace.inflight(voucherId))).isEmpty();
+        assertThat(streamRecords(voucherId)).isEmpty();
+    }
+
+    @Test
+    void batchAboveDatabaseStockFallsBackAndKeepsDurableAcceptancePromises() {
+        long voucherId = seckillVoucher(5);
+        List<Long> orderIds = admitUsers(voucherId, 65_001, 5);
+        sql.update("UPDATE commerce_admission_ledger SET status='PREPARED',accepted_at=NULL WHERE order_id=?",
+                orderIds.get(4));
+        // MySQL 库存比 Redis 少 2：一次扣 5 份失败，整批回退逐条路径逐单判定。
+        sql.update("UPDATE commerce_seckill_voucher SET stock=3 WHERE voucher_id=?", voucherId);
+        String stream = keyspace.stream(voucherId);
+
+        worker.processBatch(stream, streamRecords(voucherId));
+
+        assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=?", voucherId)).isEqualTo(3);
+        assertThat(databaseStock(voucherId)).isZero();
+        // 已持久受理的保留承诺，留在 Pending 等待恢复，不退库存。
+        assertThat(sql.queryForObject("SELECT status FROM commerce_admission_ledger WHERE order_id=?",
+                String.class, orderIds.get(3))).isEqualTo("ACCEPTED");
+        assertThat(sql.queryForObject("SELECT phase FROM commerce_order_recovery WHERE order_id=?",
+                String.class, orderIds.get(3))).isEqualTo("RECEIVED");
+        // 未持久受理的按现有语义补偿 Redis 准入。
+        assertThat(sql.queryForObject("SELECT phase FROM commerce_order_recovery WHERE order_id=?",
+                String.class, orderIds.get(4))).isEqualTo("DEAD_LETTERED");
+
+        // 补回库存后，保留的受理承诺兑现为订单。
+        sql.update("UPDATE commerce_seckill_voucher SET stock=1 WHERE voucher_id=?", voucherId);
+        worker.processBatch(stream, streamRecords(voucherId));
+        assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=?", voucherId)).isEqualTo(4);
+    }
+
+    @Test
     void acceptedOrderIsQueryableBeforeTheStreamWorkerPersistsIt() {
         long voucherId = seckillVoucher(1);
         long userId = 90_001;
@@ -375,6 +563,44 @@ class SeckillLifecycleIT {
     }
 
     @Test
+    void endedCampaignArchivesRedisStateAndLaterRefundOnlyReturnsMysqlStock() {
+        long voucherId = seckillVoucher(2);
+        long orderId = Long.parseLong(orderIdOf(seckillResult(voucherId, 68_001, "archive-paid")));
+        drainUntilOrders(voucherId, 1);
+        payments.start(orderId, 68_001, 1, false, false);
+        var callback = paymentCallback(orderId);
+        assertThat(payments.callback(callback, payments.sign(callback))).isEqualTo("PAID");
+        sql.update("UPDATE commerce_seckill_voucher SET end_time=UTC_TIMESTAMP(3)-INTERVAL 2 DAY WHERE voucher_id=?", voucherId);
+        var transactions = new TransactionTemplate(new DataSourceTransactionManager(pool));
+        sql.update("DELETE FROM commerce_job_lease WHERE job_name='stock-reconciliation'");
+        var job = new CommerceReconciliationJob(sql, redis, consistency, metadata,
+                JsonMapper.builderWithJackson2Defaults().build(), new CommerceJobLease(sql, transactions),
+                keyspace, java.time.Duration.ofDays(1));
+        try {
+            job.reconcile();
+            assertThat(count("SELECT COUNT(*) FROM commerce_seckill_voucher WHERE voucher_id=? AND redis_archived_at IS NOT NULL",
+                    voucherId)).isEqualTo(1);
+            assertThat(redis.hasKey(keyspace.stock(voucherId))).isFalse();
+            assertThat(redis.hasKey(keyspace.buyers(voucherId))).isFalse();
+            assertThat(redis.hasKey(keyspace.campaignMeta(voucherId))).isFalse();
+
+            // 归档后的退款只返还 MySQL 库存，回补记录正常完成，不进入人工修复。
+            int stockBefore = databaseStock(voucherId);
+            assertThat(payments.refund(orderId, 68_001, false, false).state()).isEqualTo("refunded");
+            assertThat(databaseStock(voucherId)).isEqualTo(stockBefore + 1);
+            assertThat(sql.queryForObject("SELECT phase FROM commerce_order_recovery WHERE order_id=? AND source_type='STATE_TRANSITION'",
+                    String.class, orderId)).isEqualTo("RESTORED");
+
+            // 抢已归档活动是确定的“已结束”，拒绝持久化，不会留下待恢复的准入。
+            assertThat(seckill(voucherId, 68_002, "archive-late")).isEqualTo("SECKILL_ENDED");
+            assertThat(sql.queryForObject("SELECT status FROM commerce_admission_ledger WHERE user_id=? AND idempotency_key=?",
+                    String.class, 68_002, "archive-late")).isEqualTo("REJECTED");
+        } finally {
+            sql.update("DELETE FROM commerce_job_lease WHERE job_name='stock-reconciliation'");
+        }
+    }
+
+    @Test
     void lateCallbackRefundsWithoutRevivingOrderAndPendingSimulationSurvivesRestart() {
         long voucherId = seckillVoucher(2);
         long lateOrder = Long.parseLong(orderIdOf(seckillResult(voucherId, 66_001, "late-payment")));
@@ -456,9 +682,10 @@ class SeckillLifecycleIT {
         var successor = new CommerceJobLease(sql, transactions);
         JdbcTemplate pausedScanner = new JdbcTemplate(pool) {
             @Override
-            public <T> T queryForObject(String query, Class<T> type) {
-                T result = super.queryForObject(query, type);
-                if (query.equals("SELECT MAX(voucher_id) FROM commerce_seckill_voucher")) {
+            public <T> List<T> queryForList(String query, Class<T> type, Object... args) {
+                List<T> result = super.queryForList(query, type, args);
+                // 巡检列表读出后、处理第一张券前，让后继实例接管租约。
+                if (query.contains("end_time > CURRENT_TIMESTAMP(3)") && args[1].equals(0L)) {
                     sql.update("UPDATE commerce_job_lease SET lease_until=UTC_TIMESTAMP(3)-INTERVAL 1 SECOND WHERE job_name='stock-reconciliation'");
                     assertThat(successor.acquire("stock-reconciliation")).isPresent();
                 }
@@ -467,7 +694,8 @@ class SeckillLifecycleIT {
         };
         sql.update("DELETE FROM commerce_job_lease WHERE job_name='stock-reconciliation'");
         var job = new CommerceReconciliationJob(pausedScanner, redis, consistency, metadata,
-                JsonMapper.builderWithJackson2Defaults().build(), new CommerceJobLease(sql, transactions));
+                JsonMapper.builderWithJackson2Defaults().build(), new CommerceJobLease(sql, transactions),
+                keyspace, java.time.Duration.ofDays(1));
         try {
             assertThatThrownBy(job::reconcile).isInstanceOf(CommerceJobLease.LeaseLostException.class);
             assertThat(redis.hasKey(keyspace.campaignMeta(voucherId))).isFalse();
@@ -826,6 +1054,34 @@ class SeckillLifecycleIT {
         assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=?", voucherId)).isEqualTo(expected);
         Set<String> inflight = redis.opsForSet().members(keyspace.inflight(voucherId));
         assertThat(inflight).isEmpty();
+    }
+
+    /** 依次为连续用户受理同一张券，返回各自订单号（顺序即 Stream 写入顺序）。 */
+    private static List<Long> admitUsers(long voucherId, long firstUserId, int users) {
+        List<Long> orderIds = new ArrayList<>();
+        for (int i = 0; i < users; i++) {
+            orderIds.add(Long.parseLong(orderIdOf(seckillResult(voucherId, firstUserId + i, "batch-" + voucherId + "-" + i))));
+        }
+        return orderIds;
+    }
+
+    /** 该券仍留在分片 Stream 中的订单消息，按写入顺序。 */
+    private static List<MapRecord<String, Object, Object>> streamRecords(long voucherId) {
+        return redis.opsForStream().range(keyspace.stream(voucherId), Range.unbounded()).stream()
+                .filter(record -> String.valueOf(voucherId).equals(String.valueOf(record.getValue().get("voucherId"))))
+                .toList();
+    }
+
+    private static long field(MapRecord<String, Object, Object> record, String name) {
+        return Long.parseLong(String.valueOf(record.getValue().get(name)));
+    }
+
+    private static long orderCreatedEvents(long voucherId) {
+        return count("""
+                SELECT COUNT(*) FROM commerce_outbox_event e
+                JOIN commerce_order o ON e.aggregate_id=CAST(o.id AS CHAR)
+                WHERE o.voucher_id=? AND e.event_type='commerce.order.created'
+                """, voucherId);
     }
 
     private static int databaseStock(long voucherId) {

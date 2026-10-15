@@ -43,15 +43,16 @@ class CoreAuthenticationChainTest {
             context.refresh();
             var registrations = context.getBeansOfType(FilterRegistrationBean.class).values().stream()
                     .sorted(java.util.Comparator.comparingInt(FilterRegistrationBean::getOrder)).toList();
-            assertThat(registrations).hasSize(2);
-            assertThat(registrations.get(0).getFilter()).isInstanceOf(InternalServiceTokenFilter.class);
-            assertThat(registrations.get(1).getFilter()).isInstanceOf(UserContextFilter.class);
+            assertThat(registrations).hasSize(3);
+            assertThat(registrations.get(0).getFilter()).isInstanceOf(com.citycopilot.http.RequestIdFilter.class);
+            assertThat(registrations.get(1).getFilter()).isInstanceOf(InternalServiceTokenFilter.class);
+            assertThat(registrations.get(2).getFilter()).isInstanceOf(UserContextFilter.class);
             assertThat(registrations).allSatisfy(registration -> {
                 assertThat(registration.isAsyncSupported()).isTrue();
                 assertThat(registration.getUrlPatterns()).containsExactly("/*");
             });
             var mvc = MockMvcBuilders.webAppContextSetup(context)
-                    .addFilters(registrations.get(0).getFilter(), registrations.get(1).getFilter()).build();
+                    .addFilters(registrations.get(0).getFilter(), registrations.get(1).getFilter(), registrations.get(2).getFilter()).build();
             mvc.perform(get("/internal/no-handler")).andExpect(status().isUnauthorized())
                     .andExpect(content().string(org.hamcrest.Matchers.containsString("SERVICE_AUTH_REQUIRED")));
             mvc.perform(get("/internal/probe").header("X-CityCopilot-Service-Token", "old")

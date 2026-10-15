@@ -28,7 +28,7 @@ RUN apt-get update && \
 
 WORKDIR /app
 COPY --from=build --chown=citycopilot:citycopilot /workspace/application.jar /app/application.jar
-RUN mkdir -p /app/uploads /app/logs/rocketmq && \
+RUN mkdir -p /app/uploads /app/logs && \
     chown -R citycopilot:citycopilot /app/uploads /app/logs
 
 USER citycopilot

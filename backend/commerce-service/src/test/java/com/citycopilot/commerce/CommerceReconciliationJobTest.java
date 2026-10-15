@@ -6,6 +6,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -33,7 +34,8 @@ class CommerceReconciliationJobTest {
                 redis,
                 consistency,
                 metadata,
-                JsonMapper.builderWithJackson2Defaults().build(), leader()
+                JsonMapper.builderWithJackson2Defaults().build(), leader(),
+                new CommerceRedisKeyspace(1, "v1"), Duration.ofDays(1)
         );
 
         job.reconcile();
@@ -62,7 +64,8 @@ class CommerceReconciliationJobTest {
                 redis,
                 consistency,
                 metadata,
-                JsonMapper.builderWithJackson2Defaults().build(), leader()
+                JsonMapper.builderWithJackson2Defaults().build(), leader(),
+                new CommerceRedisKeyspace(1, "v1"), Duration.ofDays(1)
         );
 
         job.reconcile();
@@ -87,7 +90,8 @@ class CommerceReconciliationJobTest {
                 redis,
                 consistency,
                 metadata,
-                JsonMapper.builderWithJackson2Defaults().build(), leader()
+                JsonMapper.builderWithJackson2Defaults().build(), leader(),
+                new CommerceRedisKeyspace(1, "v1"), Duration.ofDays(1)
         );
 
         job.reconcile();
@@ -108,14 +112,13 @@ class CommerceReconciliationJobTest {
     }
 
     private void stubVoucherPage(JdbcTemplate jdbc, List<Long> voucherIds) {
-        long highWatermark = voucherIds.get(voucherIds.size() - 1);
-        when(jdbc.queryForObject("SELECT MAX(voucher_id) FROM commerce_seckill_voucher", Long.class))
-                .thenReturn(highWatermark);
         when(jdbc.queryForList("""
-                SELECT voucher_id FROM commerce_seckill_voucher
-                WHERE voucher_id>? AND voucher_id<=?
-                ORDER BY voucher_id
-                LIMIT ?
-                """, Long.class, 0L, highWatermark, 200)).thenReturn(voucherIds);
+                    SELECT voucher_id FROM commerce_seckill_voucher
+                    WHERE redis_archived_at IS NULL
+                      AND end_time > CURRENT_TIMESTAMP(3) - INTERVAL ? SECOND
+                      AND voucher_id>?
+                    ORDER BY voucher_id
+                    LIMIT ?
+                    """, Long.class, 86_400L, 0L, 200)).thenReturn(voucherIds);
     }
 }

@@ -20,7 +20,7 @@ public record StockDiscrepancyDetectedEvent(
         String incidentKey,
         Instant detectedAt
 ) {
-    /** RocketMQ 消息头中使用的稳定事件类型。 */
+    /** 事件信封与 Kafka 消息头中使用的稳定事件类型。 */
     public static final String EVENT_TYPE = "commerce.stock.discrepancy-detected";
     /** 当前事件载荷结构版本。 */
     public static final int SCHEMA_VERSION = 1;

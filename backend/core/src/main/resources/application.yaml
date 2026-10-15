@@ -1,5 +1,7 @@
 server:
   port: 8081
+  # 信任内网代理的 X-Forwarded-For，按来源 IP 限流依赖它取得真实客户端地址。
+  forward-headers-strategy: native
   tomcat:
     threads:
       max: 400
@@ -21,7 +23,7 @@ spring:
     enabled: false
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: "${CITYCOPILOT_DB_URL:jdbc:mysql://127.0.0.1:3307/citycopilot?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}"
+    url: "${CITYCOPILOT_DB_URL:jdbc:mysql://127.0.0.1:3307/citycopilot?useSSL=false&connectionTimeZone=LOCAL&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true}"
     username: "${CITYCOPILOT_DB_USERNAME:root}"
     password: "${CITYCOPILOT_DB_PASSWORD:}"
   data:
@@ -36,6 +38,20 @@ spring:
           max-idle: 10
           min-idle: 1
           time-between-eviction-runs: 10s
+  kafka:
+    bootstrap-servers: "${CITYCOPILOT_KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:19092,127.0.0.1:19093,127.0.0.1:19094}"
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # 保留原始字节：Inbox 按原文哈希识别同一 eventId 的载荷冲突。
+      value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
+      properties:
+        partition.assignment.strategy: org.apache.kafka.clients.consumer.CooperativeStickyAssignor
+    producer:
+      # 只用于把失败消息原样转发到死信主题。
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      acks: all
   servlet:
     multipart:
       max-file-size: 5MB
@@ -48,6 +64,8 @@ mybatis-plus:
   type-aliases-package: com.citycopilot.core.entity
 
 logging:
+  pattern:
+    correlation: "[%X{requestId:-}] "
   level:
     com.citycopilot.core: debug
 
@@ -65,6 +83,9 @@ citycopilot:
     export-limit: "${CITYCOPILOT_AUDIT_EXPORT_LIMIT:1000}"
   security:
     login-code-rate-limit-per-phone: 3
+    login-code-rate-limit-per-ip: 20
+    login-code-max-attempts: 5
+    log-login-codes: "${CITYCOPILOT_LOG_LOGIN_CODES:false}"
     role-permissions:
       admin:
         - "*"
@@ -129,17 +150,13 @@ citycopilot:
     circuit-failure-threshold: 5
     circuit-open-seconds: 120
     metrics-ttl-days: 7
-  rocketmq:
-    enabled: "${CITYCOPILOT_ROCKETMQ_ENABLED:true}"
-    consumer-enabled: "${CITYCOPILOT_ROCKETMQ_CONSUMER_ENABLED:true}"
-    ssl-enabled: "${CITYCOPILOT_ROCKETMQ_SSL_ENABLED:false}"
-    access-key: "${CITYCOPILOT_ROCKETMQ_ACCESS_KEY:}"
-    secret-key: "${CITYCOPILOT_ROCKETMQ_SECRET_KEY:}"
-    endpoints: "${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}"
+  kafka:
+    enabled: "${CITYCOPILOT_KAFKA_ENABLED:true}"
+    consumer-enabled: "${CITYCOPILOT_KAFKA_CONSUMER_ENABLED:true}"
     commerce-topic: citycopilot-commerce-events-v1
     ops-topic: citycopilot-ops-events-v1
     audit-consumer-group: citycopilot-event-audit-v1
-    request-timeout: "${CITYCOPILOT_ROCKETMQ_REQUEST_TIMEOUT:3s}"
+    shop-sales-consumer-group: citycopilot-shop-sales-v1
 
 management:
   endpoints:

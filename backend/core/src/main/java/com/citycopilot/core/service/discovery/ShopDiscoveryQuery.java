@@ -45,11 +45,6 @@ public class ShopDiscoveryQuery {
         return RedisGeoCoordinates.isValid(x, y);
     }
 
-    /** @return 是否提供了非空关键词 */
-    public boolean hasKeyword() {
-        return StrUtil.isNotBlank(keyword);
-    }
-
     /** @return 规范化后从 1 开始的页码 */
     public int resolveCurrent() {
         return current == null || current < 1 ? 1 : current;

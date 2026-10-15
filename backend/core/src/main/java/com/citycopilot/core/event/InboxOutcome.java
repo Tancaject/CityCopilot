@@ -1,6 +1,6 @@
 package com.citycopilot.core.event;
 
-/** RocketMQ 事件进入 Core Inbox 后的幂等与顺序判定结果。 */
+/** Kafka 事件进入 Core Inbox 后的幂等与顺序判定结果。 */
 public enum InboxOutcome {
     /** 首次收到且版本不落后，可以推进投影水位。 */
     PROCESSED,

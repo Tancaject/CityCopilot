@@ -108,7 +108,7 @@ def run(args) -> dict:
     require(old and old["ProcessId"] == args.expected_pid and expected_jar_arg in old["CommandLine"], "Authorized PID is not the copied Commerce JVM")
     require("--spring.config.additional-location=file:.tools/booking-runtime/commerce.yaml" in old["CommandLine"], "Unexpected Commerce profile")
     require("--citycopilot.commerce.outbox-relay-enabled=true" in old["CommandLine"]
-            and "--citycopilot.commerce.rocketmq-enabled=true" in old["CommandLine"], "Real Outbox and MQ must remain enabled")
+            and "--citycopilot.commerce.kafka-enabled=true" in old["CommandLine"], "Real Outbox and MQ must remain enabled")
     report["oldProcess"] = old
     consumer = os.environ.get("CITYCOPILOT_BOOKING_RESTART_TOKEN") or test_login(api, "19900100297", 61380)
     merchant = os.environ.get("CITYCOPILOT_BOOKING_RESTART_MERCHANT_TOKEN") or test_login(api, "19900000900", 61380)

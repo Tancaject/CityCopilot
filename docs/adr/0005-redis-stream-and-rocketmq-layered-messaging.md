@@ -1,6 +1,6 @@
 # ADR-0005：Redis Stream 与 RocketMQ 分层消息
 
-状态：接受  
+状态：已被 [ADR-0012](0012-kafka-replaces-rocketmq.md) 替代（2026-10-15）。Redis Stream 与 MQ 分层的决策不变，跨服务事件改由 Kafka 承载。  
 日期：2026-07-26  
 补充：ADR-0002
 

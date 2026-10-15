@@ -18,16 +18,16 @@ CityCopilot 的生产形态固定为两个领域服务，不再按技术层继�
 - MySQL 是唯一业务事实源；
 - Redis 负责原子准入、短期状态、缓存和 GEO 投影，不作为已完成业务事实的唯一副本；
 - Redis Stream 只承载 Commerce 内部订单命令；
-- RocketMQ 只承载跨服务领域事件；
+- Kafka 只承载跨服务领域事件；
 - 跨服务不使用 XA/Seata，统一采用本地事务、Transactional Outbox、至少一次投递、Consumer Inbox、聚合版本和幂等补偿。
 
-当前仓库的部署基线是单机 Docker Compose，应用与数据服务位于同一主机的隔离网络中，默认业务端口只绑定本机地址。若用于真实生产，公网入口应由仓库外的 CDN/WAF/API Gateway/反向代理承接，MySQL、Redis、RocketMQ 优先迁移到独立主机或托管高可用服务。单机部署不具备主机级高可用，仓库也不提供集群编排层。
+当前仓库的部署基线是单机 Docker Compose，应用与数据服务位于同一主机的隔离网络中，默认业务端口只绑定本机地址。若用于真实生产，公网入口应由仓库外的 CDN/WAF/API Gateway/反向代理承接，MySQL、Redis、Kafka 优先迁移到独立主机或托管高可用服务。单机部署不具备主机级高可用，仓库也不提供集群编排层。
 
 ### 1.1 2026-08-04 当前落地基线
 
 - 已提供生产 profile、Dockerfile、Docker Compose profile、健康检查、资源上限、重启策略和优雅停机。当前 Compose 启动 Core、Commerce 各一个固定实例；部分 Worker/Reconciliation/Outbox/Projector role 仍与所属服务同进程运行，独立 role/profile 需要显式启动，不能描述成已经自动扩缩容。
 - Commerce 已改为 Redis Cluster 同槽 Lua 准入、分片 Stream、MySQL Recovery/Outbox、可过期 claim/fencing、毒消息持久化和无限可重试 Outbox；单券当前仍固定到一个逻辑 hash-tag shard，不包含下文的多 bucket/escrow 扩展。
-- GEO 投影已使用同事务 MySQL Outbox、共享 writer lease/fencing、版本化写入、封闭水位追平和 cutover barrier；当前是 Projector 直接消费 MySQL Outbox，不经过 RocketMQ。
+- GEO 投影已使用同事务 MySQL Outbox、共享 writer lease/fencing、版本化写入、封闭水位追平和 cutover barrier；当前是 Projector 直接消费 MySQL Outbox，不经过 Kafka。
 - 尚未完成的代码边界包括 Shop 删除 tombstone、独立 `shop_type` 变更传播，以及超热点券多 bucket 库存 escrow。GEO 有界重建与一次性旧代际回收的实现及验证边界见 [ADR-0010](../adr/0010-versioned-shop-search-geo-projections.md)。
 - 所有吞吐、可用性、跨 AZ 接管、Redis 复制确认、MQ/MySQL 托管服务握手和 RPO/RTO 数值仍需真实环境验证；本节不把静态配置或单元测试写成生产证明。
 
@@ -83,7 +83,7 @@ dbPoolPerInstance
 
 ## 3. 目标拓扑
 
-下图描述仓库外可扩展的逻辑目标，不代表当前实例数。当前 `compose.yaml` 中 `N=1`，两个 MySQL、Redis 和 RocketMQ 都是单机容器；图中的多实例与高可用数据层只有迁移到多台主机或托管服务后才成立。
+下图描述仓库外可扩展的逻辑目标，不代表当前实例数。当前 `compose.yaml` 中 `N=1`，两个 MySQL、Redis 和 Kafka 都是单机容器；图中的多实例与高可用数据层只有迁移到多台主机或托管服务后才成立。
 
 ```mermaid
 flowchart TB
@@ -108,7 +108,7 @@ flowchart TB
     COMWORKER --> COMREDIS
     COMWORKER --> COMDB[("Commerce MySQL")]
     RELAY --> COMDB
-    RELAY --> MQ[("RocketMQ")]
+    RELAY --> MQ[("Kafka")]
     PROJECTOR --> MQ
     PROJECTOR --> APPREDIS[("Core Cache / GEO Redis")]
     CORE --> APPREDIS
@@ -152,7 +152,7 @@ flowchart TB
 | 用户、店铺、分类、坐标、社区、操作审计 | Core MySQL | Redis 缓存/GEO |
 | 优惠券、库存 bucket、Reservation、订单、Recovery、Outbox、DLQ | Commerce MySQL | Commerce Redis 准入状态和 Stream |
 | 图片和附件 | 对象存储 | CDN 缓存 |
-| 跨服务事件 | 各生产者 MySQL Outbox | RocketMQ 只是传输和保留介质 |
+| 跨服务事件 | 各生产者 MySQL Outbox | Kafka 只是传输和保留介质 |
 
 每个可发布聚合必须有单调递增的 `aggregate_version`；删除必须产生 tombstone 事件。服务之间只能通过版本化 HTTP API 或领域事件共享数据。
 
@@ -172,7 +172,7 @@ flowchart TB
 - 只有幂等读或携带稳定 Idempotency-Key 的命令允许自动重试；
 - 写命令失败时不得回退到旧本地 writer；
 - 熔断只阻止故障扩散，不能伪造成功；429/503 必须带稳定错误码和 Retry-After；
-- HTTP、RocketMQ 调用统一传播 `traceparent`、requestId、correlationId 和 actor。
+- HTTP、Kafka 调用统一传播 `traceparent`、requestId、correlationId 和 actor。
 
 ## 7. Commerce 高并发交易设计
 
@@ -204,7 +204,7 @@ Location: /commerce/v1/orders/{orderId}
 
 ### 7.2 Redis 原子准入
 
-秒杀的库存/活动判断不查询 MySQL 事实表、不持有热点库存行锁、不发布 RocketMQ，也不调用其他业务服务。每次请求会写 MySQL admission ledger 的 `PREPARED`/`ACCEPTED` 状态作为接受承诺边界；订单 ID 来自预留在 JVM 的持久 MySQL hi/lo 号段，只有本地号段耗尽时才执行一次短事务预留下一段：
+秒杀的库存/活动判断不查询 MySQL 事实表、不持有热点库存行锁、不发布 Kafka，也不调用其他业务服务。每次请求会写 MySQL admission ledger 的 `PREPARED`/`ACCEPTED` 状态作为接受承诺边界；订单 ID 来自预留在 JVM 的持久 MySQL hi/lo 号段，只有本地号段耗尽时才执行一次短事务预留下一段：
 
 ```mermaid
 sequenceDiagram
@@ -215,7 +215,7 @@ sequenceDiagram
     participant Worker as Stream Worker
     participant DB as Commerce MySQL
     participant Relay as Outbox Relay
-    participant MQ as RocketMQ
+    participant MQ as Kafka
 
     Client->>Gateway: POST seckill + Idempotency-Key
     Gateway->>API: Authenticated request
@@ -307,7 +307,7 @@ cc:{commerce:07}:orders
 6. 插入唯一的 `OrderCreated` Outbox；
 7. 提交事务。
 
-事务内禁止 Redis、RocketMQ、HTTP 和对象存储等网络调用。关键约束：
+事务内禁止 Redis、Kafka、HTTP 和对象存储等网络调用。关键约束：
 
 ```text
 UNIQUE commerce_order(user_id, voucher_id)
@@ -384,7 +384,7 @@ flowchart LR
     PROJECTOR2 --> GEOP["Redis GEO version-CAS projection"]
 ```
 
-当前 Outbox 保存 eventId、shopId、aggregateVersion 和操作类型，Projector 再从权威表读取最新快照。删除 tombstone 与跨服务 RocketMQ Relay/Inbox 是后续扩展，尚未实现。投影规则固定为：
+当前 Outbox 保存 eventId、shopId、aggregateVersion 和操作类型，Projector 再从权威表读取最新快照。删除 tombstone 与跨服务 Kafka Relay/Inbox 是后续扩展，尚未实现。投影规则固定为：
 
 ```text
 incomingVersion > storedVersion  -> apply
@@ -431,7 +431,7 @@ geo:{hangzhou}:g-102:version          -> HASH(shopId, version)
 
 ## 9. 数据基础设施
 
-本节全部是仓库外正式生产目标。当前 Compose 使用两个单节点 MySQL 容器、一个共享 Redis 实例、单 Broker RocketMQ，不具备数据层高可用，也不能用来证明下述跨主机故障转移能力。
+本节全部是仓库外正式生产目标。当前 Compose 使用两个单节点 MySQL 容器、一个共享 Redis 实例、单 Broker Kafka，不具备数据层高可用，也不能用来证明下述跨主机故障转移能力。
 
 ### 9.1 MySQL
 
@@ -453,12 +453,12 @@ Core、Commerce 使用独立数据库、独立账号和独立迁移历史；正�
 
 Redis Cluster 只使用 DB 0，依赖 namespace 和 ACL 隔离。Commerce Redis 故障转移仍可能出现未复制写，因此 MySQL Recovery、唯一约束、对账和幂等补偿必须长期存在。
 
-### 9.3 RocketMQ
+### 9.3 Kafka
 
-- 使用多个 NameServer、三节点 Controller quorum、至少两个 Broker Group 和跨 AZ 副本；
-- Proxy 独立部署和负载均衡；Topic 显式配置队列、保留、重试和 DLQ；
-- eventId 作为 message key，aggregateId 作为顺序/分区键；
-- 不依赖全局 FIFO，消费者必须用 aggregateVersion 拒绝旧事件；
+- 三个以上 broker 跨 AZ 部署，KRaft controller quorum 独立或与 broker 共置；
+- Topic 复制因子 3、`min.insync.replicas=2`，生产者 `acks=all` 加幂等，关闭 unclean leader election；
+- aggregateId 作为分区键，eventId 放在消息头供下游去重；重试有限次后转入 `<topic>.DLT`；
+- 不依赖全局或分区顺序，消费者必须用 aggregateVersion 拒绝旧事件；
 - MQ 不可用时业务事务继续提交，Outbox 积压并触发 oldest-age 告警。
 
 ### 9.4 对象存储
@@ -481,7 +481,7 @@ Redis Cluster 只使用 DB 0，依赖 namespace 和 ACL 隔离。Commerce Redis 
 
 ## 11. 可观测性与告警
 
-OpenTelemetry 覆盖边缘反向代理、HTTP、MySQL、Redis 和 RocketMQ 调用；日志、指标、Trace 通过 Collector 统一导出。
+OpenTelemetry 覆盖边缘反向代理、HTTP、MySQL、Redis 和 Kafka 调用；日志、指标、Trace 通过 Collector 统一导出。
 
 必须监控：
 
@@ -490,7 +490,7 @@ OpenTelemetry 覆盖边缘反向代理、HTTP、MySQL、Redis 和 RocketMQ 调�
 - Redis latency、memory、replication、hot key、Stream lag、PEL 和 oldest message；
 - MySQL QPS、锁等待、死锁、慢 SQL、replica lag、连接饱和；
 - Outbox READY/CLAIMED/FAILED/DEAD、oldest age 和 publish latency；
-- RocketMQ produce/consume latency、lag、retry 和 DLQ；
+- Kafka produce/consume latency、lag、retry 和 DLQ；
 - 秒杀 accepted、created、compensated、repair-required、库存 discrepancy；
 - GEO projection lag、fallback rate、rebuild generation；
 - 对象上传失败、安全扫描失败和孤儿对象。
@@ -513,7 +513,7 @@ OpenTelemetry 覆盖边缘反向代理、HTTP、MySQL、Redis 和 RocketMQ 调�
 | MySQL 暂时不可用 | Stream 保留命令；达到 backlog/inflight 上限后关闭准入 |
 | Worker 在 DB 提交前退出 | 当前由重启后的 Worker 根据 PEL 与 Recovery lease 恢复；多实例目标态才由其他 Worker 接管 |
 | DB 已提交但 Stream ACK 失败 | 重放读取终态，只执行幂等 finalization 和 ACK |
-| RocketMQ 不可用 | 业务事务不回滚；Outbox 积压、告警和后续重发 |
+| Kafka 不可用 | 业务事务不回滚；Outbox 积压、告警和后续重发 |
 | MQ 已发送但 Outbox 未标记 | Relay 重发；消费者 Inbox 消除重复副作用 |
 | 毒消息或不兼容 schema | 持久化 quarantine/DLQ、告警并停止无限重试 |
 | Redis GEO 不可用 | Core 降级 MySQL 地理查询，业务写不受影响 |
@@ -533,7 +533,7 @@ Authenticated request
 -> order + recovery + outbox atomic commit
 -> Redis finalization and ACK
 -> Outbox Relay lease claim
--> RocketMQ at-least-once event
+-> Kafka at-least-once event
 -> Consumer Inbox + local effect
 -> query returns stable order status
 -> metrics, trace, audit and alert cover the whole path
@@ -553,7 +553,7 @@ Core shop transaction + version + outbox
 
 - 预计峰值 2 倍持续压测和 10 倍短突发下仍满足 SLO；
 - 随机终止 API、Worker 进程或容器，验证重启后任务自动接管；主机故障通过备份恢复演练验收，当前单机环境不宣称节点或可用区容灾；
-- Redis 主节点、MySQL writer、RocketMQ Broker 故障转移不破坏业务不变量；
+- Redis 主节点、MySQL writer、Kafka Broker 故障转移不破坏业务不变量；
 - 覆盖“DB 提交前退出”“DB 提交后 ACK 前退出”“MQ 发送后 PUBLISHED 前退出”“投影快照后 alias 切换前更新”等故障窗口；
 - 多 Core 并发重建 GEO 时只有合法 fencing owner 可以切换 generation；
 - 超卖、重复业务效果和已提交事件永久丢失均为 0；
@@ -568,16 +568,16 @@ Core shop transaction + version + outbox
 
 - 不引入 Nacos/Eureka：单机使用 Compose 服务名和显式端点，未来多主机可接入外部负载均衡或私有 DNS；
 - 不引入 Seata/XA：使用本地事务、Outbox/Inbox、幂等和补偿；
-- 不再引入 Kafka：Redis Stream 与 RocketMQ 已有明确且不重叠的职责；
+- 跨服务事件由 Kafka 承载（2026-10-15 替代 Kafka，见 ADR-0012）；Redis Stream 与 Kafka 职责不重叠，不再引入第三套消息系统；
 - 不采用全量 Event Sourcing/CQRS：只对确有投影需求的路径使用事件读模型；
 - 不默认引入 Service Mesh：反向代理、TLS、服务凭据、Docker 网络、主机防火墙和数据服务 ACL 满足当前治理范围；
 - 不建设双地域 Active-Active：订单幂等、库存分配和跨地域一致性成本高于当前收益；
-- 正式生产不把 MySQL、Redis 和 RocketMQ 与应用进程长期共置；有托管服务时优先降低运维风险；
+- 正式生产不把 MySQL、Redis 和 Kafka 与应用进程长期共置；有托管服务时优先降低运维风险；
 - 不用 Redisson 分布式锁串行化 Commerce 热路径；锁不能替代事务幂等、ACK 恢复和消息重放。
 
 ## 17. 关联决策
 
-- [ADR-0005：Redis Stream 与 RocketMQ 分层消息](../adr/0005-redis-stream-and-rocketmq-layered-messaging.md)
+- [ADR-0005：Redis Stream 与 RocketMQ 分层消息](../adr/0005-redis-stream-and-rocketmq-layered-messaging.md)（已被 [ADR-0012](../adr/0012-kafka-replaces-rocketmq.md) 替代）
 - [ADR-0006：Commerce 与 Place 边界及数据所有权](../adr/0006-commerce-place-service-boundaries.md)
 - [ADR-0009：Commerce 高并发准入与恢复语义](../adr/0009-commerce-high-concurrency-admission.md)
 - [ADR-0010：Shop Search 与 GEO 版本化投影](../adr/0010-versioned-shop-search-geo-projections.md)

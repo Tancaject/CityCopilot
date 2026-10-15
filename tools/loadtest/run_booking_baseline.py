@@ -78,7 +78,7 @@ class Runner:
         result = subprocess.run([self.args.docker_exe, "compose", "-p", "citycopilot-booking-load", "-f", str(compose_file),
                                  *arguments], capture_output=True, text=True, encoding="utf-8", timeout=180)
         if result.returncode:
-            raise RuntimeError("Isolated RocketMQ command failed: " + result.stderr.strip())
+            raise RuntimeError("Isolated Kafka command failed: " + result.stderr.strip())
         return result.stdout.strip()
 
     def metrics(self, suffix: str) -> None:
@@ -305,7 +305,7 @@ def main() -> int:
     runner.metrics("before")
     try:
         if args.mq_outage:
-            runner.compose("stop", "rocketmq-proxy", "rocketmq-broker")
+            runner.compose("stop", "kafka")
             probe = runner.expiry_probe(start)
         for index, scenario in enumerate(scenarios):
             report, rows = runner.run_scenario(scenario, users, start + timedelta(hours=index * 2))
@@ -318,7 +318,7 @@ def main() -> int:
     finally:
         if args.mq_outage:
             # The named Compose project is dedicated to this runner. Always restore it after a failed fixture/load.
-            runner.compose("up", "-d", "--wait", "rocketmq-broker", "rocketmq-proxy")
+            runner.compose("up", "-d", "--wait", "kafka")
     if outage is not None:
         outage["recovery"] = runner.await_outbox(lambda state: state["total"] == state["published"])
         outage["passed"] = (outage["expiryProbe"]["passed"] and outage["during"]["failed"] > 0 and outage["during"]["published"] == 0

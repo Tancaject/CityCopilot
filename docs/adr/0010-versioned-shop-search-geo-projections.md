@@ -11,7 +11,7 @@
 
 - Core MySQL 是店铺、分类、坐标和版本的唯一事实源；Redis GEO、缓存和 Commerce 店铺摘要均为可重建投影。关键词检索直接走 MySQL。
 - 经 `ShopService` 的店铺变更在同一事务中递增 `projection_version` 并写入 MySQL `shop_projection_outbox`。
-- Projector 直接从该 MySQL Outbox claim 事件；可过期 claim 与共享 MySQL writer lease/fencing token 协调多个实例，并与全量重建互斥。当前链路不经过 RocketMQ，也不虚构未实现的 Consumer Inbox。
+- Projector 直接从该 MySQL Outbox claim 事件；可过期 claim 与共享 MySQL writer lease/fencing token 协调多个实例，并与全量重建互斥。当前链路不经过 Kafka，也不虚构未实现的 Consumer Inbox。
 - Redis GEO 用 Lua 比较投影版本。失败事件永久保持可重试并采用有上限的指数退避，旧版本不能覆盖新状态。
 - 全量重建使用带 fencing token 的单活租约、隔离 generation、封闭起始水位、预追平和 cutover barrier 内的最终尾追；最终尾追完成后才切换 active generation。
 - 基础扫描先记录店铺主键上界，再使用 [`ShopMapper`](../../backend/core/src/main/java/com/citycopilot/core/mapper/ShopMapper.java) 的有界主键游标页；后续新增/修改通过原 Outbox 水位追平。基础页使用多成员 GEOADD 与 Hash 批量写入，增量仍保留每家店铺的版本 Lua。基础页与追尾页之间续租，失去写租约后中止本次构建。
@@ -35,7 +35,7 @@ GEO 可以故障降级并从事实源重建，重复或乱序事件不会让旧�
 - 独立修改 `shop_type` 不会自动为其关联店铺生成相同水位协议下的事件。
 - 分页限制单批记录数量，不是对单次数据库/Redis 调用耗时的保证；需根据单页耗时设置维护租约，续租失败时中止构建而不发布。重建返回数量仍为基础页写入数，不包含随后追尾的新增店铺。
 - 旧 generation 通过下述一次性维护入口受控回收，默认关闭；不在重建尾部或常驻定时任务中自动删除。
-- 当前 MySQL Outbox 是投影内部队列。若未来需要把 `ShopChanged` 分发给 Commerce 等跨服务消费者，再增加 RocketMQ Relay/Inbox，而不是把它描述成已经存在。
+- 当前 MySQL Outbox 是投影内部队列。若未来需要把 `ShopChanged` 分发给 Commerce 等跨服务消费者，再增加 Kafka Relay/Inbox，而不是把它描述成已经存在。
 - 有界重建的发布验收须覆盖主键跨页、空页、重建期间写入、分页续租失败及批量写部分失败时仍不发布。真实 MySQL、Redis Cluster 多实例切换与故障注入仍是发布门槛。
 
 ## 旧代际受控回收

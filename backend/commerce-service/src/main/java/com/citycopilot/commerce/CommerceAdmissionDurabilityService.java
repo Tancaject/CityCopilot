@@ -13,6 +13,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -301,18 +304,30 @@ final class CommerceAdmissionDurabilityService {
     List<Admission> claimAcceptedBatch() {
         String token = UUID.randomUUID().toString();
         try {
-            int claimed = jdbc.update("""
-                    UPDATE commerce_admission_ledger
-                    SET claim_token=?,claim_owner=?,
-                        claimed_until=TIMESTAMPADD(MICROSECOND,?,CURRENT_TIMESTAMP(3))
+            // 先用不加锁的一致性读挑候选，再按主键认领。直接按恢复索引 UPDATE 会先锁二级索引再锁主键，
+            // 与按主键释放 claim 的语句加锁顺序相反，两个实例并发时会死锁。
+            List<Long> candidates = jdbc.queryForList("""
+                    SELECT order_id FROM commerce_admission_ledger
                     WHERE status='ACCEPTED'
                       AND routing_generation=? AND physical_shard_count=?
                       AND accepted_at<=TIMESTAMPADD(MICROSECOND,?,CURRENT_TIMESTAMP(3))
                       AND (claimed_until IS NULL OR claimed_until<CURRENT_TIMESTAMP(3))
                     ORDER BY accepted_at,order_id
                     LIMIT ?
-                    """, token, claimOwner, recoveryLeaseMicros,
-                    routingGeneration, routingShardCount, -recoveryMinAgeMicros, recoveryBatchSize);
+                    """, Long.class, routingGeneration, routingShardCount, -recoveryMinAgeMicros, recoveryBatchSize);
+            if (candidates.isEmpty()) return List.of();
+            List<Object> arguments = new ArrayList<>(List.of(token, claimOwner, recoveryLeaseMicros));
+            arguments.addAll(candidates);
+            // 候选可能已被其他实例认领或已落单，UPDATE 内重新校验状态与租约，只认领仍可领的行。
+            int claimed = jdbc.update("""
+                    UPDATE commerce_admission_ledger
+                    SET claim_token=?,claim_owner=?,
+                        claimed_until=TIMESTAMPADD(MICROSECOND,?,CURRENT_TIMESTAMP(3))
+                    WHERE order_id IN (%s)
+                      AND status='ACCEPTED'
+                      AND (claimed_until IS NULL OR claimed_until<CURRENT_TIMESTAMP(3))
+                    """.formatted(String.join(",", Collections.nCopies(candidates.size(), "?"))),
+                    arguments.toArray());
             if (claimed == 0) return List.of();
             return rows(jdbc.queryForList("""
                     SELECT order_id,user_id,idempotency_key,voucher_id,request_fingerprint,
@@ -437,6 +452,79 @@ final class CommerceAdmissionDurabilityService {
         )) {
             throw new IllegalStateException("Created order conflicts with its durable admission identity");
         }
+    }
+
+    /**
+     * 在批量建单事务内按主键顺序锁定账本行，挑出可直接终态化的订单。
+     *
+     * <p>只接受 PREPARED/ACCEPTED 且身份逐项一致的行：Lua 写入 Stream 早于 markAccepted，
+     * Worker 读到 PREPARED 是正常竞争。缺账本、已拒绝、待修复或已建单的订单由逐条路径处理。</p>
+     *
+     * @return orderId 到加锁时账本状态的映射，只含可批量处理的订单
+     */
+    Map<Long, Status> lockBatchCandidates(long voucherId, List<CommerceOrderService.BatchOrder> orders) {
+        Map<Long, Map<String, Object>> rows = new HashMap<>();
+        for (Map<String, Object> row : jdbc.queryForList("""
+                SELECT order_id,user_id,voucher_id,idempotency_key,request_fingerprint,status
+                FROM commerce_admission_ledger
+                WHERE order_id IN (%s)
+                ORDER BY order_id
+                FOR UPDATE
+                """.formatted(CommerceOrderService.placeholders(orders.size(), 1)),
+                orders.stream().map(order -> (Object) order.orderId()).toArray())) {
+            rows.put(number(row, "order_id"), row);
+        }
+        String fingerprint = requestFingerprint(voucherId);
+        Map<Long, Status> eligible = new HashMap<>();
+        for (CommerceOrderService.BatchOrder order : orders) {
+            Map<String, Object> row = rows.get(order.orderId());
+            if (row == null) continue;
+            Status status = status(String.valueOf(value(row, "status")));
+            if ((status == Status.PREPARED || status == Status.ACCEPTED)
+                    && number(row, "user_id") == order.userId()
+                    && number(row, "voucher_id") == voucherId
+                    && order.idempotencyKey().equals(String.valueOf(value(row, "idempotency_key")))
+                    && fingerprint.equals(String.valueOf(value(row, "request_fingerprint")))) {
+                eligible.put(order.orderId(), status);
+            }
+        }
+        return eligible;
+    }
+
+    /**
+     * 在批量建单事务内把已锁定的账本行逐单配对终态化为 ORDER_CREATED。
+     *
+     * <p>每单按 (订单, 用户, 券, 幂等键, 指纹, 加锁时状态) 元组匹配，影响行数不等于批量大小时
+     * 抛出 {@link CommerceOrderService.BatchRejected} 让整批回滚。积压计数不在这里扣减，
+     * 由调用方在事务提交后调用 {@link #releaseAcceptedBacklog(int)}，避免回滚后少算。</p>
+     *
+     * @return 其中由 ACCEPTED 转出的数量
+     */
+    int markOrdersCreated(long voucherId, List<CommerceOrderService.BatchOrder> orders, Map<Long, Status> locked) {
+        String fingerprint = requestFingerprint(voucherId);
+        List<Object> arguments = new ArrayList<>();
+        int accepted = 0;
+        for (CommerceOrderService.BatchOrder order : orders) {
+            Status previous = locked.get(order.orderId());
+            if (previous == Status.ACCEPTED) accepted++;
+            arguments.addAll(List.of(order.orderId(), order.userId(), voucherId, order.idempotencyKey(),
+                    fingerprint, previous.name()));
+        }
+        int changed = jdbc.update("""
+                UPDATE commerce_admission_ledger
+                SET status='ORDER_CREATED',terminal_at=COALESCE(terminal_at,CURRENT_TIMESTAMP(3)),
+                    claim_token=NULL,claim_owner=NULL,claimed_until=NULL,last_error=NULL
+                WHERE (order_id,user_id,voucher_id,idempotency_key,request_fingerprint,status) IN (%s)
+                """.formatted(CommerceOrderService.placeholders(orders.size(), 6)), arguments.toArray());
+        if (changed != orders.size()) {
+            throw new CommerceOrderService.BatchRejected("admission ledger changed " + changed + " of " + orders.size());
+        }
+        return accepted;
+    }
+
+    /** 批量建单事务提交后，按实际由 ACCEPTED 转出的数量扣减本地积压计数。 */
+    void releaseAcceptedBacklog(int transitions) {
+        if (transitions > 0) acceptedBacklog.updateAndGet(value -> Math.max(0L, value - transitions));
     }
 
     /** @return 给定订单身份是否已被请求链路持久证明为 ACCEPTED/ORDER_CREATED */

@@ -3,19 +3,14 @@ package com.citycopilot.commerce;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
-import org.apache.rocketmq.client.apis.ClientConfiguration;
-import org.apache.rocketmq.client.apis.ClientConfigurationBuilder;
-import org.apache.rocketmq.client.apis.ClientServiceProvider;
-import org.apache.rocketmq.client.apis.StaticSessionCredentialsProvider;
-import org.apache.rocketmq.client.apis.message.Message;
-import org.apache.rocketmq.client.apis.producer.Producer;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -26,12 +21,14 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
- * 将 MySQL Outbox 中已提交的领域事件可靠转发到 RocketMQ。
+ * 将 MySQL Outbox 中已提交的领域事件可靠转发到 Kafka。
  *
  * <p>多个 Relay 可并发运行：数据库条件更新负责抢占，{@code claim_token + fencing_token}
- * 防止过期 Worker 覆盖新所有者状态。发布和标记成功不是同一事务，因此下游仍须按 eventId 幂等。</p>
+ * 防止过期 Worker 覆盖新所有者状态。发布和标记成功不是同一事务，因此下游仍须按 eventId 幂等。
+ * Kafka 事务只覆盖 Kafka 内部，覆盖不到“MySQL 提交 + 发送”，所以这里是至少一次投递 + 消费端 Inbox。</p>
  */
 @Component
 @ConditionalOnProperty(
@@ -44,85 +41,32 @@ public class CommerceOutboxRelay {
     private static final Logger log = LoggerFactory.getLogger(CommerceOutboxRelay.class);
     /** 读取、抢占并更新 Outbox 行。 */
     private final JdbcTemplate jdbc;
-    /** 是否建立 RocketMQ Producer；关闭时保留 Outbox 数据。 */
-    private final boolean enabled;
-    /** RocketMQ gRPC 接入端点。 */
-    private final String endpoints;
-    /** 是否启用 RocketMQ TLS。 */
-    private final boolean sslEnabled;
-    /** 可选的 RocketMQ AccessKey。 */
-    private final String accessKey;
-    /** 与 AccessKey 配对的 RocketMQ SecretKey。 */
-    private final String secretKey;
     /** 记录积压、发布结果和耗时。 */
     private final MeterRegistry metrics;
-    /** RocketMQ 客户端 SPI 入口，用于创建消息和 Producer。 */
-    private final ClientServiceProvider provider = ClientServiceProvider.loadService();
-    /** 启动后创建、关闭前释放的 Producer。 */
-    private Producer producer;
+    /** 关闭发布时为 null，调度任务保持空操作，Outbox 数据原样保留。 */
+    private final KafkaTemplate<String, String> kafka;
+    /** 单条发送等待 broker 确认的上限；超时按失败退避重试，下游按 eventId 去重。 */
+    private static final long SEND_TIMEOUT_SECONDS = 15;
 
     public CommerceOutboxRelay(
             JdbcTemplate jdbc,
             MeterRegistry metrics,
-            @Value("${citycopilot.commerce.rocketmq-enabled:true}") boolean enabled,
-            @Value("${citycopilot.commerce.rocketmq-endpoints:127.0.0.1:18081}") String endpoints,
-            @Value("${citycopilot.commerce.rocketmq-ssl-enabled:false}") boolean sslEnabled,
-            @Value("${citycopilot.commerce.rocketmq-access-key:}") String accessKey,
-            @Value("${citycopilot.commerce.rocketmq-secret-key:}") String secretKey
+            KafkaTemplate<String, String> kafka,
+            @Value("${citycopilot.commerce.kafka-enabled:true}") boolean enabled
     ) {
         this.jdbc = jdbc;
         this.metrics = metrics;
-        this.enabled = enabled;
-        this.endpoints = endpoints;
-        this.sslEnabled = sslEnabled;
-        this.accessKey = accessKey;
-        this.secretKey = secretKey;
+        this.kafka = enabled ? kafka : null;
         Gauge.builder("citycopilot.commerce.outbox.unpublished", jdbc, ignored -> unpublished())
                 .register(metrics);
         Gauge.builder("citycopilot.commerce.outbox.oldest_ready_age_seconds", jdbc, ignored -> oldestReadyAgeSeconds())
                 .register(metrics);
     }
 
-    /** 根据配置创建 Producer；禁用时调度任务保持空操作。 */
-    @PostConstruct
-    void start() throws Exception {
-        if (!enabled) return;
-        producer = provider.newProducerBuilder()
-                .setClientConfiguration(clientConfiguration(endpoints, sslEnabled, accessKey, secretKey))
-                .setTopics("citycopilot-commerce-events-v1", "citycopilot-ops-events-v1")
-                .setMaxAttempts(3)
-                .build();
-    }
-
-    /**
-     * 构造 RocketMQ 客户端配置，并要求 accessKey/secretKey 成对出现。
-     *
-     * @return 可交给 ProducerBuilder 的客户端配置
-     */
-    static ClientConfiguration clientConfiguration(
-            String endpoints,
-            boolean sslEnabled,
-            String configuredAccessKey,
-            String configuredSecretKey
-    ) {
-        ClientConfigurationBuilder builder = ClientConfiguration.newBuilder()
-                .setEndpoints(endpoints)
-                .enableSsl(sslEnabled);
-        String accessKey = configuredAccessKey == null ? "" : configuredAccessKey.trim();
-        String secretKey = configuredSecretKey == null ? "" : configuredSecretKey.trim();
-        if (!accessKey.isEmpty() || !secretKey.isEmpty()) {
-            if (accessKey.isEmpty() || secretKey.isEmpty()) {
-                throw new IllegalStateException("RocketMQ access key and secret key must be configured together");
-            }
-            builder.setCredentialProvider(new StaticSessionCredentialsProvider(accessKey, secretKey));
-        }
-        return builder.build();
-    }
-
     /** 周期扫描可发布或租约已过期的 Outbox 行，单条失败不阻断后续事件。 */
     @Scheduled(fixedDelayString = "${citycopilot.commerce.outbox-relay-ms:1000}")
     void relay() {
-        if (producer == null) return;
+        if (kafka == null) return;
         for (String eventId : relayCandidates()) {
             try {
                 publish(eventId);
@@ -152,14 +96,15 @@ public class CommerceOutboxRelay {
     /**
      * 抢占并发布一个 Outbox 事件，再以同一 fencing token 标记结果。
      *
-     * @param eventId Outbox 事件 ID，同时作为 MQ 消息键
+     * @param eventId Outbox 事件 ID，放在消息头里供下游去重
      */
     void publish(String eventId) {
         OutboxClaim claim = claim(eventId);
         if (claim == null) return;
         Timer.Sample sample = Timer.start(metrics);
         try {
-            producer.send(claimedMessage(claim));
+            // acks=all + min.insync.replicas=2：拿到确认才标记已发布，确认前失败按退避重试。
+            kafka.send(claimedRecord(claim)).get(SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             // 发送成功后仍用 claim token + fencing token 条件更新；过期所有者不能篡改新租约状态。
             if (markPublished(claim)) {
                 count("published");
@@ -168,22 +113,28 @@ public class CommerceOutboxRelay {
                 log.warn("Commerce outbox ownership changed after publishing {}", eventId);
             }
         } catch (Exception error) {
-            if (markFailed(claim, error)) {
+            // Kafka 的真实原因（如 NotEnoughReplicasException）包在 ExecutionException/KafkaProducerException 里，记最内层的。
+            if (markFailed(claim, rootCause(error))) {
                 count("failed");
             } else {
                 count("lost_claim");
                 log.warn("Commerce outbox ownership changed while handling failure for {}", eventId);
             }
         } finally {
-            sample.stop(Timer.builder("citycopilot.commerce.rocketmq.publish.duration")
+            sample.stop(Timer.builder("citycopilot.commerce.events.publish.duration")
                     .register(metrics));
         }
     }
 
-    /** 重投也读取同一原文；归档不能改变 eventId、正文编码或内容摘要。 */
-    Message claimedMessage(OutboxClaim claim) throws Exception {
+    /**
+     * 重投也读取同一原文；归档不能改变 eventId、正文编码或内容摘要。
+     *
+     * <p>消息 key 用聚合 ID，同一订单或预约的事件落在同一分区。消费端仍按 aggregateVersion 判新旧，
+     * 不依赖分区顺序：多个 Relay 的发送与重试顺序本来就无法保证。</p>
+     */
+    ProducerRecord<String, String> claimedRecord(OutboxClaim claim) throws Exception {
         Map<String, Object> row = jdbc.queryForMap("""
-                SELECT e.topic,e.event_type,e.payload_archived_at,
+                SELECT e.topic,e.event_type,e.aggregate_id,e.payload_archived_at,
                        CASE WHEN e.payload_archived_at IS NULL THEN e.payload_json ELSE a.payload_json END AS payload_json,
                        a.payload_sha256 AS archived_payload_hash
                 FROM commerce_outbox_event e
@@ -198,19 +149,12 @@ public class CommerceOutboxRelay {
             throw new IllegalStateException("Outbox archive hash mismatch for " + claim.eventId()
                     + "; restore the verified original payload before retrying publication");
         }
-        return provider.newMessageBuilder()
-                .setTopic(String.valueOf(row.get("topic")))
-                .setTag(eventTag(String.valueOf(row.get("event_type"))))
-                .setKeys(claim.eventId())
-                .addProperty("eventType", String.valueOf(row.get("event_type")))
-                .addProperty("payloadHash", payloadHash)
-                .setBody(payload.getBytes(StandardCharsets.UTF_8))
-                .build();
-    }
-
-    static String eventTag(String eventType) {
-        if (eventType.startsWith("commerce.booking.")) return "BookingEvent";
-        return eventType.contains("discrepancy") ? "StockDiscrepancyDetected" : "CommerceOrderEvent";
+        ProducerRecord<String, String> record = new ProducerRecord<>(
+                String.valueOf(row.get("topic")), String.valueOf(row.get("aggregate_id")), payload);
+        record.headers().add("eventId", claim.eventId().getBytes(StandardCharsets.UTF_8));
+        record.headers().add("eventType", String.valueOf(row.get("event_type")).getBytes(StandardCharsets.UTF_8));
+        record.headers().add("payloadHash", payloadHash.getBytes(StandardCharsets.UTF_8));
+        return record;
     }
 
     /**
@@ -300,15 +244,14 @@ public class CommerceOutboxRelay {
         );
     }
 
+    private static Exception rootCause(Exception error) {
+        Throwable root = NestedExceptionUtils.getMostSpecificCause(error);
+        return root instanceof Exception exception ? exception : error;
+    }
+
     private String truncate(String value) {
         String safe = value == null ? "unknown_error" : value;
         return safe.substring(0, Math.min(1024, safe.length()));
-    }
-
-    /** 关闭 RocketMQ Producer，释放网络线程和连接。 */
-    @PreDestroy
-    void close() throws Exception {
-        if (producer != null) producer.close();
     }
 
     /**

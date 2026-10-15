@@ -4,7 +4,7 @@
 
 启用时将配置和规则文件放在同一目录，并从监控进程所在网络核对实际目标地址。示例中的 `host.docker.internal` 指 Docker 容器访问宿主机；它不表示所有部署都使用这个地址。抓取标签 `projection_role="true"`、`outbox_relay_role="true"` 表示该目标**应当**运行相应角色，不会开启应用角色。独立部署时把标签移到实际 Projector/Relay 实例，API-only 实例不应带这些标签。
 
-Core 指标只在 `citycopilot.projection.roles.projector-enabled=true` 时注册；Commerce Outbox 指标只在 `citycopilot.commerce.outbox-relay-enabled=true` 时注册。生产 profile 默认关闭这两个角色。Commerce 的 `rocketmq-enabled=false` 会停止发布，但仍可能存在待发布事实。订单完成采样在所有 Commerce 实例运行，不依赖消费者或 Relay 开关，因此 API-only 实例也应暴露订单完成指标。
+Core 指标只在 `citycopilot.projection.roles.projector-enabled=true` 时注册；Commerce Outbox 指标只在 `citycopilot.commerce.outbox-relay-enabled=true` 时注册。生产 profile 默认关闭这两个角色。Commerce 的 `kafka-enabled=false` 会停止发布，但仍可能存在待发布事实。订单完成采样在所有 Commerce 实例运行，不依赖消费者或 Relay 开关，因此 API-only 实例也应暴露订单完成指标。
 
 多个实例读取同一张队列表，数量和年龄都不能按实例求和。规则对共享队列取 `max`；不同数据库/租户应分成不同 job 或增加队列身份标签后相应分组。Core 年龄告警只采用仍在成功抓取且采样新鲜的实例；不能把未采样、旧样本或 `NaN` 解释为零积压。
 
@@ -26,7 +26,7 @@ Core 指标只在 `citycopilot.projection.roles.projector-enabled=true` 时注�
 <a id="commerce-outbox"></a>
 ## Commerce 事件发布
 
-1. 检查实际 Relay 角色、RocketMQ 发布开关及日志 `Unable to relay Commerce outbox event`。在 **Commerce 数据库**执行有界只读查询，确认事件状态、重试时间和失败原因：
+1. 检查实际 Relay 角色、Kafka 发布开关及日志 `Unable to relay Commerce outbox event`。在 **Commerce 数据库**执行有界只读查询，确认事件状态、重试时间和失败原因：
 
 ```sql
 SELECT event_id, event_type, status, attempts, next_attempt_at,
@@ -36,7 +36,7 @@ WHERE status IN ('READY','FAILED','CLAIMED')
 ORDER BY created_at LIMIT 20;
 ```
 
-2. 按 `last_error` 修复数据库连接、RocketMQ Proxy/Broker、topic、TLS 或凭据配置；保持原 `event_id` 和持久化正文。恢复后 [CommerceOutboxRelay](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOutboxRelay.java) 会按退避继续处理 READY/FAILED，并接管过期 CLAIMED；无需手工改状态或重建事件。
+2. 按 `last_error` 修复数据库连接、Kafka 节点、topic、ISR（`NotEnoughReplicas` 表示分区 leader 还在但同步副本少于 `min.insync.replicas`；`Expiring N record(s) ... ms has passed since batch creation` 表示分区 leader 不可达，常见于多个节点同时宕机）或连接配置；保持原 `event_id` 和持久化正文。恢复后 [CommerceOutboxRelay](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOutboxRelay.java) 会按退避继续处理 READY/FAILED，并接管过期 CLAIMED；无需手工改状态或重建事件。
 3. 确认最老事件进入 PUBLISHED、`citycopilot_commerce_outbox_unpublished` 下降且年龄告警解除。订单命令的 `commerce_dead_letter` 是另一条恢复链路，不能用它的重放接口处理 Outbox 事件。
 
 <a id="shop-projection"></a>
@@ -58,7 +58,7 @@ ORDER BY created_at LIMIT 20;
 <a id="order-completion"></a>
 ## 订单持久化完成
 
-[订单完成采样器](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOrderCompletionMetrics.java)用一个 SQL 语句读取已提交的准入账本与订单。受理请求、重复消费和恢复调用不会直接累加完成计数；重启后从数据库重新取样。它只观察本服务的 MySQL 事实，不证明 RocketMQ 已发布、Core 已投影、用户已收到响应或支付完成。
+[订单完成采样器](../../backend/commerce-service/src/main/java/com/citycopilot/commerce/CommerceOrderCompletionMetrics.java)用一个 SQL 语句读取已提交的准入账本与订单。受理请求、重复消费和恢复调用不会直接累加完成计数；重启后从数据库重新取样。它只观察本服务的 MySQL 事实，不证明 Kafka 已发布、Core 已投影、用户已收到响应或支付完成。
 
 | Prometheus 指标 | 口径 |
 |---|---|
@@ -90,25 +90,20 @@ ORDER BY accepted_at, order_id LIMIT 20;
 
 采样依赖 [Commerce V7 索引迁移](../../deploy/mysql/commerce/V7__order_completion_metrics_indexes.sql)：近期查询按受理时间范围扫描，订单按主键连接；全量积压按状态索引扫描。新增索引的线上构建窗口、空间与执行计划仍需在目标数据库评估，不通过缩短观察窗口隐藏长期积压。
 
-<a id="broker-consumer-lag"></a>
-## Broker 消费组积压
+<a id="kafka-consumer-lag"></a>
+## Kafka 消费积压
 
-[Broker 配置](../../deploy/rocketmq/broker.conf)复用 RocketMQ 内建 Prometheus exporter；配置键以 [RocketMQ 5.5.0 BrokerConfig](https://github.com/apache/rocketmq/blob/rocketmq-all-5.5.0/common/src/main/java/org/apache/rocketmq/common/BrokerConfig.java)为依据。它在容器内监听 `5557/metrics`，Compose 没有新增宿主机端口映射，也没有新增 exporter 或 Prometheus 服务。监控进程必须加入 Compose 的 `citycopilot` 网络（实际网络名含项目名前缀），或使用能解析并到达 Broker 的等效私网地址；宿主机不能直接假定 `rocketmq-broker` DNS 可用。生产仅允许监控网络访问该端点。
-
-`broker_metrics_role="true"` 表示 target 应暴露 Broker 原生指标，不会启用 Broker 或应用消费者。当前目标对应单个 Broker；扩容后逐个配置实际服务消息的 Broker，核对主从角色，不能把代理或重复副本当成独立分片求和。现有规则按 `cluster/node_id/topic/consumer_group/is_retry` 分开告警，以 `max` 去掉同一身份的重复抓取，保留普通消息和重试消息的差异；它判断单 Broker 积压，不是集群总量。规则中的消费组选择器须随实际消费组命名调整，不能静默漏掉改名后的组。
+积压取自 Core 应用自身的 Kafka 客户端指标：Spring Boot 把消费者的 `records-lag-max` 暴露到 `/actuator/prometheus`，名称为 `kafka_consumer_fetch_manager_records_lag_max`，标签 `client_id` 对应具体消费者线程（如 `consumer-citycopilot-event-audit-v1-1`）。不额外部署 exporter，也不抓取 broker。
 
 | Prometheus 指标 | 单位与口径 |
 |---|---|
-| `rocketmq_consumer_lag_messages` | Broker 计算的消费组积压数量，Gauge；不是生产计数或业务失败次数 |
-| `rocketmq_consumer_lag_latency_milliseconds` | 最早未确认消息就绪至当前时刻的延迟，毫秒；不是事件 occurredAt 到应用事务提交的延迟 |
+| `kafka_consumer_fetch_manager_records_lag_max` | 该消费者客户端在其分到的分区上、最近采样窗口内的最大积压条数；Gauge |
 
-指标基础名称与标签见 [5.5.0 BrokerMetricsConstant](https://github.com/apache/rocketmq/blob/rocketmq-all-5.5.0/broker/src/main/java/org/apache/rocketmq/broker/metrics/BrokerMetricsConstant.java)，注册与 `milliseconds` 单位见 [5.5.0 BrokerMetricsManager](https://github.com/apache/rocketmq/blob/rocketmq-all-5.5.0/broker/src/main/java/org/apache/rocketmq/broker/metrics/BrokerMetricsManager.java)。Prometheus 导出会附加单位后缀；[Apache Dashboard 的原生 5.x 指标修正](https://github.com/apache/rocketmq-dashboard/pull/2838)明确使用带 `_milliseconds` 的名称，不能直接采用概览文档中的无后缀仪表名称。就绪、处理中和未确认的区别见[官方指标口径](https://rocketmq.apache.org/docs/observability/01metrics/)。
+同一消费组内各客户端分到的分区互斥，规则对客户端取 `max`，不相加。这个指标只在消费者在线并完成分区分配后才有；消费者全部离线时没有时间序列，告警不会触发，所以“没有告警”不等于零积压，需要同时看 `CityCopilotTargetDown`，或在 broker 侧用 `kafka-consumer-groups.sh --describe --group <组名>` 核对。
 
-这些观测不证明消息业务处理成功，也不是永久精确的业务总账。初次订阅、消费组离线或订阅信息缺失时，不能把**没有时间序列**或告警解除解释为零积压；`up=1` 只说明端点可抓取，不能证明每个预期消费组都被覆盖。部署验收须核对实际审计消费组与 topic/tag，检查在线、离线、普通及重试消息的指标覆盖，再和源 Outbox、应用 Inbox/投影结果对照。尚未有数据的组保留“未知”，不能用默认零补齐。
-
-1. 抓取失败：先在 Prometheus `/targets` 检查错误与 Broker 日志，核对私网 DNS/路由、实际 exporter 配置、监听端口和访问限制；本端点是 `/metrics`，不是应用的 `/actuator/prometheus`。不通过开放公网端口解决内网接入问题。
-2. 积压或延迟过高：按告警中的 cluster、node_id、topic、consumer_group、is_retry 定位实际订阅；检查消费者启动、连接、重投和数据库依赖。审计组 ACK 只代表审计 Inbox 登记完成，不代表业务处理完成。
-3. 恢复后同时核对新鲜 Broker 样本下降、原 eventId 的 Inbox 记录。不要重置消费位点、删除 topic、清空 Inbox 或更换 eventId 来消除告警。转入死信的事件仍需单独处置，积压下降并不证明已修复。
+1. 积压持续过高：在任一 Kafka 节点执行 `kafka-consumer-groups.sh --bootstrap-server kafka-1:9092 --describe --group citycopilot-event-audit-v1`，看各分区 LAG 和分配到的消费者；检查 Core 日志里的消费失败、退避重试和数据库依赖。
+2. 失败消息在有限次重试后转入 `<topic>.DLT`，不会无限阻塞分区。死信主题需要单独处置：确认原因后用原始字节重新投递，保持原 eventId，由 Inbox 去重。
+3. 恢复后核对积压下降和原 eventId 的 Inbox 记录。不要重置消费位点、删除 topic、清空 Inbox 或更换 eventId 来消除告警。
 
 上述配置不等于监控已部署；目标镜像、端点实际导出名称/标签、消费组离线与重试语义、规则触发恢复及通知接收都属于发布验收范围。覆盖不到的消费组须继续用原生管理信息核对，不能靠应用收到消息的时间推断 Broker 无积压。
 

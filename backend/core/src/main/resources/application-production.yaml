@@ -17,9 +17,6 @@ spring:
     redis:
       connect-timeout: "${CITYCOPILOT_REDIS_CONNECT_TIMEOUT:1s}"
       timeout: "${CITYCOPILOT_REDIS_COMMAND_TIMEOUT:1s}"
-      cluster:
-        nodes: "${CITYCOPILOT_REDIS_CLUSTER_NODES}"
-        max-redirects: "${CITYCOPILOT_REDIS_CLUSTER_MAX_REDIRECTS:5}"
       lettuce:
         shutdown-timeout: 100ms
         pool:
@@ -46,6 +43,9 @@ citycopilot:
     reconcile-enabled: "${CITYCOPILOT_GEO_RECONCILE_ENABLED:false}"
   upload:
     enabled: "${CITYCOPILOT_UPLOAD_ENABLED:false}"
+  security:
+    # 默认不写验证码日志；接入短信通道前的单机演示部署可用环境变量临时打开。
+    log-login-codes: "${CITYCOPILOT_LOG_LOGIN_CODES:false}"
 
 management:
   endpoint:
@@ -58,3 +58,11 @@ management:
           include: livenessState,ping
         readiness:
           include: readinessState,db,redis
+
+logging:
+  # 生产输出 ECS JSON，MDC 中的 requestId 作为独立字段，便于日志平台按请求检索。
+  structured:
+    format:
+      console: ecs
+  level:
+    com.citycopilot.core: info

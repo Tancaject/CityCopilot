@@ -193,7 +193,8 @@ public class CommerceVoucherService {
                     SET stock=COALESCE(?,stock),
                         begin_time=COALESCE(?,begin_time),
                         end_time=COALESCE(?,end_time),
-                        version=version+1
+                        version=version+1,
+                        redis_archived_at=NULL
                     WHERE voucher_id=?
                     """,
                     request.containsKey("stock") ? number(request.get("stock"), 0) : null,

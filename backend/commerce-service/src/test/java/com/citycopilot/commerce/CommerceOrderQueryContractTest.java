@@ -88,6 +88,8 @@ class CommerceOrderQueryContractTest {
         doAnswer(call -> List.of(((RowMapper<?>) call.getArgument(1)).mapRow(row, 0)))
                 .when(jdbc).query(anyString(), any(RowMapper.class), any(Object[].class));
         when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+        when(jdbc.queryForMap(contains("SELECT shop_id,voucher_id"), any(Object[].class)))
+                .thenReturn(java.util.Map.of("shop_id", 1L, "voucher_id", 10L));
         TransactionTemplate transactions = mock(TransactionTemplate.class);
         when(transactions.execute(any())).thenAnswer(call ->
                 ((TransactionCallback<?>) call.getArgument(0)).doInTransaction(new SimpleTransactionStatus()));
@@ -115,6 +117,8 @@ class CommerceOrderQueryContractTest {
         doAnswer(call -> List.of(((RowMapper<?>) call.getArgument(1)).mapRow(row, 0)))
                 .when(jdbc).query(anyString(), any(RowMapper.class), any(Object[].class));
         when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
+        when(jdbc.queryForMap(contains("SELECT shop_id,voucher_id"), any(Object[].class)))
+                .thenReturn(java.util.Map.of("shop_id", 1L, "voucher_id", 10L));
         TransactionTemplate transactions = mock(TransactionTemplate.class);
         when(transactions.execute(any())).thenAnswer(call ->
                 ((TransactionCallback<?>) call.getArgument(0)).doInTransaction(new SimpleTransactionStatus()));

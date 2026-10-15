@@ -22,7 +22,6 @@ import com.citycopilot.core.service.IUserService;
 import com.citycopilot.core.utils.RegexUtils;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -166,22 +165,28 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     }
 
     @Override
-    public Result sendCode(String phone, HttpSession session) {
+    public Result sendCode(String phone, String clientIp) {
         if (RegexUtils.isPhoneInvalid(phone)){
             return Result.fail("USER_PHONE_INVALID", "手机号格式错误！");
         }
-        if (isLoginCodeRateLimited(phone)) {
+        // 同时按手机号和来源 IP 限流：前者防止轰炸单个号码，后者防止一个来源轮换号码刷量。
+        if (overLimit(LOGIN_CODE_RATE_LIMIT_KEY + phone, securityProperties.getLoginCodeRateLimitPerPhone())
+                || overLimit(LOGIN_CODE_IP_RATE_LIMIT_KEY + clientIp, securityProperties.getLoginCodeRateLimitPerIp())) {
             return Result.fail("LOGIN_CODE_RATE_LIMITED", "验证码发送过于频繁，请稍后再试");
         }
         String code= RandomUtil.randomNumbers(6);
         // 验证码设置独立 TTL，过期后即使客户端仍持有旧会话也不能登录。
         stringRedisTemplate.opsForValue().set(LOGIN_CODE_KEY+phone,code,LOGIN_CODE_TTL, TimeUnit.MINUTES);
-        log.debug("验证码发送成功，验证码:{}",code);
+        stringRedisTemplate.delete(LOGIN_CODE_ATTEMPTS_KEY + phone);
+        if (securityProperties.isLogLoginCodes()) {
+            // 仅供尚未接入短信/邮件渠道的本地开发使用，生产配置必须关闭。
+            log.info("Login code for {}: {}", phone, code);
+        }
         return Result.ok();
     }
 
     @Override
-    public Result login(LoginFormDTO loginForm, HttpSession session) {
+    public Result login(LoginFormDTO loginForm) {
         String phone =loginForm.getPhone();
         if (RegexUtils.isPhoneInvalid(loginForm.getPhone())){
             return Result.fail("USER_PHONE_INVALID", "手机号格式错误！");
@@ -190,9 +195,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String cacheCode = stringRedisTemplate.opsForValue().get(LOGIN_CODE_KEY+phone);
         String code=loginForm.getCode();
         if (cacheCode == null || !cacheCode.equals(code)) {
-            return Result.fail("LOGIN_CODE_INVALID", "验证码不一致！");
+            if (cacheCode != null) {
+                // 每个验证码只允许有限次猜测，超过后作废，必须重新发送。
+                Long attempts = stringRedisTemplate.opsForValue().increment(LOGIN_CODE_ATTEMPTS_KEY + phone);
+                stringRedisTemplate.expire(LOGIN_CODE_ATTEMPTS_KEY + phone, LOGIN_CODE_TTL, TimeUnit.MINUTES);
+                if (attempts != null && attempts >= securityProperties.getLoginCodeMaxAttempts()) {
+                    stringRedisTemplate.delete(List.of(LOGIN_CODE_KEY + phone, LOGIN_CODE_ATTEMPTS_KEY + phone));
+                }
+            }
+            return Result.fail("LOGIN_CODE_INVALID", "验证码错误或已失效，请重新获取");
         }
-        stringRedisTemplate.delete(LOGIN_CODE_KEY + phone);
+        stringRedisTemplate.delete(List.of(LOGIN_CODE_KEY + phone, LOGIN_CODE_ATTEMPTS_KEY + phone));
         User user = query().eq("phone", phone).one();
         if (user == null) {
             user = createUserWithPhone(phone);
@@ -243,29 +256,19 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     }
 
     /**
-     * 使用按分钟分桶的 Redis 计数器限制单手机号验证码请求。
+     * 按分钟分桶计数；Redis 异常直接抛出，限流不可用时拒绝发码而不是放行。
      *
-     * <p>Redis 异常时放行验证码主流程，避免缓存故障完全阻断登录。</p>
-     *
-     * @param phone 待检查手机号
-     * @return {@code true} 表示当前分钟已超过配置上限
+     * @param keyPrefix 手机号或来源 IP 维度的计数键前缀
+     * @param limit 每分钟允许次数
+     * @return {@code true} 表示当前分钟已超过上限
      */
-    private boolean isLoginCodeRateLimited(String phone) {
-        Integer limit = securityProperties == null ? null : securityProperties.getLoginCodeRateLimitPerPhone();
-        if (limit == null || limit <= 0) {
-            return false;
-        }
+    private boolean overLimit(String keyPrefix, int limit) {
         String bucket = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmm"));
-        String key = LOGIN_CODE_RATE_LIMIT_KEY + phone + ":" + bucket;
-        try {
-            Long count = stringRedisTemplate.opsForValue().increment(key);
-            if (Long.valueOf(1L).equals(count)) {
-                stringRedisTemplate.expire(key, 70, TimeUnit.SECONDS);
-            }
-            return count != null && count > limit;
-        } catch (Exception error) {
-            log.debug("Login code rate limit skipped: {}", error.getMessage());
-            return false;
+        String key = keyPrefix + ":" + bucket;
+        Long count = stringRedisTemplate.opsForValue().increment(key);
+        if (Long.valueOf(1L).equals(count)) {
+            stringRedisTemplate.expire(key, 70, TimeUnit.SECONDS);
         }
+        return count != null && count > limit;
     }
 }

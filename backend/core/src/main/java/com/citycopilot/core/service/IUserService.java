@@ -6,7 +6,6 @@ import com.citycopilot.core.dto.UserDTO;
 import java.util.Collection;
 import java.util.List;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
 
 /**
  * 用户认证与每日签到服务。
@@ -31,19 +30,18 @@ public interface IUserService {
      * 为手机号生成并发送登录验证码，同时建立频率限制。
      *
      * @param phone 待验证手机号
-     * @param session 兼容旧调用链的 HTTP 会话，当前验证码状态以 Redis 为准
+     * @param clientIp 请求来源 IP，用于按来源限流
      * @return 发送结果
      */
-    Result sendCode(String phone, HttpSession session);
+    Result sendCode(String phone, String clientIp);
 
     /**
      * 校验验证码并签发登录令牌；首次登录会自动创建用户。
      *
      * @param loginForm 手机号和验证码
-     * @param session 兼容旧调用链的 HTTP 会话
      * @return 含登录令牌的结果
      */
-    Result login(LoginFormDTO loginForm, HttpSession session);
+    Result login(LoginFormDTO loginForm);
 
     /**
      * 删除请求中令牌对应的 Redis 登录态。

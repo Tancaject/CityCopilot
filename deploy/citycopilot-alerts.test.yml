@@ -98,3 +98,13 @@ tests:
       - {"eval_time": "6m", "alertname": "CityCopilotOrderCompletionSampleStale", "exp_alerts": []}
       - {"eval_time": "5m", "alertname": "CityCopilotOrderCompletionAge", "exp_alerts": []}
       - {"eval_time": "4m", "alertname": "CityCopilotAdmissionRepairRequired", "exp_alerts": []}
+  - name: "kafka consumer lag uses the worst client and clears after catch-up"
+    interval: 1m
+    input_series:
+      - {"series": "up{job=\"citycopilot-core\",instance=\"core-a:8081\"}", "values": "1x10"}
+      - {"series": "kafka_consumer_fetch_manager_records_lag_max{job=\"citycopilot-core\",instance=\"core-a:8081\",client_id=\"consumer-citycopilot-event-audit-v1-1\"}", "values": "10 10 5000x5 0x2"}
+      - {"series": "kafka_consumer_fetch_manager_records_lag_max{job=\"citycopilot-core\",instance=\"core-a:8081\",client_id=\"consumer-citycopilot-event-audit-v1-2\"}", "values": "600x10"}
+    alert_rule_test:
+      - {"eval_time": "6m", "alertname": "CityCopilotKafkaConsumerLag", "exp_alerts": []}
+      - {"eval_time": "7m", "alertname": "CityCopilotKafkaConsumerLag", "exp_alerts": [{"exp_labels": {"job": "citycopilot-core", "queue": "kafka-events", "severity": "warning"}, "exp_annotations": {"summary": "Kafka 事件消费积压持续过高", "runbook_url": "https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#kafka-consumer-lag"}}]}
+      - {"eval_time": "8m", "alertname": "CityCopilotKafkaConsumerLag", "exp_alerts": []}

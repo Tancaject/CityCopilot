@@ -9,7 +9,7 @@ spring:
   jackson:
     use-jackson2-defaults: true
   datasource:
-    url: ${CITYCOPILOT_COMMERCE_DB_URL:jdbc:mysql://127.0.0.1:3309/citycopilot_commerce?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true}
+    url: ${CITYCOPILOT_COMMERCE_DB_URL:jdbc:mysql://127.0.0.1:3309/citycopilot_commerce?useSSL=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true}
     username: ${CITYCOPILOT_COMMERCE_DB_USERNAME:citycopilot_commerce}
     password: ${CITYCOPILOT_COMMERCE_DB_PASSWORD:}
   sql:
@@ -19,10 +19,22 @@ spring:
     enabled: false
   data:
     redis:
-      host: ${CITYCOPILOT_REDIS_HOST:127.0.0.1}
-      port: ${CITYCOPILOT_REDIS_PORT:6380}
+      # Commerce 使用独立的交易 Redis（compose 中的 commerce-redis），不与 Core 缓存共用。
+      host: ${CITYCOPILOT_COMMERCE_REDIS_HOST:127.0.0.1}
+      port: ${CITYCOPILOT_COMMERCE_REDIS_PORT:6381}
       username: ${CITYCOPILOT_COMMERCE_REDIS_USERNAME:commerce}
       password: ${CITYCOPILOT_COMMERCE_REDIS_PASSWORD:${CITYCOPILOT_REDIS_PASSWORD:}}
+  kafka:
+    bootstrap-servers: ${CITYCOPILOT_KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:19092,127.0.0.1:19093,127.0.0.1:19094}
+    producer:
+      # 与 topic 的 min.insync.replicas=2 配合：至少两个副本写入才算成功，挂一个节点不丢已确认消息。
+      acks: all
+      properties:
+        enable.idempotence: true
+        # 集群不可用时让发送尽快失败，交给 Outbox 退避重试，而不是把调度线程卡住 60 秒。
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
 
 citycopilot:
   booking:
@@ -69,11 +81,7 @@ citycopilot:
     metadata-update-fence-ttl-ms: ${CITYCOPILOT_COMMERCE_METADATA_UPDATE_FENCE_TTL_MS:300000}
     stream-poll-ms: ${CITYCOPILOT_COMMERCE_STREAM_POLL_MS:50}
     place-base-url: ${CITYCOPILOT_PLACE_BASE_URL:http://127.0.0.1:8081}
-    rocketmq-enabled: ${CITYCOPILOT_ROCKETMQ_ENABLED:true}
-    rocketmq-endpoints: ${CITYCOPILOT_ROCKETMQ_ENDPOINTS:127.0.0.1:18081}
-    rocketmq-ssl-enabled: ${CITYCOPILOT_ROCKETMQ_SSL_ENABLED:false}
-    rocketmq-access-key: ${CITYCOPILOT_ROCKETMQ_ACCESS_KEY:}
-    rocketmq-secret-key: ${CITYCOPILOT_ROCKETMQ_SECRET_KEY:}
+    kafka-enabled: ${CITYCOPILOT_KAFKA_ENABLED:true}
 
 management:
   endpoints:
@@ -86,5 +94,7 @@ management:
         enabled: true
 
 logging:
+  pattern:
+    correlation: "[%X{requestId:-}] "
   level:
     root: INFO

@@ -13,7 +13,6 @@ import org.springframework.web.bind.annotation.*;
 
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpSession;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 
@@ -43,24 +42,24 @@ public class UserController {
      * 向指定手机号发送登录验证码。
      *
      * @param phone 接收验证码的手机号
-     * @param session 兼容会话参数；验证码状态的实际保存由用户服务决定
+     * @param request 用于取得经可信代理处理后的客户端地址
      * @return 发送成功或手机号校验、频率限制等失败结果
      */
     @PostMapping("code")
-    public Result sendCode(@RequestParam("phone") String phone, HttpSession session) {
-        return userService.sendCode(phone,session);
+    public Result sendCode(@RequestParam("phone") String phone, HttpServletRequest request) {
+        // 经 server.forward-headers-strategy 处理后，remoteAddr 是可信代理转发的真实客户端地址。
+        return userService.sendCode(phone, request.getRemoteAddr());
     }
 
     /**
      * 使用验证码或密码登录，并创建后续请求使用的认证状态。
      *
      * @param loginForm 手机号及验证码或密码
-     * @param session 兼容会话参数
      * @return 登录令牌或认证失败结果
      */
     @PostMapping("/login")
-    public Result login(@RequestBody LoginFormDTO loginForm, HttpSession session){
-        return userService.login(loginForm,session) ;
+    public Result login(@RequestBody LoginFormDTO loginForm){
+        return userService.login(loginForm);
     }
 
     /**

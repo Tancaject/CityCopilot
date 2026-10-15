@@ -1,12 +1,12 @@
 # 预约负载与消息故障验收
 
-[预约实施计划](../architecture/booking-pricing-implementation-plan.md)定义业务边界和验收范围；本文件说明如何重放 Commerce HTTP 压测。脚本使用真实 MySQL、现有 Core 商家归属接口及真实 RocketMQ，覆盖免费预约、线下结算。报价与优惠券事务由 `BookingLifecycleIT` 单独验证。
+[预约实施计划](../architecture/booking-pricing-implementation-plan.md)定义业务边界和验收范围；本文件说明如何重放 Commerce HTTP 压测。脚本使用真实 MySQL、现有 Core 商家归属接口及真实 Kafka，覆盖免费预约、线下结算。报价与优惠券事务由 `BookingLifecycleIT` 单独验证。
 
 ## 准备
 
 - 使用专用本地 MySQL 数据库，名称必须以 `_load_test` 结尾。按 [数据库迁移运行手册](../database-migrations.md#专用测试数据库)使用 Commerce Flyway 任务初始化，负载脚本的连接主机只能是 loopback。每次实验使用没有预约数据的库；脚本不会删除已有数据。
 - 将已构建的 Commerce 可执行 JAR 复制到独立运行目录后启动，避免后续 Maven 重新打包替换正在使用的 JAR。数据库指向该库，Place 地址指向实际 Core。使用 Core 中存在的商家及其所属 shop，CSV 第一列提供不同的真实用户 ID，可带 `userId` 表头。
-- 保持预约新入口开启、Outbox Relay 开启。使用 [`booking-mq-compose.yaml`](../../tools/loadtest/booking-mq-compose.yaml) 启动专用消息实例，并将该 Commerce 的 RocketMQ endpoint 指向其中公开的端口。其他业务实例继续使用自己的消息配置。
+- 保持预约新入口开启、Outbox Relay 开启。使用 [`booking-mq-compose.yaml`](../../tools/loadtest/booking-mq-compose.yaml) 启动专用消息实例，并用 `--spring.kafka.bootstrap-servers=127.0.0.1:18089` 让该 Commerce 连接其中的单节点 Kafka。其他业务实例继续使用自己的消息配置。
 - Python 只使用标准库；MySQL CLI 必须可用。服务令牌由环境变量传入，数据库口令也通过环境变量传给子进程，不写入报告。
 
 ```powershell

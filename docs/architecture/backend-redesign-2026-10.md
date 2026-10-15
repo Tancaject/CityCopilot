@@ -20,7 +20,7 @@
 | 秒杀准入 | 单个 Lua 脚本原子校验活动窗口、库存、一人一单和幂等键，同时预扣库存并写入 Stream |
 | 异步落单 | Redis Stream 消费组；订单、恢复记录和 Outbox 同一个 MySQL 事务提交；进程重启后认领未确认消息 |
 | 幂等 | 准入账本持久化每次准入；结果不确定时，用同一个幂等键重试会返回同一个订单 |
-| 可靠消息 | 事务 Outbox 加抢占和 fencing，发布到 RocketMQ；消费端用 Inbox 去重；死信可查询、可幂等重放 |
+| 可靠消息 | 事务 Outbox 加抢占和 fencing，发布到 Kafka（3 节点）；消费端用 Inbox 去重；死信可查询、可幂等重放 |
 | 一致性对账 | 定时比对 MySQL 和 Redis 库存，发现偏差先封住新准入，再由管理员带证据哈希修复 |
 | 预约 | MySQL 条件更新、统一锁序、幂等命令；暂留到期由扫表任务释放 |
 | 订单号 | MySQL 号段分配 |
@@ -60,7 +60,7 @@ flowchart LR
     C1 & C2 --> CDB[(Core MySQL)]
     M1 & M2 --> MR[(Redis<br/>准入 / Stream / 售罄广播)]
     M1 & M2 --> MDB[(Commerce MySQL)]
-    M1 & M2 -->|Outbox Relay| MQ[(RocketMQ)]
+    M1 & M2 -->|Outbox Relay| MQ[(Kafka)]
     MQ -->|Inbox 去重| C1 & C2
     PAY[模拟支付渠道] -->|异步回调 + HMAC| M1 & M2
 ```
@@ -69,13 +69,13 @@ flowchart LR
 - **nginx**：按 IP 限流，挡脚本流量；把请求负载均衡到多个 Core。
 - **Core**：身份认证、权限、用户维度限流、店铺和社区读写、对外 API。交易请求一律转发给 Commerce；Commerce 不可用时直接失败，不回退本地写入。
 - **Commerce**：券、订单、秒杀、预约和支付的唯一写入方，负责异步落单、关单、对账和 Outbox。
-- **RocketMQ**：只承载跨服务领域事件。Redis Stream 只承载 Commerce 内部的订单命令。
+- **Kafka**（2026-10-15 起替代 RocketMQ，见 ADR-0012）：只承载跨服务领域事件。Redis Stream 只承载 Commerce 内部的订单命令。
 
 ## 4. P0 设计
 
 ### 4.1 订单超时关单
 
-**选型**：用带索引的扫表关单，不用 RocketMQ 延时消息。
+**选型**：用带索引的扫表关单，不用 MQ 延时消息（Kafka 也没有原生延时消息）。
 
 理由：
 - 延时消息可能丢失，最终仍需扫表兜底，所以扫表才是事实来源；两套机制并存只会多一个出错点。
@@ -208,7 +208,7 @@ flowchart LR
 |---|---|---|
 | 秒杀下单 | MySQL 准入账本 → Redis 预扣与 Stream → MySQL 落单事务，最终一致 + 对账 | 准入账本同步持久化请求身份，订单落库异步执行 |
 | 预约 + 优惠券 + 报价 | Commerce 单库本地事务 | 同一个服务、同一个库，不需要分布式事务 |
-| 订单状态变化通知 Core | Outbox + RocketMQ + Inbox | 跨服务只要求最终一致 |
+| 订单状态变化通知 Core | Outbox + Kafka + Inbox；Core 据此维护店铺销量（ADR-0012） | 跨服务只要求最终一致 |
 | 支付回调与订单 | 状态机 + 条件更新 + 幂等 | 用同一行数据裁决竞态，不用分布式锁 |
 | 不采用 | Seata AT、XA | 交易已经集中在 Commerce 单库，引入全局事务只增加锁竞争和运维成本 |
 

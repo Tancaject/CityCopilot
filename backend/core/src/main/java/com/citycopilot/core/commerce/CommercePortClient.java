@@ -148,7 +148,7 @@ public class CommercePortClient {
                     .body(new ParameterizedTypeReference<>() {});
             return Result.ok(response == null ? List.of() : response);
         } catch (RestClientResponseException error) {
-            return failure(error);
+            throw failure(error);
         } catch (RestClientException error) {
             return unavailable();
         }
@@ -173,7 +173,7 @@ public class CommercePortClient {
                     .body(OrderView.class);
             return Result.ok(response);
         } catch (RestClientResponseException error) {
-            return failure(error);
+            throw failure(error);
         } catch (RestClientException error) {
             return unavailable();
         }
@@ -201,7 +201,7 @@ public class CommercePortClient {
                     .body(OrderView.class);
             return Result.ok(response);
         } catch (RestClientResponseException error) {
-            return failure(error);
+            throw failure(error);
         } catch (RestClientException error) {
             return unavailable();
         }
@@ -231,7 +231,7 @@ public class CommercePortClient {
                     .body(new ParameterizedTypeReference<>() {});
             return Result.ok(response == null ? List.of() : response);
         } catch (RestClientResponseException error) {
-            return failure(error);
+            throw failure(error);
         } catch (RestClientException error) {
             return unavailable();
         }
@@ -256,7 +256,7 @@ public class CommercePortClient {
                     .body(VoucherCreated.class);
             return Result.ok(response == null ? null : response.id());
         } catch (RestClientResponseException error) {
-            return failure(error);
+            throw failure(error);
         } catch (RestClientException error) {
             return unavailable();
         }
@@ -282,7 +282,7 @@ public class CommercePortClient {
                     .body(VoucherView.class);
             return Result.ok(response);
         } catch (RestClientResponseException error) {
-            return failure(error);
+            throw failure(error);
         } catch (RestClientException error) {
             return unavailable();
         }
@@ -366,7 +366,7 @@ public class CommercePortClient {
                     .body(OperationsSummary.class);
             return Result.ok(response);
         } catch (RestClientResponseException error) {
-            return failure(error);
+            throw failure(error);
         } catch (RestClientException error) {
             return unavailable();
         }
@@ -482,14 +482,16 @@ public class CommercePortClient {
     }
 
     /**
-     * 将 Commerce HTTP 错误体映射为 Core 兼容失败包装，不改变该接口已有的 HTTP 状态约定。
+     * 保留 Commerce 的 HTTP 状态、错误码和 Retry-After，由全局异常处理写回 Core 调用方。
      *
      * @param error HTTP 响应异常
-     * @return Core 失败结果
+     * @return 携带上游状态的异常
      */
-    private Result failure(RestClientResponseException error) {
+    private CommerceHttpException failure(RestClientResponseException error) {
         CommerceError body = errorBody(error);
-        return Result.fail(body.code(), body.message());
+        String retryAfter = error.getResponseHeaders() == null ? null
+                : error.getResponseHeaders().getFirst(HttpHeaders.RETRY_AFTER);
+        return new CommerceHttpException(error.getStatusCode().value(), body.code(), body.message(), retryAfter, error);
     }
 
     private CommerceError errorBody(RestClientResponseException error) {

@@ -21,6 +21,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -109,6 +110,22 @@ class DeadlineHttpRequestFactoryTest {
         }
         assertThat(requests.get()).isEqualTo(2);
         assertThat(capacity.availablePermits()).isEqualTo(1);
+    }
+
+    @Test void propagatesCurrentRequestIdToDownstream() throws Exception {
+        AtomicReference<String> received = new AtomicReference<>();
+        server.createContext("/rid", exchange -> {
+            received.set(exchange.getRequestHeaders().getFirst(RequestIdFilter.HEADER));
+            exchange.sendResponseHeaders(200, 2); exchange.getResponseBody().write("ok".getBytes()); exchange.close();
+        });
+        RestClient client = client(Duration.ofSeconds(3), new Semaphore(1));
+        org.slf4j.MDC.put(RequestIdFilter.MDC_KEY, "req-abc");
+        try (var ignored = RequestDeadline.open(Duration.ofSeconds(2), null)) {
+            assertThat(client.get().uri("/rid").retrieve().body(String.class)).isEqualTo("ok");
+        } finally {
+            org.slf4j.MDC.remove(RequestIdFilter.MDC_KEY);
+        }
+        assertThat(received.get()).isEqualTo("req-abc");
     }
 
     @Test void sequentialHopsConsumeOneDeadlineInsteadOfReceivingFreshTimeouts() throws Exception {

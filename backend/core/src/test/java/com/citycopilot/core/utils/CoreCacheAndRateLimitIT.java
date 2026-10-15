@@ -46,7 +46,7 @@ class CoreCacheAndRateLimitIT {
     private static final String SERVER = System.getenv("CITYCOPILOT_MIGRATION_TEST_URL");
     private static final String USER = System.getenv().getOrDefault("CITYCOPILOT_MIGRATION_TEST_USER", "root");
     private static final String PASSWORD = System.getenv().getOrDefault("CITYCOPILOT_MIGRATION_TEST_PASSWORD", "");
-    private static final String OPTIONS = "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC";
+    private static final String OPTIONS = "?useSSL=false&allowPublicKeyRetrieval=true&connectionTimeZone=LOCAL&forceConnectionTimeZoneToSession=true";
     private static final String DATABASE = "cc_cache_" + UUID.randomUUID().toString().replace("-", "");
     private static HikariDataSource pool;
     private static JdbcTemplate sql;

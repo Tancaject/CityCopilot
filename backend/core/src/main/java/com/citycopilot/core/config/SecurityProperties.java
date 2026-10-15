@@ -16,5 +16,11 @@ public class SecurityProperties {
     /** 角色到权限码集合的配置覆盖。 */
     private Map<String, Set<String>> rolePermissions = new LinkedHashMap<>();
     /** 单手机号在限流窗口内允许发送的验证码次数。 */
-    private Integer loginCodeRateLimitPerPhone = 3;
+    private int loginCodeRateLimitPerPhone = 3;
+    /** 单个来源 IP 每分钟允许发送的验证码次数。 */
+    private int loginCodeRateLimitPerIp = 20;
+    /** 单个验证码允许的错误尝试次数，超过后作废。 */
+    private int loginCodeMaxAttempts = 5;
+    /** 是否把验证码写入日志；只用于尚未接入下发渠道的本地开发。 */
+    private boolean logLoginCodes;
 }

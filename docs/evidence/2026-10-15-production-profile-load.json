@@ -1,0 +1,407 @@
+{
+  "runId": "redesign-5cba5f02ea4e",
+  "scenarios": {
+    "seckill": {
+      "requests": 1000,
+      "durationSeconds": 3.94,
+      "qps": 253.78,
+      "latencyMs": {
+        "samples": 1000,
+        "mean": 381.43,
+        "p50": 297.58,
+        "p95": 1134.08,
+        "p99": 1245.11,
+        "max": 1280.66
+      },
+      "accepted": 1000,
+      "httpStatuses": {
+        "202": 1000
+      },
+      "invariants": {
+        "users": 1000,
+        "active": 1000,
+        "ledger": 1000,
+        "orders": 1000,
+        "dbStock": 0,
+        "redisStock": 0
+      }
+    },
+    "shop-hotspot": {
+      "requests": 5000,
+      "durationSeconds": 3.947,
+      "qps": 1266.72,
+      "latencyMs": {
+        "samples": 5000,
+        "mean": 77.69,
+        "p50": 73.61,
+        "p95": 128.24,
+        "p99": 165.47,
+        "max": 265.42
+      },
+      "accepted": 5000,
+      "httpStatuses": {
+        "200": 5000
+      }
+    },
+    "shop-l1-redis-comparison-http": {
+      "requests": 5000,
+      "durationSeconds": 3.184,
+      "qps": 1570.35,
+      "latencyMs": {
+        "samples": 5000,
+        "mean": 55.88,
+        "p50": 54.94,
+        "p95": 96.02,
+        "p99": 116.17,
+        "max": 165.25
+      },
+      "accepted": 5000,
+      "httpStatuses": {
+        "200": 5000
+      }
+    },
+    "shop-l1-redis-comparison": {
+      "requestsPerArm": 5000,
+      "runningCore": 2,
+      "runningCommerce": 2,
+      "localCacheHttp": {
+        "targetKey": "cache:shop:1792031254756606",
+        "durationSeconds": 3.201,
+        "commands": {
+          "eval": 0,
+          "evalsha": 0,
+          "get": 2
+        },
+        "counting": "Only commands naming the fixture key; Lua subcommands included. PUBLISH, AUTH, MONITOR and barrier GET excluded."
+      },
+      "directRedisReference": {
+        "targetKey": "cache:shop:1792031254756606",
+        "durationSeconds": 0.251,
+        "commands": {
+          "eval": 0,
+          "evalsha": 0,
+          "get": 5000
+        },
+        "counting": "Only commands naming the fixture key; Lua subcommands included. PUBLISH, AUTH, MONITOR and barrier GET excluded."
+      },
+      "redisGetsPerHttpRequest": 0.0004,
+      "observedRedisGetQps": 0.6248047485160887,
+      "referenceRedisGetQpsAtSameHttpRate": 1562.0118712902217,
+      "redisGetReductionPercent": 99.96,
+      "scope": "Warm single-shop HTTP burst versus equal-count Redis GET reference. QPS comparison uses the same measured HTTP duration; pipelined GET throughput is not HTTP or production capacity. Expiry and same-key background reads remain in the observed count."
+    },
+    "sold-out-redis-comparison-normal": {
+      "requests": 64,
+      "durationSeconds": 0.064,
+      "qps": 998.01,
+      "latencyMs": {
+        "samples": 64,
+        "mean": 12.24,
+        "p50": 11.54,
+        "p95": 18.18,
+        "p99": 20.32,
+        "max": 20.32
+      },
+      "accepted": 0,
+      "httpStatuses": {
+        "409": 64
+      }
+    },
+    "sold-out-redis-comparison": {
+      "requestsPerArm": 64,
+      "runningCore": 2,
+      "runningCommerce": 2,
+      "normal": {
+        "http": {
+          "requests": 64,
+          "durationSeconds": 0.064,
+          "qps": 998.01,
+          "latencyMs": {
+            "samples": 64,
+            "mean": 12.24,
+            "p50": 11.54,
+            "p95": 18.18,
+            "p99": 20.32,
+            "max": 20.32
+          },
+          "accepted": 0,
+          "httpStatuses": {
+            "409": 64
+          }
+        },
+        "redis": {
+          "targetKey": "commerce:{commerce:v1:1:0}:seckill:stock:11266",
+          "durationSeconds": 0.065,
+          "commands": {
+            "eval": 0,
+            "evalsha": 0,
+            "get": 0
+          },
+          "counting": "Only commands naming the fixture key; Lua subcommands included. PUBLISH, AUTH, MONITOR and barrier GET excluded."
+        }
+      },
+      "invalidateBeforeEachRequest": {
+        "http": {
+          "requests": 64,
+          "httpLatencyMs": {
+            "samples": 64,
+            "mean": 55.93,
+            "p50": 53.26,
+            "p95": 89.79,
+            "p99": 92.82,
+            "max": 92.82
+          },
+          "invalidationPublishes": 64
+        },
+        "redis": {
+          "targetKey": "commerce:{commerce:v1:1:0}:seckill:stock:11266",
+          "durationSeconds": 16.789,
+          "commands": {
+            "eval": 64,
+            "evalsha": 0,
+            "get": 67
+          },
+          "counting": "Only commands naming the fixture key; Lua subcommands included. PUBLISH, AUTH, MONITOR and barrier GET excluded."
+        }
+      },
+      "luaCallsPerRequest": {
+        "normal": 0.0,
+        "invalidated": 1.0
+      },
+      "luaCallReductionPercent": 100.0,
+      "scope": "Normal concurrent sold-out burst versus serial requests with broadcast invalidation. Control publishes are excluded; this compares commands per request, not throughput. The one-second marker TTL remains active; same-key background GETs are reported unchanged."
+    },
+    "booking": {
+      "scenario": "hot-court",
+      "workflows": 1000,
+      "http_requests": 1001,
+      "concurrency": 100,
+      "duration_seconds": 3.25,
+      "workflows_per_second": 307.71,
+      "http_requests_per_second": 308.02,
+      "confirmed": 1,
+      "confirmed_units": 1,
+      "capacity_rejected": 999,
+      "unexpected": 0,
+      "business_codes": {
+        "BOOKING_SLOT_FULL": 999,
+        "BOOKING_CONFIRMED": 1
+      },
+      "workflow_latency_ms": {
+        "samples": 1000,
+        "mean": 308.2,
+        "p50": 289.67,
+        "p95": 499.65,
+        "p99": 581.9,
+        "max": 910.12
+      },
+      "hold_latency_ms": {
+        "samples": 1000,
+        "mean": 307.64,
+        "p50": 289.41,
+        "p95": 497.85,
+        "p99": 581.83,
+        "max": 910.05
+      },
+      "confirmation_latency_ms": {
+        "samples": 1,
+        "mean": 482.02,
+        "p50": 482.02,
+        "p95": 482.02,
+        "p99": 482.02,
+        "max": 482.02
+      },
+      "invariants": {
+        "held": 0,
+        "confirmed": 1,
+        "unitMismatches": 0,
+        "unpublishedOutbox": 0,
+        "capacityViolations": 0,
+        "occupancyMismatches": 0,
+        "missingVersionEvents": 0
+      }
+    },
+    "ip-limit": {
+      "requests": 200,
+      "durationSeconds": 0.155,
+      "qps": 1286.3,
+      "latencyMs": {
+        "samples": 200,
+        "mean": 10.36,
+        "p50": 10.12,
+        "p95": 15.36,
+        "p99": 16.87,
+        "max": 18.31
+      },
+      "accepted": 0,
+      "httpStatuses": {
+        "401": 43,
+        "429": 157
+      }
+    },
+    "two-instance-close": {
+      "users": 1000,
+      "active": 0,
+      "ledger": 1000,
+      "orders": 1000,
+      "dbStock": 1000,
+      "redisStock": 1000,
+      "recovery": {
+        "rows": 1000,
+        "restored": 1000
+      },
+      "runningCommerce": 2
+    },
+    "stream-kill": {
+      "requests": 1000,
+      "durationSeconds": 3.041,
+      "qps": 328.89,
+      "latencyMs": {
+        "samples": 1000,
+        "mean": 284.7,
+        "p50": 250.45,
+        "p95": 522.55,
+        "p99": 616.77,
+        "max": 890.8
+      },
+      "accepted": 950,
+      "httpStatuses": {
+        "202": 950,
+        "502": 50
+      },
+      "interruptedRequestsReplayed": 50,
+      "killedPendingOwner": "e60644234098-0d7b51fe",
+      "invariants": {
+        "users": 1000,
+        "active": 1000,
+        "ledger": 1000,
+        "orders": 1000,
+        "dbStock": 0,
+        "redisStock": 0
+      }
+    },
+    "outbox-kill": {
+      "acceptanceAttempts": [
+        {
+          "status": 504,
+          "code": "HTTP_504",
+          "latency_ms": 2005.9670000000551
+        },
+        {
+          "status": 202,
+          "code": "COMMERCE_ORDER_ACCEPTED",
+          "latency_ms": 88.16459999979998
+        }
+      ],
+      "eventId": "0396b07d-8737-4c3c-b465-70b14e8e5c4c",
+      "inboxUnchangedOnReplay": true,
+      "duplicateDeliveriesObserved": 1.0,
+      "invariants": {
+        "users": 1,
+        "active": 1,
+        "ledger": 1,
+        "orders": 1,
+        "dbStock": 0,
+        "redisStock": 0
+      }
+    },
+    "redis-restart": {
+      "outageHttpStatus": 503,
+      "fixtureStockLossInjected": true,
+      "invariants": {
+        "users": 1,
+        "active": 1,
+        "ledger": 1,
+        "orders": 1,
+        "dbStock": 1,
+        "redisStock": 1
+      }
+    }
+  },
+  "passed": true,
+  "capturedAtUtc": "2026-10-15T02:27:33.656758+00:00",
+  "mode": "load-and-faults",
+  "workload": {
+    "users": 1000,
+    "concurrency": 100,
+    "readRequests": 5000
+  },
+  "images": {
+    "commerce": [
+      "sha256:67da809264fa76559ca9c12228708547fad94ef6caed1ef941e99c01bac2fad4"
+    ],
+    "commerce-mysql": [
+      "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d"
+    ],
+    "commerce-redis": [
+      "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99"
+    ],
+    "core": [
+      "sha256:bf1e7138d66c70dab84b3acb847ba17eec9026aeb89542d61a4287bd7e053093"
+    ],
+    "mysql": [
+      "sha256:c592c15aaf4a1961e15d82eb31ea5987dda862d1c4b1e93424438c0e91dc1f8d"
+    ],
+    "redis": [
+      "sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99"
+    ],
+    "rocketmq-broker": [
+      "sha256:7e8f6c9dbd9df742ed26ba69c00d4ad69e2f86a56f3ca7782ff8144dd0798132"
+    ],
+    "rocketmq-proxy": [
+      "sha256:7e8f6c9dbd9df742ed26ba69c00d4ad69e2f86a56f3ca7782ff8144dd0798132"
+    ]
+  },
+  "brokerBudget": {
+    "containerBytes": 2147483648,
+    "jvmOptions": "-Xms512m -Xmx512m -Xmn192m -XX:MaxDirectMemorySize=768m"
+  },
+  "dockerResources": {
+    "cpus": 32,
+    "memoryBytes": 16653606912
+  },
+  "scope": "Isolated local 2 Core + 2 Commerce; backend load uses loopback upstream listeners; IP limit checked separately",
+  "cpuSamples": 2210,
+  "cpuByContainer": {
+    "citycopilot-redesign-load-mysql-1": {
+      "meanPercent": 6.51,
+      "maxPercent": 22.46
+    },
+    "citycopilot-redesign-load-redis-1": {
+      "meanPercent": 1.1,
+      "maxPercent": 15.38
+    },
+    "citycopilot-redesign-load-core-1": {
+      "meanPercent": 12.38,
+      "maxPercent": 453.18
+    },
+    "citycopilot-redesign-load-rocketmq-broker-1": {
+      "meanPercent": 17.73,
+      "maxPercent": 67.24
+    },
+    "citycopilot-redesign-load-commerce-redis-1": {
+      "meanPercent": 2.83,
+      "maxPercent": 27.54
+    },
+    "citycopilot-redesign-load-commerce-1": {
+      "meanPercent": 18.77,
+      "maxPercent": 432.2
+    },
+    "citycopilot-redesign-load-rocketmq-proxy-1": {
+      "meanPercent": 7.07,
+      "maxPercent": 50.86
+    },
+    "citycopilot-redesign-load-core-2": {
+      "meanPercent": 12.33,
+      "maxPercent": 464.23
+    },
+    "citycopilot-redesign-load-commerce-mysql-1": {
+      "meanPercent": 16.77,
+      "maxPercent": 141.57
+    },
+    "citycopilot-redesign-load-commerce-2": {
+      "meanPercent": 18.56,
+      "maxPercent": 459.72
+    }
+  }
+}

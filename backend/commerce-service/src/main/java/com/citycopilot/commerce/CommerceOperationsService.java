@@ -286,7 +286,7 @@ public class CommerceOperationsService {
                 "actor", actor == null || actor.isBlank() ? "unknown" : actor
         ));
         try {
-            // 审计先落 MySQL Outbox，RocketMQ 发布失败不影响重放事实的持久性。
+            // 审计先落 MySQL Outbox，Kafka 发布失败不影响重放事实的持久性。
             jdbc.update("""
                     INSERT INTO commerce_outbox_event(
                         event_id,event_type,aggregate_type,aggregate_id,aggregate_version,

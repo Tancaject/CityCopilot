@@ -108,9 +108,9 @@ try {
     docker stats --no-stream --format "{{.Name}}`t{{.CPUPerc}}`t{{.MemUsage}}" | Set-Content -LiteralPath $statsBefore -Encoding utf8
 
     if ($BrokerOutage) {
-        docker compose stop rocketmq-proxy
+        docker compose stop kafka-1 kafka-2 kafka-3
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to stop RocketMQ Proxy"
+            throw "Failed to stop the Kafka brokers"
         }
         $proxyStopped = $true
     }
@@ -136,9 +136,9 @@ try {
     $mustDrainOutbox = $RequireOutboxDrain -or $BrokerOutage
     $outboxAtRecovery = Get-UnpublishedOutbox
     if ($BrokerOutage) {
-        docker compose up -d rocketmq-proxy
+        docker compose up -d --wait kafka-1 kafka-2 kafka-3
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to restore RocketMQ Proxy"
+            throw "Failed to restore the Kafka brokers"
         }
         $proxyStopped = $false
     }
@@ -195,11 +195,11 @@ try {
         runId = $runId
         timestamp = (Get-Date).ToString("o")
         scenario = if ($BrokerOutage) {
-            "Commerce seckill while RocketMQ Proxy is unavailable, followed by recovery"
+            "Commerce seckill while all Kafka brokers are unavailable, followed by recovery"
         } elseif ($mustDrainOutbox) {
-            "Commerce seckill with RocketMQ relay required"
+            "Commerce seckill with Kafka relay required"
         } else {
-            "Commerce seckill with local RocketMQ relay optional"
+            "Commerce seckill with local Kafka relay optional"
         }
         users = $Users
         routingGeneration = $RoutingGeneration
@@ -243,7 +243,7 @@ try {
 }
 finally {
     if ($proxyStopped) {
-        docker compose up -d rocketmq-proxy | Out-Null
+        docker compose up -d --wait kafka-1 kafka-2 kafka-3 | Out-Null
     }
     if (Test-Path -LiteralPath $tokens) {
         Remove-Item -LiteralPath $tokens -Force

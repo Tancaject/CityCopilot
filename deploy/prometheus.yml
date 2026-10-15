@@ -7,13 +7,6 @@ rule_files:
 
 scrape_configs:
   # The monitoring process must join the Compose citycopilot network or an equivalent private network.
-  - job_name: citycopilot-rocketmq-broker
-    metrics_path: /metrics
-    static_configs:
-      - targets:
-          - rocketmq-broker:5557
-        labels:
-          broker_metrics_role: "true"
   - job_name: citycopilot-core
     metrics_path: /actuator/prometheus
     static_configs:

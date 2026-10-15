@@ -17,19 +17,21 @@ services:
       test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -u\"$${MYSQL_USER}\" -D\"$${MYSQL_DATABASE}\" -N -e 'SELECT 1' >/dev/null"]
   core-migrate:
     environment:
-      FLYWAY_URL: jdbc:mysql://mysql:3306/citycopilot_core_load_test?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      FLYWAY_URL: jdbc:mysql://mysql:3306/citycopilot_core_load_test?useSSL=false&connectionTimeZone=LOCAL&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true&characterEncoding=utf8
   commerce-migrate:
     environment:
-      FLYWAY_URL: jdbc:mysql://commerce-mysql:3306/citycopilot_commerce_load_test?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      FLYWAY_URL: jdbc:mysql://commerce-mysql:3306/citycopilot_commerce_load_test?useSSL=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true&characterEncoding=utf8
   redis:
     ports: !override ["127.0.0.1:16389:6379"]
-  rocketmq-namesrv:
+  commerce-redis:
+    ports: !override ["127.0.0.1:16391:6379"]
+  kafka-1:
     ports: !reset []
-  rocketmq-broker:
+  kafka-2:
     ports: !reset []
-  rocketmq-proxy:
+  kafka-3:
     ports: !reset []
-  rocketmq-dashboard:
+  kafka-ui:
     ports: !reset []
   core:
     restart: "no"
@@ -37,18 +39,18 @@ services:
       replicas: 2
     ports: !reset []
     environment:
-      CITYCOPILOT_DB_URL: jdbc:mysql://mysql:3306/citycopilot_core_load_test?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      CITYCOPILOT_DB_URL: jdbc:mysql://mysql:3306/citycopilot_core_load_test?useSSL=false&connectionTimeZone=LOCAL&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true&characterEncoding=utf8
       CITYCOPILOT_COMMERCE_BASE_URL: http://frontend:8084
-      CITYCOPILOT_ROCKETMQ_ENABLED: "true"
+      CITYCOPILOT_KAFKA_ENABLED: "true"
   commerce:
     restart: "no"
     deploy:
       replicas: 2
     ports: !reset []
     environment:
-      CITYCOPILOT_COMMERCE_DB_URL: jdbc:mysql://commerce-mysql:3306/citycopilot_commerce_load_test?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=utf8
+      CITYCOPILOT_COMMERCE_DB_URL: jdbc:mysql://commerce-mysql:3306/citycopilot_commerce_load_test?useSSL=false&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&allowPublicKeyRetrieval=true&characterEncoding=utf8
       CITYCOPILOT_PLACE_BASE_URL: http://frontend:8082
-      CITYCOPILOT_ROCKETMQ_ENABLED: "true"
+      CITYCOPILOT_KAFKA_ENABLED: "true"
   frontend:
     # The extra loopback listeners let the runner measure backend capacity separately from IP rejection.
     ports: !override ["127.0.0.1:18090:8080", "127.0.0.1:18092:8082", "127.0.0.1:18094:8084"]

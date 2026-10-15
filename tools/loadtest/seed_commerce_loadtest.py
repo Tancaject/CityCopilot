@@ -95,7 +95,7 @@ def redis_pipeline(commands: list[tuple[object, ...]], password: str, port: int)
 
 def redis_cli(*arguments: str) -> list[str]:
     command = [
-        "docker", "compose", "exec", "-T", "redis", "sh", "-c",
+        "docker", "compose", "exec", "-T", "commerce-redis", "sh", "-c",
         'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --raw "$@"',
         "redis-cli",
         *arguments,
@@ -262,8 +262,9 @@ ON DUPLICATE KEY UPDATE stock={stock},begin_time=VALUES(begin_time),end_time=VAL
         lambda key: belongs_to_load_user(key, users),
     )
     now_millis = int(time.time() * 1000)
+    # 登录令牌在 Core Redis，库存与元数据在 Commerce Redis，分两条管道写入。
+    token_commands: list[tuple[object, ...]] = [("DEL", f"login:token:{token}") for token in previous_tokens]
     commands: list[tuple[object, ...]] = [
-        *(("DEL", f"login:token:{token}") for token in previous_tokens),
         ("DEL", stock_key),
         ("DEL", buyers_key),
         ("DEL", inflight_key),
@@ -283,11 +284,12 @@ ON DUPLICATE KEY UPDATE stock={stock},begin_time=VALUES(begin_time),end_time=VAL
     ]
     for index, token in enumerate(tokens):
         user_id = START_USER_ID + index
-        commands.extend([
+        token_commands.extend([
             ("HSET", f"login:token:{token}", "id", user_id, "nickName", f"commerce_lt_{user_id}", "role", "user"),
             ("EXPIRE", f"login:token:{token}", 7200),
         ])
-    redis_pipeline(commands, env["CITYCOPILOT_REDIS_PASSWORD"], int(env.get("CITYCOPILOT_REDIS_PORT", "6380")))
+    redis_pipeline(commands, env["CITYCOPILOT_REDIS_PASSWORD"], int(env.get("CITYCOPILOT_COMMERCE_REDIS_PORT", "6381")))
+    redis_pipeline(token_commands, env["CITYCOPILOT_REDIS_PASSWORD"], int(env.get("CITYCOPILOT_REDIS_PORT", "6380")))
     with TOKENS.open("w", newline="", encoding="utf-8") as handle:
         csv.writer(handle).writerows([[token] for token in tokens])
     print(json.dumps({
@@ -360,7 +362,7 @@ AND NOT (
     env = env_file()
     prefix = voucher_prefix(generation, shard_count, VOUCHER_ID)
     # Read only the Commerce keys with the administrative test harness account.
-    with socket.create_connection(("127.0.0.1", int(env.get("CITYCOPILOT_REDIS_PORT", "6380"))), timeout=10) as connection:
+    with socket.create_connection(("127.0.0.1", int(env.get("CITYCOPILOT_COMMERCE_REDIS_PORT", "6381"))), timeout=10) as connection:
         connection.sendall(
             encode("AUTH", env["CITYCOPILOT_REDIS_PASSWORD"])
             + encode("GET", f"{prefix}seckill:stock:{VOUCHER_ID}")
@@ -471,7 +473,7 @@ def main() -> int:
     parser.add_argument(
         "--allow-unpublished",
         action="store_true",
-        help="Do not fail verification when the local RocketMQ relay is intentionally disabled.",
+        help="Do not fail verification when the local Kafka relay is intentionally disabled.",
     )
     args = parser.parse_args()
     if args.stock < 0:

@@ -1,15 +1,12 @@
 package com.citycopilot.core.controller;
 
 
-import com.citycopilot.core.commerce.CommercePortClient;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.contract.security.PermissionCodes;
 import com.citycopilot.core.security.RequirePermission;
 import com.citycopilot.core.service.IVoucherOrderService;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -62,23 +59,6 @@ public class VoucherOrderController {
             response.location(URI.create("/voucher-order/" + result.getData()));
         }
         return response.body(result);
-    }
-
-    /**
-     * 将 Commerce HTTP 失败映射回 Core 的稳定错误协议。
-     *
-     * <p>保留上游状态码及 {@code Retry-After}，让限流或暂时不可用时的客户端退避语义不丢失。</p>
-     *
-     * @param error Commerce 端口调用异常
-     * @return 保留重试提示的统一失败响应
-     */
-    @ExceptionHandler(CommercePortClient.CommerceHttpException.class)
-    ResponseEntity<Result> commerceFailure(CommercePortClient.CommerceHttpException error) {
-        ResponseEntity.BodyBuilder response = ResponseEntity.status(error.status());
-        if (error.retryAfter() != null && !error.retryAfter().isBlank()) {
-            response.header(HttpHeaders.RETRY_AFTER, error.retryAfter());
-        }
-        return response.body(Result.fail(error.code(), error.getMessage()));
     }
 
     /**

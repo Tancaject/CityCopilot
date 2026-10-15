@@ -11,6 +11,7 @@ import java.time.Instant;
  * @param status 发布事件时的订单状态码
  * @param version 订单聚合版本，用于消费端识别乱序事件
  * @param createdAt 订单创建时间
+ * @param shopId 订单所属店铺主键（schemaVersion 2 起），供 Core 维护店铺销量
  */
 public record OrderCreatedEvent(
         long orderId,
@@ -18,10 +19,11 @@ public record OrderCreatedEvent(
         long voucherId,
         int status,
         int version,
-        Instant createdAt
+        Instant createdAt,
+        long shopId
 ) {
-    /** RocketMQ 消息头中使用的稳定事件类型。 */
+    /** 事件信封与 Kafka 消息头中使用的稳定事件类型。 */
     public static final String EVENT_TYPE = "commerce.order.created";
-    /** 当前事件载荷结构版本。 */
-    public static final int SCHEMA_VERSION = 1;
+    /** 当前事件载荷结构版本；2 在 1 的基础上只新增 shopId，旧消费者忽略即可。 */
+    public static final int SCHEMA_VERSION = 2;
 }

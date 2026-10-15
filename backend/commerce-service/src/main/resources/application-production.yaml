@@ -27,9 +27,6 @@ spring:
     redis:
       connect-timeout: ${CITYCOPILOT_COMMERCE_REDIS_CONNECT_TIMEOUT:2s}
       timeout: ${CITYCOPILOT_COMMERCE_REDIS_COMMAND_TIMEOUT:2s}
-      cluster:
-        nodes: ${CITYCOPILOT_REDIS_CLUSTER_NODES}
-        max-redirects: ${CITYCOPILOT_REDIS_CLUSTER_MAX_REDIRECTS:5}
 
 citycopilot:
   commerce:
@@ -70,3 +67,11 @@ management:
       enabled: true
     redis:
       enabled: true
+
+logging:
+  # 生产输出 ECS JSON，MDC 中的 requestId 作为独立字段，便于日志平台按请求检索。
+  structured:
+    format:
+      console: ecs
+  level:
+    com.citycopilot: info

@@ -9,8 +9,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -46,6 +49,9 @@ public class CommerceReconciliationJob {
     /** 序列化 Outbox 事件信封。 */
     private final ObjectMapper objectMapper;
     private final CommerceJobLease leases;
+    private final CommerceRedisKeyspace keyspace;
+    /** 活动结束后继续对账的时长；超过后归档并释放 Redis 状态。 */
+    private final long archiveAfterSeconds;
 
     public CommerceReconciliationJob(
             JdbcTemplate jdbc,
@@ -53,7 +59,9 @@ public class CommerceReconciliationJob {
             CommerceConsistencyService consistency,
             CommerceRedisCampaignMetadata campaignMetadata,
             ObjectMapper objectMapper,
-            CommerceJobLease leases
+            CommerceJobLease leases,
+            CommerceRedisKeyspace keyspace,
+            @Value("${citycopilot.commerce.campaign-archive-after:1d}") Duration archiveAfter
     ) {
         this.jdbc = jdbc;
         this.redis = redis;
@@ -61,41 +69,90 @@ public class CommerceReconciliationJob {
         this.campaignMetadata = campaignMetadata;
         this.objectMapper = objectMapper;
         this.leases = leases;
+        this.keyspace = keyspace;
+        this.archiveAfterSeconds = archiveAfter.toSeconds();
     }
 
-    /** 按主键分批扫描本轮上界内的 Voucher；单个失败不终止后续巡检。 */
+    /** 巡检进行中或刚结束的 Voucher，并归档已结束超过保留期的 Voucher。 */
     @Scheduled(fixedDelayString = "${citycopilot.commerce.reconciliation-ms:5000}")
     void reconcile() {
         leases.acquire("stock-reconciliation").ifPresent(this::reconcile);
     }
 
     private void reconcile(CommerceJobLease.Lease lease) {
-        Long highWatermark = jdbc.queryForObject("SELECT MAX(voucher_id) FROM commerce_seckill_voucher", Long.class);
-        if (highWatermark == null) return;
+        // 只巡检进行中或刚结束的活动：已结束的历史活动不再参与准入，巡检成本不随历史累积增长。
         long afterId = 0;
-        while (afterId < highWatermark) {
+        while (true) {
             List<Long> voucherIds = jdbc.queryForList("""
                     SELECT voucher_id FROM commerce_seckill_voucher
-                    WHERE voucher_id>? AND voucher_id<=?
+                    WHERE redis_archived_at IS NULL
+                      AND end_time > CURRENT_TIMESTAMP(3) - INTERVAL ? SECOND
+                      AND voucher_id>?
                     ORDER BY voucher_id
                     LIMIT ?
-                    """, Long.class, afterId, highWatermark, SCAN_BATCH_SIZE);
+                    """, Long.class, archiveAfterSeconds, afterId, SCAN_BATCH_SIZE);
             if (voucherIds.isEmpty()) break;
             for (Long voucherId : voucherIds) {
-                try {
-                    lease.runFenced(() -> reconcileVoucher(voucherId));
-                } catch (CommerceJobLease.LeaseLostException lost) {
-                    throw lost;
-                } catch (RuntimeException failure) {
-                    log.error(
-                            "Commerce reconciliation failed for voucher {}; continuing with remaining vouchers",
-                            voucherId,
-                            failure
-                    );
-                }
+                runIsolated(lease, voucherId, () -> reconcileVoucher(voucherId));
                 afterId = voucherId;
             }
         }
+        List<Long> ended = jdbc.queryForList("""
+                SELECT voucher_id FROM commerce_seckill_voucher
+                WHERE redis_archived_at IS NULL
+                  AND end_time <= CURRENT_TIMESTAMP(3) - INTERVAL ? SECOND
+                ORDER BY voucher_id
+                LIMIT ?
+                """, Long.class, archiveAfterSeconds, SCAN_BATCH_SIZE);
+        for (Long voucherId : ended) {
+            runIsolated(lease, voucherId, () -> archive(voucherId));
+        }
+    }
+
+    /** 单张券失败不终止本轮；租约丢失则立即结束，避免旧写者继续操作。 */
+    private void runIsolated(CommerceJobLease.Lease lease, long voucherId, Runnable work) {
+        try {
+            lease.runFenced(work);
+        } catch (CommerceJobLease.LeaseLostException lost) {
+            throw lost;
+        } catch (RuntimeException failure) {
+            log.error("Commerce reconciliation failed for voucher {}; continuing with remaining vouchers",
+                    voucherId, failure);
+        }
+    }
+
+    /**
+     * 归档已结束活动：确认没有待支付订单、未完成准入和待回补库存后标记归档，提交后删除 Redis 状态。
+     *
+     * <p>归档后的退款只回补 MySQL 库存，见 {@link CommerceOrderService#attemptTransitionInventoryRestore}。</p>
+     */
+    private void archive(long voucherId) {
+        Long busy = jdbc.queryForObject("""
+                SELECT (SELECT COUNT(*) FROM commerce_order WHERE voucher_id=? AND status=1)
+                     + (SELECT COUNT(*) FROM commerce_admission_ledger WHERE voucher_id=? AND status IN ('PREPARED','ACCEPTED'))
+                     + (SELECT COUNT(*) FROM commerce_order_recovery WHERE voucher_id=? AND terminal_at IS NULL)
+                """, Long.class, voucherId, voucherId, voucherId);
+        if (busy == null || busy > 0) return;
+        Long inflight = redis.opsForSet().size(keyspace.inflight(voucherId));
+        if ((inflight != null && inflight > 0)
+                || Boolean.TRUE.equals(redis.hasKey(keyspace.fence(voucherId)))
+                || Boolean.TRUE.equals(redis.hasKey(keyspace.campaignUpdateFence(voucherId)))) {
+            return;
+        }
+        int marked = jdbc.update("""
+                UPDATE commerce_seckill_voucher SET redis_archived_at=CURRENT_TIMESTAMP(3)
+                WHERE voucher_id=? AND redis_archived_at IS NULL
+                """, voucherId);
+        if (marked != 1) return;
+        List<String> keys = List.of(keyspace.campaignMeta(voucherId), keyspace.stock(voucherId),
+                keyspace.buyers(voucherId), keyspace.inflight(voucherId));
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                redis.delete(keys);
+                redis.delete("commerce:metrics:seckill:discrepancy-streak:" + voucherId);
+            }
+        });
     }
 
     /**
@@ -153,7 +210,7 @@ public class CommerceReconciliationJob {
                 "commerce_seckill_voucher", String.valueOf(voucherId), now.toEpochMilli(), "commerce-service",
                 now.toString(), incidentKey, payload);
         try {
-            // 先持久化 Outbox，再由独立 Relay 发布；RocketMQ 暂时不可用不会丢失告警事件。
+            // 先持久化 Outbox，再由独立 Relay 发布；Kafka 暂时不可用不会丢失告警事件。
             jdbc.update("""
                     INSERT INTO commerce_outbox_event(
                         event_id,event_type,aggregate_type,aggregate_id,aggregate_version,

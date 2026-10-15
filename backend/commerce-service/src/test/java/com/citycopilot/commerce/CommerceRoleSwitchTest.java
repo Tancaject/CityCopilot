@@ -72,7 +72,7 @@ class CommerceRoleSwitchTest {
         assertThat(properties.getProperty("citycopilot.commerce.outbox-relay-enabled")).isEqualTo("${CITYCOPILOT_COMMERCE_OUTBOX_RELAY_ENABLED:false}");
         assertThat(properties.getProperty("citycopilot.commerce.reconciliation-enabled")).isEqualTo("${CITYCOPILOT_COMMERCE_RECONCILIATION_ENABLED:false}");
         assertThat(properties.getProperty("citycopilot.commerce.inventory-bootstrap-enabled")).isEqualTo("${CITYCOPILOT_COMMERCE_INVENTORY_BOOTSTRAP_ENABLED:false}");
-        assertThat(properties.getProperty("spring.data.redis.cluster.nodes")).isEqualTo("${CITYCOPILOT_REDIS_CLUSTER_NODES}");
+        assertThat(properties.getProperty("spring.data.redis.cluster.nodes")).isNull();
         assertThat(properties.getProperty("spring.task.scheduling.shutdown.await-termination")).isEqualTo(true);
         assertThat(properties.getProperty("spring.task.scheduling.shutdown.await-termination-period")).isEqualTo("${CITYCOPILOT_COMMERCE_SCHEDULER_SHUTDOWN_TIMEOUT:25s}");
         assertThat(properties.getProperty("spring.task.scheduling.pool.size")).isEqualTo("${CITYCOPILOT_COMMERCE_SCHEDULER_POOL_SIZE:4}");

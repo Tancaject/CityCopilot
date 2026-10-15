@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import time
 import urllib.request
@@ -35,8 +36,8 @@ def sql(service: str, query: str) -> str:
 
 
 def inventory() -> dict[str, list[dict]]:
-    ids = command(COMPOSE + ["ps", "-q", "core", "commerce", "mysql", "commerce-mysql", "redis",
-                            "rocketmq-broker", "rocketmq-proxy"]).splitlines()
+    ids = command(COMPOSE + ["ps", "-q", "core", "commerce", "mysql", "commerce-mysql", "redis", "commerce-redis",
+                            "kafka-1", "kafka-2", "kafka-3"]).splitlines()
     assert ids, "The isolated deployment is not running"
     containers = json.loads(command(["docker", "inspect", *ids]))
     services: dict[str, list[dict]] = {}
@@ -46,7 +47,8 @@ def inventory() -> dict[str, list[dict]]:
         service = labels["com.docker.compose.service"]
         services.setdefault(service, []).append(container)
         for mount in container["Mounts"]:
-            if mount["Type"] == "volume":
+            # 镜像自带的匿名卷（如 Kafka 的 /etc/kafka/secrets）名字是 64 位哈希，随容器新建，不是共享业务数据。
+            if mount["Type"] == "volume" and not re.fullmatch(r"[0-9a-f]{64}", mount["Name"]):
                 assert mount["Name"].startswith(PROJECT + "_"), "A business volume is attached"
     assert len(services.get("core", [])) == len(services.get("commerce", [])) == 2, "Exactly two replicas are required"
     for service, database in (("mysql", "citycopilot_core_load_test"),

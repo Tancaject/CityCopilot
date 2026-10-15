@@ -8,6 +8,8 @@ import com.citycopilot.core.utils.RefreshTokenInterceptor;
 import com.citycopilot.core.utils.UserContextFilter;
 import com.citycopilot.core.utils.UserRateLimitInterceptor;
 import com.citycopilot.http.DeadlineHandlerInterceptor;
+import com.citycopilot.http.RequestIdFilter;
+import org.springframework.core.Ordered;
 import jakarta.annotation.Resource;
 import jakarta.servlet.DispatcherType;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -48,6 +50,16 @@ public class MvcConfig implements WebMvcConfigurer {
     private int maxConcurrent;
     @Value("${citycopilot.http.authority-max-concurrent:32}")
     private int authorityMaxConcurrent;
+
+    /** 最先执行，让后续过滤器和业务日志都带上同一个请求 ID。 */
+    @Bean
+    FilterRegistrationBean<RequestIdFilter> requestId() {
+        var registration = new FilterRegistrationBean<>(new RequestIdFilter());
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        registration.addUrlPatterns("/*");
+        registration.setAsyncSupported(true);
+        return registration;
+    }
 
     @Bean
     FilterRegistrationBean<InternalServiceTokenFilter> internalServiceAuthentication() {

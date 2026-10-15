@@ -6,7 +6,7 @@ CityCopilot 是一个本地生活交易后端，覆盖店铺发现、内容社�
 
 - 秒杀准入：Redis + Lua 原子扣减库存与一人一单，MySQL 准入账本持久化每次准入，Redis Stream 异步落单
 - 幂等与恢复：全局幂等键、准入结果不确定时可用同一键重试，进程重启后从账本与 Stream 恢复
-- 可靠消息：事务 Outbox + RocketMQ，消费端 Inbox 去重，死信可查询与幂等重放
+- 可靠消息：事务 Outbox + Kafka（3 节点 KRaft，acks=all、min.insync.replicas=2），消费端 Inbox 去重，失败重试后进死信主题
 - 一致性对账：定时比对 MySQL 与 Redis 库存，发现偏差先封住新准入，再由管理员带证据哈希修复
 - 订单与支付：到期关单、库存回补、取消后重买；持久化模拟支付、HMAC 回调验签、回调幂等和退款对账
 - 流量与缓存：nginx IP 限流、用户令牌桶、售罄短缓存；Caffeine + Redis 店铺缓存由投影 Outbox 驱动失效
@@ -30,7 +30,7 @@ Core 和 Commerce 以独立进程运行：Core 负责身份、权限和对外 AP
 
 ## 技术栈
 
-Java、Spring Boot、MyBatis-Plus、MySQL、Redis、Lua、RocketMQ、Vue、TypeScript、Prometheus 和 Grafana。依赖版本以 [Maven 配置](pom.xml)、[前端锁文件](frontend/package-lock.json)和 [Compose 配置](compose.yaml)为准。
+Java、Spring Boot、MyBatis-Plus、MySQL、Redis、Lua、Kafka、Vue、TypeScript、Prometheus 和 Grafana。依赖版本以 [Maven 配置](pom.xml)、[前端锁文件](frontend/package-lock.json)和 [Compose 配置](compose.yaml)为准。
 
 ## 快速开始
 
@@ -40,7 +40,7 @@ Java、Spring Boot、MyBatis-Plus、MySQL、Redis、Lua、RocketMQ、Vue、TypeS
 .\tools\citycopilot.ps1 start
 ```
 
-该命令会创建本地 `.env`，启动项目所需的 MySQL、Redis 和 RocketMQ，并完成 Core 与 Commerce 两个数据库的迁移。已有数据库首次接管和可选样例数据导入见 [数据库迁移运行手册](docs/database-migrations.md)。迁移成功后从 IDE 依次启动 Commerce 和 Core；详细命令与端口见 [后端模块说明](backend/README.md)。
+该命令会创建本地 `.env`，启动项目所需的 MySQL、Redis 和 Kafka，并完成 Core 与 Commerce 两个数据库的迁移。已有数据库首次接管和可选样例数据导入见 [数据库迁移运行手册](docs/database-migrations.md)。迁移成功后从 IDE 依次启动 Commerce 和 Core；详细命令与端口见 [后端模块说明](backend/README.md)。
 
 高德 Key 可以留空，首次启动不需要第三方凭据。服务启动后可检查健康状态：
 

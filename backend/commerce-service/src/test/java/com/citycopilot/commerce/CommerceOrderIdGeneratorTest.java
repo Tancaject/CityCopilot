@@ -80,13 +80,13 @@ class CommerceOrderIdGeneratorTest {
             TransactionCallback<Object> callback = invocation.getArgument(0);
             return callback.doInTransaction(mock(TransactionStatus.class));
         });
-        when(jdbc.queryForObject(
+        when(jdbc.queryForList(
                 anyString(),
                 eq(Long.class),
                 any(Object[].class)
         )).thenAnswer(invocation -> {
             Object[] arguments = varargs(invocation.getArguments(), 2);
-            return counters.getOrDefault(String.valueOf(arguments[0]), 0L);
+            return java.util.List.of(counters.getOrDefault(String.valueOf(arguments[0]), 0L));
         });
         when(jdbc.update(anyString(), any(Object[].class))).thenAnswer(invocation -> {
             String sql = invocation.getArgument(0);

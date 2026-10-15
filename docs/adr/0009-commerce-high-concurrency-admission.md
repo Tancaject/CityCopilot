@@ -6,7 +6,7 @@
 
 ## 背景
 
-秒杀流量具有短时突发、单券热点和大量失败请求。若同步热路径持有 MySQL 行锁或依赖应用分布式锁，同一库存行会串行化，并把流量直接传导到数据库。Redis Lua、Stream、MySQL 和 RocketMQ 之间又不存在跨系统事务，因此必须明确每个故障窗口的恢复和幂等语义。
+秒杀流量具有短时突发、单券热点和大量失败请求。若同步热路径持有 MySQL 行锁或依赖应用分布式锁，同一库存行会串行化，并把流量直接传导到数据库。Redis Lua、Stream、MySQL 和 MQ（现为 Kafka）之间又不存在跨系统事务，因此必须明确每个故障窗口的恢复和幂等语义。
 
 ## 决策
 
@@ -19,6 +19,7 @@
 - 当前每券只有一个库存 bucket。超热点活动的多 bucket、escrow/transfer token 尚未实现。全局幂等和券 Lua 在同一连接上按 `CITYCOPILOT_COMMERCE_REDIS_REQUIRED_REPLICAS` 执行 `WAIT`（默认 0，即单机不等待）；它只覆盖单 master 故障边界。
 - Redis Stream 只承载 Commerce 内部命令。每个逻辑 shard 一条 Stream，Group 从 0 创建；正常读取逐 Stream 使用 XREADGROUP，Pending 恢复使用完整 XPENDING cursor + XCLAIM。终态使用同槽 Lua `XACK` 后 `XDEL`，防止 Stream 永久增长。
 - Worker 创建订单的 MySQL 本地事务原子写入 Reservation、条件库存扣减、订单、Recovery 终态和 Outbox；事务内禁止 Redis、MQ 和 HTTP。失败补偿按“持久 DB 阶段 -> 事务外幂等 Redis marker/Lua -> 新 DB 事务终态 -> Redis finalization”重放。
+- Worker 把一次读取的消息按券合并，每批最多 100 条在一个事务里落单（2026-10-15）：Recovery 行用 `FOR UPDATE` 锁定代替逐条 claim，账本只接受 `PREPARED`/`ACCEPTED` 且身份逐单配对的行，库存一次 `stock=stock-N`，整批只提交一次。批量前提不满足（库存不足、唯一键冲突、死锁）时整批回滚，在事务外改走逐条路径；连接或提交结果未知时保留 Pending，接管后由逐条路径按数据库事实继续。逐条路径的语义不变。同一环境下 1000 单的落库耗时由 55.2s 降到 1.8s。
 - DB 提交后执行幂等 Redis finalization、ACK 和 XDEL。响应丢失允许重放，数据库唯一约束和 Recovery 终态消除重复业务效果。超过 delivery 上限的 poison command 先核对 durable ORDER_CREATED；已落单只 finalization，能证明未落单才补偿，无法证明身份则持久化 DLQ 后保留 inflight 作为人工修复信号。
 - Outbox Relay 读取候选 ID 后以带状态条件的原子 `UPDATE` 竞争可过期 lease，并在所有终态更新中校验 claim/fencing token；READY、FAILED、历史 DEAD 和已过期 CLAIMED 都可重新认领。
 - 跨服务事件采用 at-least-once。消费者将 Inbox、聚合版本和本地业务变化写入同一事务。
@@ -40,7 +41,7 @@
 
 - MySQL `FOR UPDATE` 作为秒杀入口：热点库存行会串行化。
 - Redisson 用户锁作为最终正确性：无法覆盖 Redis 准入、DB commit、Stream ACK 和 MQ publish 的跨系统故障窗口。
-- 只使用 RocketMQ 取代 Redis Stream：无法让库存校验、用户去重和命令入队处于同一 Redis 原子边界。
+- 只使用 MQ（现为 Kafka）取代 Redis Stream：无法让库存校验、用户去重和命令入队处于同一 Redis 原子边界。
 - 分布式事务/XA：跨 Redis、MySQL 和 MQ 的可用性、延迟和运维成本不可接受。
 - Redis 失败时同步落 MySQL：会在故障时把全部峰值转移到事实库。
 
@@ -48,7 +49,7 @@
 
 系统以异步完成换取稳定峰值吞吐，并通过持久化 Recovery、唯一约束、Outbox/Inbox 和补偿得到可恢复的业务效果。代价是客户端必须接受 PROCESSING 状态，平台必须长期运行对账、积压告警和故障注入验证。
 
-当前部署是单机 Redis。准入、补偿、重复投递、丢失 ACCEPTED 后重试和取消返库存由 [`SeckillLifecycleIT`](../../backend/commerce-service/src/test/java/com/citycopilot/commerce/SeckillLifecycleIT.java) 在真实 MySQL/Redis 上验证；Redis Cluster 下的 MOVED、主从切换和复制确认尚未验证。修改 routing generation 或 shard-count 等同于数据迁移，只能在停止准入并排空后整体重启，不能作为滚动配置变更。
+当前部署是单机上的独立 Commerce Redis 主节点加一个副本（2026-10-15 起，与 Core 缓存 Redis 分开），生产配置要求准入写入经 `WAIT` 得到 1 个副本确认，容器内真实执行；内存满时 `noeviction` 拒绝写入。活动结束超过 `citycopilot.commerce.campaign-archive-after`（默认 1 天）且没有未决订单、账本和恢复记录后，对账任务把券标记为 `redis_archived_at` 并删除其 Redis 状态，之后的对账只扫描未归档的券。准入、补偿、重复投递、丢失 ACCEPTED 后重试和取消返库存由 [`SeckillLifecycleIT`](../../backend/commerce-service/src/test/java/com/citycopilot/commerce/SeckillLifecycleIT.java) 在真实 MySQL/Redis 上验证；Redis Cluster 下的 MOVED、主从切换和复制确认尚未验证。修改 routing generation 或 shard-count 等同于数据迁移，只能在停止准入并排空后整体重启，不能作为滚动配置变更。
 
 ## 未实现：在线分片扩容
 

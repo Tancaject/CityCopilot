@@ -1,5 +1,6 @@
 package com.citycopilot.http;
 
+import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatusCode;
@@ -95,8 +96,10 @@ public final class DeadlineHttpRequestFactory implements ClientHttpRequestFactor
         if (budget != null) {
             Duration remaining = budget.remaining();
             if (remaining.compareTo(timeout) < 0) timeout = remaining;
-            if (propagateDeadline) headers.set(DEADLINE_HEADER,
-                    Long.toString(System.currentTimeMillis() + remaining.toMillis()));
+            // 下游收到同一个逻辑截止时间；每跳重算“墙钟+剩余”会因两种时钟换算漂移。
+            if (propagateDeadline) headers.set(DEADLINE_HEADER, Long.toString(budget.deadlineEpochMillis()));
+            String requestId = MDC.get(RequestIdFilter.MDC_KEY);
+            if (requestId != null) headers.set(RequestIdFilter.HEADER, requestId);
         }
         if (!capacity.tryAcquire()) throw new IOException("HTTP capacity exhausted for " + uri.getAuthority() + "; no request was sent");
         CompletableFuture<HttpResponse<InputStream>> future;

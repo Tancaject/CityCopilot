@@ -1,41 +1,21 @@
 # Example thresholds; they are not a measured SLO or a configured notification channel.
 groups:
-  - name: citycopilot-rocketmq-consumer-lag
+  - name: citycopilot-kafka-consumer-lag
     rules:
-      - alert: CityCopilotBrokerMetricsDown
-        expr: up{job="citycopilot-rocketmq-broker",broker_metrics_role="true"} == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: RocketMQ Broker 原生指标连续抓取失败
-          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#broker-consumer-lag
-
-      - alert: CityCopilotBrokerConsumerBacklog
+      # records-lag-max 是单个消费者客户端在其分区上的最大积压；同组各客户端分区互斥，取最大值即可，不能相加。
+      - alert: CityCopilotKafkaConsumerLag
         expr: |
-          max by (job, cluster, node_id, topic, consumer_group, is_retry) (
-            rocketmq_consumer_lag_messages{job="citycopilot-rocketmq-broker",broker_metrics_role="true",node_type="broker",consumer_group=~"citycopilot-.+"}
-            and on (job, instance) (up{job="citycopilot-rocketmq-broker"} == 1)
+          max by (job) (
+            kafka_consumer_fetch_manager_records_lag_max{job="citycopilot-core",client_id=~"consumer-citycopilot-.+"}
+            and on (job, instance) (up{job="citycopilot-core"} == 1)
           ) > 1000
         for: 5m
         labels:
           severity: warning
+          queue: kafka-events
         annotations:
-          summary: RocketMQ 消费组在单个 Broker 的积压持续过高
-          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#broker-consumer-lag
-
-      - alert: CityCopilotBrokerConsumerLagAge
-        expr: |
-          max by (job, cluster, node_id, topic, consumer_group, is_retry) (
-            rocketmq_consumer_lag_latency_milliseconds{job="citycopilot-rocketmq-broker",broker_metrics_role="true",node_type="broker",consumer_group=~"citycopilot-.+"}
-            and on (job, instance) (up{job="citycopilot-rocketmq-broker"} == 1)
-          ) > 120000
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: RocketMQ 消费组最老未确认消息持续超时
-          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#broker-consumer-lag
+          summary: Kafka 事件消费积压持续过高
+          runbook_url: https://github.com/Tancaject/CityCopilot/blob/main/docs/operations/queue-alerts.md#kafka-consumer-lag
 
   - name: citycopilot-availability-and-queues
     rules:

@@ -16,7 +16,7 @@
 - `core-service` 保留 Identity、Community 和外部兼容 API；订单、优惠券、一致性及死信能力仅通过 Commerce facade 调用，不保留运行时本地 writer 回退。
 - Identity 公开响应使用独立视图：基础用户与会话沿用 `UserDTO`。Identity 的业务接口不继承 MyBatis `IService`：单用户和 Community 批量作者读取返回 `UserDTO`；后台分页和角色变更通过明确的业务方法执行。角色校验、更新、会话撤销和审计保留原有顺序与失败语义，不因下沉到服务层增加事务。
 - 服务使用独立 schema 账号；禁止跨服务私表访问、跨库 Join 和数据库外键。
-- 同步查询/命令使用版本化 HTTP；已发生事实使用 RocketMQ 事件。
+- 同步查询/命令使用版本化 HTTP；已发生事实使用 Kafka 事件（2026-10-15 前为 RocketMQ，见 ADR-0012）。
 - 共享交易边界使用 [`CommerceContracts`](../../backend/contracts/src/main/java/com/citycopilot/contract/commerce/CommerceContracts.java) 的请求和结果类型，不共享持久化实体。准入、订单概览与详情、订单动作、一致性修复和错误响应由同一契约定义；Core 只做外部 API 适配。类型化不得改变现有 HTTP 状态、业务码、幂等身份和证据哈希；订单 ID 在传输层保持字符串，金额使用整数分，日期保留现有 HTTP 编码。订单详情的 `inventoryRecovery` 仅在返库存待恢复或需人工修复时有值；客户端兼容可选字段缺失或为 null，以及响应新增字段。
 - Voucher 查询/写结果、运营计数、死信查询/重放和准入修复重排同样使用共享结果类型。Voucher ID 保持数值，订单 ID 保持字符串；Commerce 响应中普通券的秒杀字段和未重放死信的时间仍为 null，Core 外部响应沿用既有空字段省略规则。运营计数缺失保持不可用，不按零补齐。Voucher 写请求继续使用稀疏字段 Map：字段缺省、显式 null 和数值零沿用既有校验语义；一致性快照与证据哈希的输入 Map、历史死信载荷 JSON 保留其动态结构。
 - 订单列表直接返回订单保存的券说明、规则与金额快照，不读取优惠券当前价格，也不让客户端逐单补查详情。列表、详情和动作响应的 `state`、`statusText` 统一由 Commerce 按已落库的 `status` 生成；异步准入的 `processing` 与已落库订单状态分开表达。Core 通过共享契约透传这些字段，前端不维护另一套状态或价格事实。

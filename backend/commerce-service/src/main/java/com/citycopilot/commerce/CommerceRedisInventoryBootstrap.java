@@ -67,7 +67,7 @@ final class CommerceRedisInventoryBootstrap {
                            EXISTS(SELECT 1 FROM commerce_order_recovery recovery
                                   WHERE recovery.voucher_id=s.voucher_id) AS recovery_count
                     FROM commerce_seckill_voucher s
-                    WHERE s.voucher_id>? AND s.voucher_id<=?
+                    WHERE s.voucher_id>? AND s.voucher_id<=? AND s.redis_archived_at IS NULL
                     ORDER BY s.voucher_id
                     LIMIT ?
                     """, afterId, highWatermark, SCAN_BATCH_SIZE);

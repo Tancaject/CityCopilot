@@ -1,11 +1,14 @@
 package com.citycopilot.commerce;
 
 import tools.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Metrics;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.domain.Range;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -24,6 +27,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -61,6 +65,12 @@ public class CommerceOrderStreamWorker {
             CommerceRedisScripts.longScript("lua/commerce_compensate.lua");
     private static final DefaultRedisScript<Long> FINALIZE_ORDER_SCRIPT =
             CommerceRedisScripts.longScript("lua/commerce_finalize_order.lua");
+    private static final DefaultRedisScript<Long> FINALIZE_ORDERS_SCRIPT =
+            CommerceRedisScripts.longScript("lua/commerce_finalize_orders.lua");
+    /** 同券合并建单的单事务上限。 */
+    private static final int ORDER_BATCH_LIMIT = 100;
+    private static final String METRIC_BATCH_SIZE = "citycopilot.commerce.order.batch.size";
+    private static final String METRIC_BATCH_FALLBACK = "citycopilot.commerce.order.batch.fallback";
     private static final DefaultRedisScript<Long> ACK_DELETE_SCRIPT =
             CommerceRedisScripts.longScript("lua/commerce_ack_delete.lua");
     private static final Duration PENDING_MIN_IDLE = Duration.ofSeconds(30);
@@ -145,9 +155,7 @@ public class CommerceOrderStreamWorker {
                     log.info("Commerce shard stream {} is readable again", stream);
                 }
                 if (records == null) continue;
-                for (MapRecord<String, Object, Object> record : records) {
-                    processSafely(record, 1L);
-                }
+                processBatch(stream, records);
             } catch (Exception unavailable) {
                 if (!streamReadFailing) {
                     streamReadFailing = true;
@@ -155,6 +163,111 @@ public class CommerceOrderStreamWorker {
                 }
             }
         }
+    }
+
+    /**
+     * 把一次读取的新消息按券合并，每批最多 {@link #ORDER_BATCH_LIMIT} 条，在一个事务里建单。
+     *
+     * <p>无法解析、bootstrap 或分片不符的消息直接走逐条路径。批量事务的失败分三类：
+     * 确定已回滚的在事务外逐条重做；连接或提交结果未知的保留 Pending，接管后由逐条路径按数据库事实继续；
+     * 已提交但 Redis 收尾失败的只记日志，接管后逐条路径看到终态会只做收尾。</p>
+     */
+    void processBatch(String stream, List<MapRecord<String, Object, Object>> records) {
+        Map<Long, List<CommerceOrderService.BatchOrder>> byVoucher = new LinkedHashMap<>();
+        Map<String, MapRecord<String, Object, Object>> bySource = new HashMap<>();
+        for (MapRecord<String, Object, Object> record : records) {
+            CommerceOrderService.BatchOrder order = batchOrder(stream, record);
+            if (order == null) {
+                processSafely(record, 1L);
+                continue;
+            }
+            bySource.put(order.sourceId(), record);
+            byVoucher.computeIfAbsent(order.voucherId(), ignored -> new ArrayList<>()).add(order);
+        }
+        byVoucher.forEach((voucherId, orders) -> {
+            for (int from = 0; from < orders.size(); from += ORDER_BATCH_LIMIT) {
+                processVoucherBatch(stream, voucherId,
+                        orders.subList(from, Math.min(orders.size(), from + ORDER_BATCH_LIMIT)), bySource);
+            }
+        });
+    }
+
+    private void processVoucherBatch(String stream, long voucherId, List<CommerceOrderService.BatchOrder> batch,
+                                     Map<String, MapRecord<String, Object, Object>> bySource) {
+        CommerceOrderService.BatchResult result;
+        try {
+            result = orders.createOrders(voucherId, batch);
+        } catch (CommerceOrderService.BatchRejected | DataIntegrityViolationException
+                 | PessimisticLockingFailureException definite) {
+            // 业务前提不满足、唯一键冲突或死锁：数据库已回滚整批，在事务外逐条处理。
+            Metrics.counter(METRIC_BATCH_FALLBACK, "reason", definite.getClass().getSimpleName()).increment();
+            log.debug("Commerce order batch for voucher {} fell back to single processing: {}",
+                    voucherId, definite.getMessage());
+            batch.forEach(order -> processSafely(bySource.get(order.sourceId()), 1L));
+            return;
+        } catch (RuntimeException unknown) {
+            // 连接中断或提交失败时无法确定是否已提交，不能按“未提交”重做；保留 Pending 等待接管。
+            Metrics.counter(METRIC_BATCH_FALLBACK, "reason", "outcome_unknown").increment();
+            log.warn("Commerce order batch for voucher {} has an unknown outcome; leaving {} records pending",
+                    voucherId, batch.size(), unknown);
+            return;
+        }
+        Metrics.summary(METRIC_BATCH_SIZE).record(result.committed().size());
+        durableAdmissions.releaseAcceptedBacklog(result.acceptedTransitions());
+        finalizeBatch(stream, voucherId, result.committed());
+        result.skipped().forEach(order -> processSafely(bySource.get(order.sourceId()), 1L));
+    }
+
+    /** @return 可参与批量建单的订单消息；bootstrap、字段缺失或分片不符时返回 null 交逐条路径 */
+    private CommerceOrderService.BatchOrder batchOrder(String stream, MapRecord<String, Object, Object> record) {
+        try {
+            if ("true".equals(String.valueOf(record.getValue().get("bootstrap")))) return null;
+            long voucherId = number(record, "voucherId");
+            if (!keyspace.stream(voucherId).equals(stream)) return null;
+            String recordId = record.getId().getValue();
+            return new CommerceOrderService.BatchOrder(keyspace.recoverySourceId(stream, recordId), recordId,
+                    number(record, "orderId"), voucherId, number(record, "userId"),
+                    text(record, "idempotencyKey"), json(record.getValue()));
+        } catch (RuntimeException malformed) {
+            return null;
+        }
+    }
+
+    /**
+     * 批量事务提交后清理 Redis 在途标记并 ACK+删除消息，只处理本事务实际终态化的订单。
+     *
+     * <p>其他 Worker 已收尾的记录 XACK 为 0，属于正常重放。finalized_at 是尽力记录：Lua 已 ACK 后进程
+     * 崩溃时该时间戳会缺失，没有任何逻辑依赖它。</p>
+     */
+    private void finalizeBatch(String stream, long voucherId, List<CommerceOrderService.BatchOrder> committed) {
+        if (committed.isEmpty()) return;
+        List<String> keys = new ArrayList<>(List.of(keyspace.inflight(voucherId), stream));
+        List<String> arguments = new ArrayList<>(List.of(ORDER_CONSUMER_GROUP));
+        for (CommerceOrderService.BatchOrder order : committed) {
+            keys.add(keyspace.compensationMarker(voucherId, order.sourceId()));
+            arguments.add(inflightMember(order.recordId(), order.orderId()));
+            arguments.add(order.recordId());
+        }
+        try {
+            redis.execute(FINALIZE_ORDERS_SCRIPT, keys, arguments.toArray());
+            jdbc.update("""
+                    UPDATE commerce_order_recovery
+                    SET finalized_at=COALESCE(finalized_at,CURRENT_TIMESTAMP(3))
+                    WHERE source_id IN (%s) AND phase=?
+                    """.formatted(CommerceOrderService.placeholders(committed.size(), 1)),
+                    concatSources(committed));
+        } catch (Exception failure) {
+            // 数据库已终态，失败只影响 Redis 收尾；消息仍在 PEL 时接管后会只做收尾，不重复建单。
+            log.warn("Unable to finalize {} Commerce order records for voucher {}; they remain recoverable",
+                    committed.size(), voucherId);
+        }
+    }
+
+    private static Object[] concatSources(List<CommerceOrderService.BatchOrder> committed) {
+        Object[] arguments = new Object[committed.size() + 1];
+        for (int i = 0; i < committed.size(); i++) arguments[i] = committed.get(i).sourceId();
+        arguments[committed.size()] = PHASE_ORDER_CREATED;
+        return arguments;
     }
 
     /** 扫描全部分片 PEL，并把长时间空闲的 Pending 消息转交给当前 Worker。 */

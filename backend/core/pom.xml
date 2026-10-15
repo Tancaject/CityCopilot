@@ -68,9 +68,8 @@
             <artifactId>micrometer-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.apache.rocketmq</groupId>
-            <artifactId>rocketmq-client-java</artifactId>
-            <version>${rocketmq.client.java.version}</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springdoc</groupId>
