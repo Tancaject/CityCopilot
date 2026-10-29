@@ -5,6 +5,7 @@ import com.citycopilot.contract.booking.PricingContracts.*;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.config.CrossServiceHttpConfig.CommerceHttpFactories;
 import com.citycopilot.core.utils.UserHolder;
+import com.citycopilot.http.CapacityExhaustedException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -153,7 +154,8 @@ public class BookingPortClient {
             throw error;
         } catch (RestClientException error) {
             // A write timeout cannot tell whether Commerce committed; the caller must retain its operation key.
-            throw new Unavailable(key != null, error);
+            // A request rejected by local capacity was never sent, so its outcome is known.
+            throw new Unavailable(key != null && !CapacityExhaustedException.isCause(error), error);
         }
     }
 

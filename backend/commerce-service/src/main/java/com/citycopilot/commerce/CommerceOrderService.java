@@ -15,13 +15,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static com.citycopilot.commerce.CommerceOrderRecoveryStore.PHASE_ORDER_CREATED;
@@ -46,9 +47,15 @@ public class CommerceOrderService {
     private final PlaceAuthorityClient place;
     private static final DefaultRedisScript<Long> RESTORE_INVENTORY_SCRIPT =
             CommerceRedisScripts.longScript("lua/commerce_restore_inventory.lua");
+    private static final DefaultRedisScript<Long> RESTORE_INVENTORY_BATCH_SCRIPT =
+            CommerceRedisScripts.longScript("lua/commerce_restore_inventory_batch.lua");
     private static final DefaultRedisScript<Long> RELEASE_FENCE_SCRIPT =
             CommerceRedisScripts.longScript("lua/commerce_release_fence.lua");
     private static final Duration INVENTORY_FENCE_TTL = Duration.ofSeconds(30);
+    /** 单轮过期处理的时间预算；调度线程池只有几个线程且由多个任务共享，不能长时间独占一个。 */
+    private static final long EXPIRY_BUDGET_NANOS = Duration.ofSeconds(2).toNanos();
+    /** 每批最多关闭的同券到期订单数；批越大提交越少，但持有券库存行锁越久。 */
+    private static final int EXPIRY_BATCH_SIZE = 100;
 
     public CommerceOrderService(JdbcTemplate jdbc, StringRedisTemplate redis, TransactionTemplate transactions,
             ObjectMapper objectMapper, CommerceAdmissionDurabilityService durableAdmissions,
@@ -496,67 +503,129 @@ public class CommerceOrderService {
         }
     }
 
-    /** 每行独立事务，锁定到期订单后与支付的条件更新竞争；Redis 恢复在提交之后执行。 */
+    /**
+     * 按券成批关闭到期未付订单：每批一个事务、一次库存 fence、一次库存行更新，提交后一次 Lua 返还 Redis 库存。
+     *
+     * <p>先不加锁找出最早到期订单所在的券，再锁定这张券最多 {@value #EXPIRY_BATCH_SIZE} 张到期订单，被支付等事务
+     * 锁住的订单由 SKIP LOCKED 跳过、留给后续轮次。库存维护中、或到期订单全被锁住的券在本轮余下查询中整体排除：
+     * 否则它的到期订单每轮都排在最前面被反复处理，其他券的到期订单轮不到。每轮按时间预算处理。</p>
+     */
     public int expireDueOrders() {
         int expired = 0;
-        Timestamp afterDeadline = Timestamp.from(Instant.EPOCH);
-        long afterId = 0;
-        for (int attempt = 0; attempt < 100; attempt++) {
-            Timestamp deadlineCursor = afterDeadline;
-            long idCursor = afterId;
-            ExpiryCandidate closed = transactions.execute(transaction -> {
-                List<Map<String, Object>> due = jdbc.queryForList("""
-                        SELECT id,voucher_id,user_id,version,pay_deadline FROM commerce_order
-                        WHERE status=1 AND pay_deadline<=CURRENT_TIMESTAMP(3)
-                          AND (pay_deadline>? OR (pay_deadline=? AND id>?))
-                        ORDER BY pay_deadline,id LIMIT 1 FOR UPDATE SKIP LOCKED
-                        """, deadlineCursor, deadlineCursor, idCursor);
-                if (due.isEmpty()) return null;
-                Map<String, Object> row = due.get(0);
-                long orderId = ((Number) row.get("id")).longValue();
-                long voucherId = ((Number) row.get("voucher_id")).longValue();
-                long userId = ((Number) row.get("user_id")).longValue();
-                Timestamp payDeadline = (Timestamp) row.get("pay_deadline");
-                String sourceId = "transition:" + orderId + ":cancel:" + row.get("version");
-                String fenceToken;
-                try {
-                    fenceToken = acquireInventoryFence(voucherId);
-                } catch (CommerceApiException busy) {
-                    if ("COMMERCE_INVENTORY_MAINTENANCE".equals(busy.code())) {
-                        return new ExpiryCandidate(sourceId, orderId, voucherId, userId, payDeadline, null);
-                    }
-                    throw busy;
-                }
-                try {
-                    int changed = jdbc.update("""
-                            UPDATE commerce_order SET status=4,close_reason='PAY_TIMEOUT',version=version+1
-                            WHERE id=? AND status=1
-                            """, orderId);
-                    if (changed == 0) {
-                        releaseInventoryFence(voucherId, fenceToken);
-                        return null;
-                    }
-                    recordInventoryReturn(sourceId, orderId, voucherId, userId, "cancel", 4, fenceToken);
-                    appendStateEvent(orderId, userId, "cancel", 4);
-                    return new ExpiryCandidate(sourceId, orderId, voucherId, userId, payDeadline, fenceToken);
-                } catch (RuntimeException failure) {
-                    releaseInventoryFence(voucherId, fenceToken);
-                    throw failure;
-                }
-            });
-            if (closed == null) break;
-            afterDeadline = closed.payDeadline();
-            afterId = closed.orderId();
-            if (closed.fenceToken() == null) continue;
-            attemptTransitionInventoryRestore(closed.sourceId(), closed.orderId(), closed.voucherId(),
-                    closed.userId(), true, closed.fenceToken());
-            expired++;
+        Set<Long> skipped = new LinkedHashSet<>();
+        long budgetEnds = System.nanoTime() + EXPIRY_BUDGET_NANOS;
+        while (System.nanoTime() < budgetEnds) {
+            String excluded = skipped.isEmpty() ? ""
+                    : "AND voucher_id NOT IN (" + placeholders(skipped.size(), 1) + ")";
+            List<Long> head = jdbc.queryForList("""
+                    SELECT voucher_id FROM commerce_order
+                    WHERE status=1 AND pay_deadline<=CURRENT_TIMESTAMP(3) %s
+                    ORDER BY pay_deadline,id LIMIT 1
+                    """.formatted(excluded), Long.class, skipped.toArray());
+            if (head.isEmpty()) break;
+            long voucherId = head.get(0);
+            ExpiryBatch batch = transactions.execute(transaction -> closeDueOrders(voucherId));
+            if (batch == null || batch.fenceToken() == null) {
+                skipped.add(voucherId);
+                continue;
+            }
+            restoreTransitionInventory(voucherId, batch.fenceToken(), batch.restores());
+            expired += batch.restores().size();
         }
         return expired;
     }
 
-    private record ExpiryCandidate(String sourceId, long orderId, long voucherId, long userId,
-                                   Timestamp payDeadline, String fenceToken) {}
+    /**
+     * 在当前事务内关闭一张券的一批到期订单，并写入库存返还、Recovery 与 Outbox。
+     *
+     * @return 没有可锁定的到期订单时为空；券库存维护中时 fenceToken 为空
+     */
+    private ExpiryBatch closeDueOrders(long voucherId) {
+        List<Map<String, Object>> due = jdbc.queryForList("""
+                SELECT id,user_id,version FROM commerce_order
+                WHERE voucher_id=? AND status=1 AND pay_deadline<=CURRENT_TIMESTAMP(3)
+                ORDER BY pay_deadline,id LIMIT ? FOR UPDATE SKIP LOCKED
+                """, voucherId, EXPIRY_BATCH_SIZE);
+        if (due.isEmpty()) return null;
+        String fenceToken;
+        try {
+            fenceToken = acquireInventoryFence(voucherId);
+        } catch (CommerceApiException busy) {
+            if ("COMMERCE_INVENTORY_MAINTENANCE".equals(busy.code())) return new ExpiryBatch(null, List.of());
+            throw busy;
+        }
+        try {
+            List<TransitionRestore> restores = due.stream().map(row -> {
+                long orderId = ((Number) row.get("id")).longValue();
+                return new TransitionRestore("transition:" + orderId + ":cancel:" + row.get("version"),
+                        orderId, ((Number) row.get("user_id")).longValue(), true);
+            }).toList();
+            Object[] ids = restores.stream().map(TransitionRestore::orderId).toArray();
+            int changed = jdbc.update("""
+                    UPDATE commerce_order SET status=4,close_reason='PAY_TIMEOUT',version=version+1
+                    WHERE id IN (%s) AND status=1
+                    """.formatted(placeholders(ids.length, 1)), ids);
+            // 这些行已在本事务内加锁，数量不符说明锁定失效；整批回滚，不能按错误的件数返库存。
+            if (changed != ids.length) {
+                throw new IllegalStateException("Expired " + changed + " of " + ids.length + " locked orders");
+            }
+            recordInventoryReturns(voucherId, restores, fenceToken);
+            appendCancelEvents(voucherId, restores);
+            return new ExpiryBatch(fenceToken, restores);
+        } catch (RuntimeException failure) {
+            releaseInventoryFence(voucherId, fenceToken);
+            throw failure;
+        }
+    }
+
+    /** 一批同券订单的库存返还：券库存一次加回，支付与预留批量关闭，每单一条 RESTORE_PENDING Recovery。 */
+    private void recordInventoryReturns(long voucherId, List<TransitionRestore> restores, String fenceToken) {
+        int n = restores.size();
+        Object[] ids = restores.stream().map(TransitionRestore::orderId).toArray();
+        jdbc.update("UPDATE commerce_seckill_voucher SET stock=stock+?,version=version+1 WHERE voucher_id=?",
+                n, voucherId);
+        jdbc.update("UPDATE commerce_payment SET status='CLOSED' WHERE order_id IN (%s) AND status='PENDING'"
+                .formatted(placeholders(n, 1)), ids);
+        jdbc.update("UPDATE commerce_reservation SET status='CANCELLED',version=version+1 WHERE order_id IN (%s)"
+                .formatted(placeholders(n, 1)), ids);
+        String payload = json(Map.of("action", "cancel", "targetStatus", 4));
+        List<Object> arguments = new ArrayList<>();
+        for (TransitionRestore restore : restores) {
+            arguments.addAll(List.of(restore.sourceId(), restore.orderId(), voucherId, restore.userId(),
+                    payload, PHASE_RESTORE_PENDING, fenceToken));
+        }
+        jdbc.update("""
+                INSERT INTO commerce_order_recovery(
+                    source_id,source_type,order_id,voucher_id,user_id,payload_json,
+                    phase,inventory_fence_token,compensation_delta
+                ) VALUES %s
+                """.formatted(rows(n, "(?,'STATE_TRANSITION',?,?,?,?,?,?,1)")), arguments.toArray());
+    }
+
+    /** 一批同券订单的取消事件；同券订单属于同一店铺，店铺只查一次。 */
+    private void appendCancelEvents(long voucherId, List<TransitionRestore> restores) {
+        long shopId = jdbc.queryForObject("SELECT shop_id FROM commerce_order WHERE id=?", Long.class,
+                restores.get(0).orderId());
+        List<Object> arguments = new ArrayList<>();
+        for (TransitionRestore restore : restores) {
+            EventEnvelope<Map<String, Object>> event = stateEvent(
+                    restore.orderId(), restore.userId(), "cancel", 4, shopId, voucherId);
+            arguments.addAll(List.of(event.eventId(), event.eventType(), event.aggregateType(),
+                    event.aggregateId(), event.aggregateVersion(), json(event)));
+        }
+        jdbc.update("""
+                INSERT INTO commerce_outbox_event(
+                    event_id,event_type,aggregate_type,aggregate_id,aggregate_version,
+                    topic,payload_json,status
+                ) VALUES %s
+                """.formatted(rows(restores.size(), "(?,?,?,?,?,'citycopilot-commerce-events-v1',?,'READY')")),
+                arguments.toArray());
+    }
+
+    private record ExpiryBatch(String fenceToken, List<TransitionRestore> restores) {}
+
+    /** 一单取消/退款后的 Redis 库存返还身份；同一批共享一个库存 fence。 */
+    record TransitionRestore(String sourceId, long orderId, long userId, boolean releaseBuyer) {}
 
     private void recordInventoryReturn(String sourceId, long orderId, long voucherId, long userId,
                                        String action, int targetStatus, String fenceToken) {
@@ -647,34 +716,105 @@ public class CommerceOrderService {
         return PHASE_REPAIR_REQUIRED;
     }
 
+    /**
+     * 用同一个 fence 令牌一次返还一批取消订单的 Redis 库存，再把 Recovery 行批量标为 RESTORED。
+     *
+     * <p>逐单结果与 {@link #attemptTransitionInventoryRestore} 一致：Redis 不可用时保持 RESTORE_PENDING，由轮询用原令牌
+     * 重试；fence 已不属于本批或库存键缺失时，已有 marker 的单（此前已返还）记为 RESTORED，其余转人工修复。
+     * 同一批的单必须共享令牌整体重试：逐单脚本成功一单就会释放 fence，其余单会被误判为 fence 已过期。</p>
+     */
+    void restoreTransitionInventory(long voucherId, String fenceToken, List<TransitionRestore> restores) {
+        List<String> keys = new ArrayList<>(List.of(
+                keyspace.fence(voucherId), keyspace.stock(voucherId), keyspace.buyers(voucherId)));
+        List<String> markers = new ArrayList<>();
+        List<String> arguments = new ArrayList<>(List.of(fenceToken));
+        for (TransitionRestore restore : restores) {
+            markers.add(keyspace.restoreMarker(voucherId, restore.sourceId()));
+            arguments.add(String.valueOf(restore.userId()));
+            arguments.add(String.valueOf(restore.releaseBuyer()));
+        }
+        keys.addAll(markers);
+        Long result;
+        try {
+            result = redis.execute(RESTORE_INVENTORY_BATCH_SCRIPT, keys, arguments.toArray());
+        } catch (Exception unavailable) {
+            log.warn("Inventory restore remains pending for {} orders of voucher {}", restores.size(), voucherId);
+            return;
+        }
+        if (result != null && result >= 0) {
+            markRestored(restores);
+            try {
+                redis.unlink(markers);
+            } catch (Exception cleanupFailure) {
+                log.debug("Unable to remove completed inventory restore markers of voucher {}", voucherId);
+            }
+            return;
+        }
+        boolean stockMissing = result != null && result == -2L;
+        // 活动已归档、Redis 状态已释放；MySQL 库存已在状态事务内返还，无需再恢复 Redis。
+        boolean archived = stockMissing && Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT redis_archived_at IS NOT NULL FROM commerce_seckill_voucher WHERE voucher_id=?",
+                Boolean.class, voucherId));
+        List<TransitionRestore> restored = new ArrayList<>();
+        List<TransitionRestore> unresolved = new ArrayList<>();
+        for (int i = 0; i < restores.size(); i++) {
+            boolean done = archived || Boolean.TRUE.equals(redis.hasKey(markers.get(i)));
+            (done ? restored : unresolved).add(restores.get(i));
+        }
+        markRestored(restored);
+        if (!unresolved.isEmpty()) {
+            List<Object> repair = new ArrayList<>(List.of(PHASE_REPAIR_REQUIRED, stockMissing
+                    ? "redis_stock_missing_during_transition_restore"
+                    : "inventory_fence_expired_before_transition_restore"));
+            unresolved.forEach(restore -> repair.add(restore.sourceId()));
+            repair.add(PHASE_RESTORE_PENDING);
+            jdbc.update("""
+                    UPDATE commerce_order_recovery
+                    SET phase=?, compensation_delta=1, last_error=?, terminal_at=CURRENT_TIMESTAMP(3)
+                    WHERE source_id IN (%s) AND phase=?
+                    """.formatted(placeholders(unresolved.size(), 1)), repair.toArray());
+        }
+        releaseInventoryFence(voucherId, fenceToken);
+    }
+
+    private void markRestored(List<TransitionRestore> restores) {
+        if (restores.isEmpty()) return;
+        jdbc.update("""
+                UPDATE commerce_order_recovery
+                SET phase=?, compensation_delta=0, terminal_at=CURRENT_TIMESTAMP(3)
+                WHERE source_id IN (%s) AND phase=?
+                """.formatted(placeholders(restores.size(), 1)), concat(PHASE_RESTORED,
+                restores.stream().map(TransitionRestore::sourceId).toArray(), PHASE_RESTORE_PENDING));
+    }
+
     /** 在订单状态事务内追加 Outbox 事件，交由 Relay 异步发布。 */
     void appendStateEvent(long orderId, long userId, String action, int state) {
-        String eventId = UUID.randomUUID().toString();
         // 同一事务内按主键读出店铺和券，消费端（如店铺销量）无需回查 Commerce。schemaVersion 2 只新增这两个字段。
         Map<String, Object> order = jdbc.queryForMap("SELECT shop_id,voucher_id FROM commerce_order WHERE id=?", orderId);
-        EventEnvelope<Map<String, Object>> event = new EventEnvelope<>(
-                eventId, "commerce.order." + action, 2, "commerce_order", String.valueOf(orderId), state,
-                "commerce-service", Instant.now().toString(), String.valueOf(orderId), Map.of(
-                "orderId", orderId,
-                "userId", userId,
-                "action", action,
-                "status", state,
-                "shopId", ((Number) order.get("shop_id")).longValue(),
-                "voucherId", ((Number) order.get("voucher_id")).longValue()
-        ));
+        EventEnvelope<Map<String, Object>> event = stateEvent(orderId, userId, action, state,
+                ((Number) order.get("shop_id")).longValue(), ((Number) order.get("voucher_id")).longValue());
         jdbc.update("""
                 INSERT INTO commerce_outbox_event(
                     event_id,event_type,aggregate_type,aggregate_id,aggregate_version,
                     topic,payload_json,status
                 ) VALUES (?,?,?,?,?,'citycopilot-commerce-events-v1',?,'READY')
                 """,
-                eventId,
+                event.eventId(),
                 event.eventType(),
                 event.aggregateType(),
                 event.aggregateId(),
                 event.aggregateVersion(),
                 json(event)
         );
+    }
+
+    private EventEnvelope<Map<String, Object>> stateEvent(long orderId, long userId, String action, int state,
+                                                          long shopId, long voucherId) {
+        return new EventEnvelope<>(
+                UUID.randomUUID().toString(), "commerce.order." + action, 2, "commerce_order",
+                String.valueOf(orderId), state, "commerce-service", Instant.now().toString(), String.valueOf(orderId),
+                Map.of("orderId", orderId, "userId", userId, "action", action, "status", state,
+                        "shopId", shopId, "voucherId", voucherId));
     }
 
     /**

@@ -1,5 +1,9 @@
 server:
   port: ${CITYCOPILOT_COMMERCE_PORT:8083}
+  tomcat:
+    threads:
+      # 准入请求阻塞到所在批次落库（约 200ms）；默认 200 线程把落库吞吐限制在约 1000 单/s，组提交攒不出大批次。
+      max: 800
 
 spring:
   config:

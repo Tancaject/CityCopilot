@@ -80,7 +80,8 @@ class CommerceOutboxRelayTest {
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         verify(jdbc).queryForList(sql.capture(), eq(String.class));
         assertThat(sql.getValue())
-                .contains("status IN ('READY','FAILED')")
+                .contains("status='READY'")
+                .contains("status='FAILED'")
                 .contains("status='CLAIMED'")
                 .contains("claimed_until < CURRENT_TIMESTAMP(3)")
                 .contains("next_attempt_at <= CURRENT_TIMESTAMP(3)");

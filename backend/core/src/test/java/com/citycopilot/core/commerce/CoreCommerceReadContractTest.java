@@ -158,6 +158,8 @@ class CoreCommerceReadContractTest {
         ReflectionTestUtils.setField(controller, "operationLogService", logs);
         when(port.operationsSummary(any(), any())).thenReturn(Result.ok(new OperationsSummary(3000000000L, 2L, 3L, 4L, 5L, 6L, 7L)));
         assertThat(((Map<?, ?>) controller.opsSummary().getData()).get("orders")).isEqualTo(3000000000L);
+        // 成功结果会缓存 30 秒；清掉缓存，让下一次请求重新计算并校验缺失指标。
+        ReflectionTestUtils.setField(controller, "cachedSummary", null);
         when(port.operationsSummary(any(), any())).thenReturn(Result.ok(new OperationsSummary(null, 2L, 3L, 4L, 5L, 6L, 7L)));
         assertThatThrownBy(controller::opsSummary).isInstanceOf(IllegalStateException.class)
                 .hasMessage("Commerce operations summary is missing metric: orders");

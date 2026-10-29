@@ -51,9 +51,10 @@ class CommerceRedisReplicationExecutorTest {
         );
 
         assertThat(stored).isEqualTo("299|99|seckill:v1:99");
-        assertThat(commands.lastValueArguments.length).isEqualTo(1);
+        assertThat(commands.lastValueArguments.length).isEqualTo(2);
         assertThat(commands.lastValueArguments[0])
                 .isEqualTo(bytes("300|100|seckill:v1:100"));
+        assertThat(commands.lastValueArguments[1]).isEqualTo(bytes(Long.toString(24 * 3600)));
         assertThat(commands.waitCount).isEqualTo(1);
     }
 

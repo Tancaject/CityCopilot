@@ -17,10 +17,12 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 周期性核对 MySQL 与 Redis 的秒杀状态，并将持续异常写入 Outbox。
@@ -37,6 +39,8 @@ import java.util.UUID;
 public class CommerceReconciliationJob {
     private static final Logger log = LoggerFactory.getLogger(CommerceReconciliationJob.class);
     private static final int SCAN_BATCH_SIZE = 200;
+    private static final int IDEMPOTENCY_DELETE_BATCH = 1000;
+    private static final int PREPARED_RESOLVE_BATCH = 500;
 
     /** 查询需要巡检的 Voucher，并写入异常事件 Outbox。 */
     private final JdbcTemplate jdbc;
@@ -52,6 +56,12 @@ public class CommerceReconciliationJob {
     private final CommerceRedisKeyspace keyspace;
     /** 活动结束后继续对账的时长；超过后归档并释放 Redis 状态。 */
     private final long archiveAfterSeconds;
+    /** 归档前把从未进入 Redis 的 PREPARED 准入固化为稳定拒绝。 */
+    private final CommerceAdmissionDurabilityService durableAdmissions;
+    /** 两次全量快照的最长间隔；期间每轮只做汇总数快速核对，不一致时立即转全量。 */
+    private final long fullCheckNanos;
+    /** 每张券上次全量快照的单调时钟时间；本实例接手巡检后首轮总是全量。 */
+    private final Map<Long, Long> lastFullCheck = new ConcurrentHashMap<>();
 
     public CommerceReconciliationJob(
             JdbcTemplate jdbc,
@@ -61,7 +71,9 @@ public class CommerceReconciliationJob {
             ObjectMapper objectMapper,
             CommerceJobLease leases,
             CommerceRedisKeyspace keyspace,
-            @Value("${citycopilot.commerce.campaign-archive-after:1d}") Duration archiveAfter
+            @Value("${citycopilot.commerce.campaign-archive-after:1d}") Duration archiveAfter,
+            CommerceAdmissionDurabilityService durableAdmissions,
+            @Value("${citycopilot.commerce.reconciliation-full-interval:10m}") Duration fullCheckInterval
     ) {
         this.jdbc = jdbc;
         this.redis = redis;
@@ -71,6 +83,8 @@ public class CommerceReconciliationJob {
         this.leases = leases;
         this.keyspace = keyspace;
         this.archiveAfterSeconds = archiveAfter.toSeconds();
+        this.durableAdmissions = durableAdmissions;
+        this.fullCheckNanos = fullCheckInterval.toNanos();
     }
 
     /** 巡检进行中或刚结束的 Voucher，并归档已结束超过保留期的 Voucher。 */
@@ -127,18 +141,20 @@ public class CommerceReconciliationJob {
      * <p>归档后的退款只回补 MySQL 库存，见 {@link CommerceOrderService#attemptTransitionInventoryRestore}。</p>
      */
     private void archive(long voucherId) {
-        Long busy = jdbc.queryForObject("""
-                SELECT (SELECT COUNT(*) FROM commerce_order WHERE voucher_id=? AND status=1)
-                     + (SELECT COUNT(*) FROM commerce_admission_ledger WHERE voucher_id=? AND status IN ('PREPARED','ACCEPTED'))
-                     + (SELECT COUNT(*) FROM commerce_order_recovery WHERE voucher_id=? AND terminal_at IS NULL)
-                """, Long.class, voucherId, voucherId, voucherId);
-        if (busy == null || busy > 0) return;
         Long inflight = redis.opsForSet().size(keyspace.inflight(voucherId));
         if ((inflight != null && inflight > 0)
                 || Boolean.TRUE.equals(redis.hasKey(keyspace.fence(voucherId)))
                 || Boolean.TRUE.equals(redis.hasKey(keyspace.campaignUpdateFence(voucherId)))) {
             return;
         }
+        rejectNeverAdmitted(voucherId);
+        // 只需知道“有没有”，EXISTS 在第一行处停止；COUNT 每 5 秒要把每张待归档券的未结订单全数一遍。
+        Boolean busy = jdbc.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM commerce_order WHERE voucher_id=? AND status=1)
+                    OR EXISTS(SELECT 1 FROM commerce_admission_ledger WHERE voucher_id=? AND status IN ('PREPARED','ACCEPTED'))
+                    OR EXISTS(SELECT 1 FROM commerce_order_recovery WHERE voucher_id=? AND terminal_at IS NULL)
+                """, Boolean.class, voucherId, voucherId, voucherId);
+        if (busy == null || busy) return;
         int marked = jdbc.update("""
                 UPDATE commerce_seckill_voucher SET redis_archived_at=CURRENT_TIMESTAMP(3)
                 WHERE voucher_id=? AND redis_archived_at IS NULL
@@ -149,10 +165,46 @@ public class CommerceReconciliationJob {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
+                lastFullCheck.remove(voucherId);
                 redis.delete(keys);
                 redis.delete("commerce:metrics:seckill:discrepancy-streak:" + voucherId);
+                deleteIdempotencyKeys(voucherId);
             }
         });
+    }
+
+    /**
+     * 活动结束超过归档窗口后 Lua 已不可能再准入该券。没有维护 fence、也没有在途消息时，PREPARED 行在 Redis
+     * 中若没有券内幂等身份，说明它从未被准入，按“活动已结束”固化为稳定拒绝，与此时同键重试得到的结果相同；
+     * 否则这些行会永远阻止归档。Redis 中已有身份的行仍交给请求重试与 Worker，后台不把结果未知改为已接受。
+     * 其他路由代际的行写在另一组键里，这里查不到也不能据此判断，一律跳过。处理在租约事务内进行，每轮最多
+     * {@value #PREPARED_RESOLVE_BATCH} 行，剩余的留给下一轮，避免长事务一直占着租约行锁。
+     */
+    private void rejectNeverAdmitted(long voucherId) {
+        CommerceApiException ended = new CommerceApiException("SECKILL_ENDED", "Seckill has ended", 409);
+        for (CommerceAdmissionDurabilityService.Admission prepared
+                : durableAdmissions.preparedFor(voucherId, PREPARED_RESOLVE_BATCH)) {
+            if (!prepared.matchesRouting(keyspace.routingGeneration(), keyspace.physicalShardCount())) continue;
+            String identity = keyspace.idempotency(voucherId, prepared.userId(), prepared.idempotencyKey());
+            if (Boolean.TRUE.equals(redis.hasKey(identity))) continue;
+            durableAdmissions.markRejected(prepared, ended);
+        }
+    }
+
+    /**
+     * 每次准入都会在券内写一个幂等身份键；归档后不再有 Lua 准入，按账本中的用户幂等键分批删除，
+     * 否则这些键随订单量永久累积直到 Redis 写满。
+     */
+    private void deleteIdempotencyKeys(long voucherId) {
+        List<String> batch = new ArrayList<>(IDEMPOTENCY_DELETE_BATCH);
+        jdbc.query("SELECT user_id,idempotency_key FROM commerce_admission_ledger WHERE voucher_id=?", row -> {
+            batch.add(keyspace.idempotency(voucherId, row.getLong("user_id"), row.getString("idempotency_key")));
+            if (batch.size() == IDEMPOTENCY_DELETE_BATCH) {
+                redis.unlink(batch);
+                batch.clear();
+            }
+        }, voucherId);
+        if (!batch.isEmpty()) redis.unlink(batch);
     }
 
     /**
@@ -164,8 +216,17 @@ public class CommerceReconciliationJob {
         // 以数据库为准重发元数据，可修复管理更新回滚或 afterCommit 刷新失败；
         // 刷新异常会删除元数据键，使准入继续失败关闭。
         campaignMetadata.refreshAfterCommit(voucherId);
-        Map<String, Object> snapshot = consistency.snapshotForReconciliation(voucherId);
         String streakKey = "commerce:metrics:seckill:discrepancy-streak:" + voucherId;
+        // 全量快照要取出整张券的买家名单逐个比对，成本随买家数线性增长；平时只比汇总数，
+        // 汇总数不一致或到了全量间隔才做全量，维护 fence 与告警仍只由全量结果决定。
+        long now = System.nanoTime();
+        Long lastFull = lastFullCheck.get(voucherId);
+        if (lastFull != null && now - lastFull < fullCheckNanos && consistency.quickConsistent(voucherId)) {
+            redis.delete(streakKey);
+            return;
+        }
+        Map<String, Object> snapshot = consistency.snapshotForReconciliation(voucherId);
+        lastFullCheck.put(voucherId, now);
         if (Boolean.TRUE.equals(snapshot.get("consistent"))) {
             redis.delete(streakKey);
             return;

@@ -30,6 +30,6 @@ public class BookingExceptionAdvice {
         return ResponseEntity.status(503).header("Retry-After", "1").body(new MutationResult(
                 error.outcomeUnknown ? "BOOKING_OUTCOME_UNKNOWN" : "BOOKING_SERVICE_UNAVAILABLE", 503,
                 error.outcomeUnknown ? "预约服务连接中断，操作结果尚未确定。请查询原操作结果，重试时使用同一操作键。"
-                        : "预约服务暂时无法连接，请稍后刷新。", null));
+                        : "预约服务繁忙或暂时无法连接，本次请求未执行。请稍后重试，写操作沿用原操作键。", null));
     }
 }

@@ -43,7 +43,8 @@ class CommerceAdmissionDurabilityServiceTest {
                 50_000,
                 300_000,
                 1_000,
-                "test", mock(CommerceReadCache.class)
+                "test", mock(CommerceReadCache.class),
+                new CommerceAdmissionLedgerWriter(jdbc, metrics, 1, 64)
         );
     }
 

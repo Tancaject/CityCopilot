@@ -87,6 +87,8 @@ flowchart LR
 3. 关单使用条件更新：`UPDATE ... SET status=已取消 WHERE id=? AND status=待支付`，影响行数为 0 说明已被支付或已被关闭，直接跳过。
 4. 同一事务内写入库存回补记录和 Outbox；Redis 库存和买家集合沿用现有取消流程里的「恢复库存」阶段。
 
+2026-10-19 起按券成批关单：先找出最早到期订单所在的券，再锁定这张券最多 100 张到期订单（[Commerce V18](../../deploy/mysql/commerce/V18__order_voucher_expiry_index.sql) 的 `(voucher_id,status,pay_deadline)` 只扫描、只锁住到期订单）。一批订单共用一个事务、一次库存 fence、一次券库存行更新，提交后用 `commerce_restore_inventory_batch.lua` 一次返还 Redis 库存，逐单 marker 语义与单条取消相同。提交后若 Redis 返还失败，Recovery 保持 `RESTORE_PENDING`，恢复轮询按“券 + fence 令牌”整批重试：逐单重试时第一单成功就会释放 fence，其余单会被误判为 fence 过期。bigdata 上关单速度从约 10 单/s 提到约 435 单/s。用户主动取消、退款仍走单条路径。
+
 改动点：Commerce 迁移 V11、关单任务、订单状态补「超时取消」原因码。
 
 测试点（加到 `SeckillLifecycleIT`）：

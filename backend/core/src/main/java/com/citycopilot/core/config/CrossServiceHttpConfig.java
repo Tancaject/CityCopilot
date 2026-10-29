@@ -17,7 +17,7 @@ public class CrossServiceHttpConfig {
             @Value("${citycopilot.http.commerce.connect-timeout:2s}") Duration connect,
             @Value("${citycopilot.http.commerce.response-timeout:3s}") Duration commerce,
             @Value("${citycopilot.http.commerce.booking-response-timeout:5s}") Duration booking,
-            @Value("${citycopilot.http.commerce.max-concurrent:64}") int maximum) {
+            @Value("${citycopilot.http.commerce.max-concurrent:512}") int maximum) {
         if (maximum < 1) throw new IllegalArgumentException("Commerce HTTP concurrency must be positive");
         Semaphore capacity = new Semaphore(maximum);
         return new CommerceHttpFactories(

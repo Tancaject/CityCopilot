@@ -101,7 +101,7 @@ class DeadlineHttpRequestFactoryTest {
         var second = new DeadlineHttpRequestFactory(Duration.ofSeconds(1), Duration.ofSeconds(3), () -> null, false, capacity);
         try (ClientHttpResponse held = first.createRequest(URI.create(base + "/ok"), HttpMethod.GET).execute()) {
             assertThatThrownBy(() -> second.createRequest(URI.create(base + "/ok"), HttpMethod.GET).execute())
-                    .isInstanceOf(IOException.class).hasMessageContaining("capacity exhausted");
+                    .isInstanceOf(CapacityExhaustedException.class).hasMessageContaining("capacity exhausted");
             assertThat(requests.get()).isEqualTo(1);
             assertThat(held.getBody().readAllBytes()).isEqualTo("ok".getBytes());
         }

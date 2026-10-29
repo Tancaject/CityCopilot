@@ -25,6 +25,7 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
@@ -41,16 +42,22 @@ final class CommerceRedisReplicationExecutor {
     private static final Logger log = LoggerFactory.getLogger(CommerceRedisReplicationExecutor.class);
     /** Redis 写入副本确认结果与耗时的指标名。 */
     private static final String METRIC = "citycopilot.commerce.redis.replication.confirmation";
-    /** 永久保留全局幂等身份；已存在时用同值写产生可由 WAIT 覆盖的新复制偏移。 */
+    /** 保留全局幂等身份并续期；已存在时用同值写产生可由 WAIT 覆盖的新复制偏移。 */
     private static final byte[] RESERVE_GLOBAL_IDENTITY_SCRIPT = """
             local existing = redis.call('get', KEYS[1])
             if not existing then
-              redis.call('set', KEYS[1], ARGV[1])
+              redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2])
               return ARGV[1]
             end
-            redis.call('set', KEYS[1], existing)
+            redis.call('set', KEYS[1], existing, 'EX', ARGV[2])
             return existing
             """.getBytes(StandardCharsets.UTF_8);
+    /**
+     * 全局幂等身份的保留期。每次受理都写一个键（约 200 字节），永久保留会让 Redis 随订单量增长直到写满；
+     * 默认 160MB 上限下保留 7 天只够约 75 万次受理。只有账本仍为 PREPARED 时才会读到本键，且以账本订单号
+     * 重建，过期不改变身份，因此保留期只影响内存，取 1 天。
+     */
+    private static final long GLOBAL_IDENTITY_TTL_SECONDS = Duration.ofDays(1).toSeconds();
     /** 控制面 SET NX；同值已存在仍执行同值写以便重新确认复制。 */
     private static final byte[] SET_IF_ABSENT_SCRIPT = """
             local existing = redis.call('get', KEYS[1])
@@ -130,7 +137,7 @@ final class CommerceRedisReplicationExecutor {
     }
 
     /**
-     * 永久保留用户幂等键对应的订单身份，并确认写入复制。
+     * 保留用户幂等键对应的订单身份（{@link #GLOBAL_IDENTITY_TTL_SECONDS} 内有效），并确认写入复制。
      *
      * @param key 全局幂等身份键
      * @param candidateIdentity 候选订单/Voucher 身份编码
@@ -143,7 +150,7 @@ final class CommerceRedisReplicationExecutor {
             byte[] existing = commands.evalValue(
                     RESERVE_GLOBAL_IDENTITY_SCRIPT,
                     new byte[][]{rawKey},
-                    new byte[][]{candidate}
+                    new byte[][]{candidate, bytes(Long.toString(GLOBAL_IDENTITY_TTL_SECONDS))}
             );
             if (existing == null) {
                 throw new IllegalStateException("Redis did not retain the global admission identity");

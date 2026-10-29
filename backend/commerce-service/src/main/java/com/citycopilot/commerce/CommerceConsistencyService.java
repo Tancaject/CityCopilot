@@ -86,6 +86,32 @@ public class CommerceConsistencyService {
     }
 
     /**
+     * 只比汇总数的快速核对，供后台巡检每轮使用；返回 false（不一致或无法判断）时由调用方转全量快照。
+     *
+     * <p>全量快照一致时它必然通过：一人一单约束下，有效订单与 RESERVED 预留的买家互不重叠，买家集合大小
+     * 等于两者之和，期望 Redis 库存等于 MySQL 库存减 RESERVED 数。反过来它看不出数量相同、名单不同的错误，
+     * 也看不出“预留标记已建单但订单不存在”的冲突，这两类由定期全量覆盖。所有计数都只读索引。</p>
+     */
+    boolean quickConsistent(long voucherId) {
+        Long inflight = redis.opsForSet().size(keyspace.inflight(voucherId));
+        Long redisBuyers = redis.opsForSet().size(keyspace.buyers(voucherId));
+        Integer redisStock = parseStock(redis.opsForValue().get(keyspace.stock(voucherId)));
+        if (inflight == null || inflight != 0L || redisBuyers == null || redisStock == null) return false;
+        Map<String, Object> counts = jdbc.queryForMap("""
+                SELECT (SELECT stock FROM commerce_seckill_voucher WHERE voucher_id=?) AS stock,
+                       (SELECT COUNT(*) FROM commerce_order WHERE voucher_id=? AND status<>4) AS active_orders,
+                       (SELECT COUNT(*) FROM commerce_reservation WHERE voucher_id=? AND status='RESERVED') AS reserved,
+                       (SELECT COUNT(*) FROM commerce_order_recovery WHERE voucher_id=?
+                          AND phase IN ('RECEIVED','COMPENSATION_REQUIRED','RESTORE_PENDING','REPAIR_REQUIRED')) AS recovery
+                """, voucherId, voucherId, voucherId, voucherId);
+        if (!(counts.get("stock") instanceof Number stock)) return false;
+        long reserved = ((Number) counts.get("reserved")).longValue();
+        return ((Number) counts.get("recovery")).longValue() == 0L
+                && redisStock == stock.longValue() - reserved
+                && redisBuyers == ((Number) counts.get("active_orders")).longValue() + reserved;
+    }
+
+    /**
      * 从两套存储重建期望状态，并在加入时间戳前计算 evidenceHash。
      *
      * <p>期望 Redis 库存 = MySQL 可用库存 - 尚未生成订单的有效 RESERVED 预留。</p>

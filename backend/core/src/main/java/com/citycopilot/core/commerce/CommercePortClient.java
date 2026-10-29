@@ -22,6 +22,7 @@ import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.dto.UserDTO;
 import com.citycopilot.core.config.CrossServiceHttpConfig.CommerceHttpFactories;
 import com.citycopilot.core.utils.UserHolder;
+import com.citycopilot.http.CapacityExhaustedException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -121,6 +122,12 @@ public class CommercePortClient {
         } catch (RestClientResponseException error) {
             throw seckillFailure(error);
         } catch (RestClientException error) {
+            if (CapacityExhaustedException.isCause(error)) {
+                // 本地并发名额已满、请求从未发出：结果明确是未执行，不能报成结果未知让客户端先去查询。
+                throw new CommerceHttpException(503, "COMMERCE_CAPACITY_EXHAUSTED",
+                        "Commerce is at capacity and the request was not sent; retry later with the same Idempotency-Key",
+                        RETRY_AFTER_ONE_SECOND, error);
+            }
             throw new CommerceHttpException(
                     503,
                     CommerceAdmissionOutcomePolicy.COMMERCE_ADMISSION_OUTCOME_UNKNOWN,
@@ -150,7 +157,7 @@ public class CommercePortClient {
         } catch (RestClientResponseException error) {
             throw failure(error);
         } catch (RestClientException error) {
-            return unavailable();
+            return unavailable(error);
         }
     }
 
@@ -175,7 +182,7 @@ public class CommercePortClient {
         } catch (RestClientResponseException error) {
             throw failure(error);
         } catch (RestClientException error) {
-            return unavailable();
+            return unavailable(error);
         }
     }
 
@@ -203,7 +210,7 @@ public class CommercePortClient {
         } catch (RestClientResponseException error) {
             throw failure(error);
         } catch (RestClientException error) {
-            return unavailable();
+            return unavailable(error);
         }
     }
 
@@ -233,7 +240,7 @@ public class CommercePortClient {
         } catch (RestClientResponseException error) {
             throw failure(error);
         } catch (RestClientException error) {
-            return unavailable();
+            return unavailable(error);
         }
     }
 
@@ -258,7 +265,7 @@ public class CommercePortClient {
         } catch (RestClientResponseException error) {
             throw failure(error);
         } catch (RestClientException error) {
-            return unavailable();
+            return unavailable(error);
         }
     }
 
@@ -284,7 +291,7 @@ public class CommercePortClient {
         } catch (RestClientResponseException error) {
             throw failure(error);
         } catch (RestClientException error) {
-            return unavailable();
+            return unavailable(error);
         }
     }
 
@@ -368,7 +375,7 @@ public class CommercePortClient {
         } catch (RestClientResponseException error) {
             throw failure(error);
         } catch (RestClientException error) {
-            return unavailable();
+            return unavailable(error);
         }
     }
 
@@ -510,8 +517,15 @@ public class CommercePortClient {
         return new CommerceError(false, "COMMERCE_UNAVAILABLE", unreadable);
     }
 
-    /** @return Commerce 网络不可达时使用的统一失败结果 */
-    private Result unavailable() {
+    /**
+     * @return Commerce 网络不可达时使用的统一失败结果；本地并发名额已满时请求从未发出，单独说明，
+     *         仍提示沿用原请求重试，因为它可能是一次结果未知写入的重试
+     */
+    private Result unavailable(RestClientException error) {
+        if (CapacityExhaustedException.isCause(error)) {
+            return Result.fail("COMMERCE_CAPACITY_EXHAUSTED",
+                    "Commerce is at capacity and this request was not sent; retry later with the original request");
+        }
         return Result.fail("COMMERCE_UNAVAILABLE",
                 "Commerce request could not be completed; check service connectivity and query any earlier write result before retrying");
     }

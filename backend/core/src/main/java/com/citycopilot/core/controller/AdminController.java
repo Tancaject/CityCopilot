@@ -19,14 +19,16 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 后台运营概览与审计日志控制器。
  *
  * <p>类级权限允许审计只读访问；运营汇总另需后台访问权限，清理日志另需审计写权限。
- * 本地用户、店铺和内容指标在 Core 统计，订单指标必须从 Commerce 单写者实时获取。</p>
+ * 本地用户、店铺和内容指标在 Core 统计，订单指标必须从 Commerce 单写者获取。</p>
  */
 @RestController
 @RequestMapping("/admin")
@@ -49,11 +51,18 @@ public class AdminController {
     @Resource
     private CommercePortClient commercePortClient;
 
+    /** 运营汇总缓存时长：每次计算要全表扫描 Commerce 订单并做多次 COUNT，看板接受这一量级的延迟。 */
+    private static final long SUMMARY_TTL_NANOS = TimeUnit.SECONDS.toNanos(30);
+    /** 最近一次成功的汇总；失败结果不缓存，下一次请求重新计算。 */
+    private volatile CachedSummary cachedSummary;
+    /** 缓存失效时只让一个请求重算，其余请求等待它的结果，避免并发重复扫描。 */
+    private final Object summaryRefresh = new Object();
+
     /**
      * 汇总当天运营指标。
      *
      * <p>“当天”以 Core 系统业务时区为准。Commerce 调用失败或响应结构非法时不拼接部分数据，
-     * 避免后台把缺失订单指标误当成零。</p>
+     * 避免后台把缺失订单指标误当成零。成功结果缓存 30 秒，指标最多滞后这么久。</p>
      *
      * @return Core 本地指标与 Commerce 权威交易指标组成的概览
      */
@@ -62,6 +71,20 @@ public class AdminController {
     public Result opsSummary() {
         ZoneId businessZone = ZoneId.systemDefault();
         LocalDate businessDate = LocalDate.now(businessZone);
+        CachedSummary cached = cachedSummary;
+        if (cached != null && cached.freshFor(businessDate)) return Result.ok(cached.summary());
+        synchronized (summaryRefresh) {
+            cached = cachedSummary;
+            if (cached != null && cached.freshFor(businessDate)) return Result.ok(cached.summary());
+            Result result = computeOpsSummary(businessZone, businessDate);
+            if (Boolean.TRUE.equals(result.getSuccess())) {
+                cachedSummary = new CachedSummary(businessDate, System.nanoTime(), result.getData());
+            }
+            return result;
+        }
+    }
+
+    private Result computeOpsSummary(ZoneId businessZone, LocalDate businessDate) {
         LocalDateTime today = businessDate.atStartOfDay();
         // 使用同一业务日的半开区间 [当天零点, 次日零点)，避免跨时区统计漂移。
         Result commerceResult = commercePortClient.operationsSummary(
@@ -99,7 +122,14 @@ public class AdminController {
         summary.put("pendingGeo", pendingGeo);
         summary.put("verifiedGeo", verifiedGeo);
         summary.put("failedAuditsToday", failedAuditsToday);
-        return Result.ok(summary);
+        return Result.ok(Collections.unmodifiableMap(summary));
+    }
+
+    /** 跨过业务日零点的缓存不再使用，避免“今日”指标沿用前一天的统计区间。 */
+    private record CachedSummary(LocalDate businessDate, long computedAtNanos, Object summary) {
+        boolean freshFor(LocalDate date) {
+            return businessDate.equals(date) && System.nanoTime() - computedAtNanos < SUMMARY_TTL_NANOS;
+        }
     }
 
     /**

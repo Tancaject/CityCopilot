@@ -32,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static com.citycopilot.commerce.CommerceOrderRecoveryStore.PHASE_COMPENSATION_REQUIRED;
@@ -976,27 +977,44 @@ public class CommerceOrderStreamWorker {
             log.warn("Unable to query pending Commerce inventory restores", unavailable);
             return;
         }
+        // 同一次取消批次共享一个库存 fence，必须整批重试：逐单脚本成功一单就会释放 fence，其余单会被误判为 fence 过期。
+        Map<List<String>, List<Map<String, Object>>> batches = new LinkedHashMap<>();
         for (Map<String, Object> row : pending) {
+            batches.computeIfAbsent(List.of(String.valueOf(row.get("voucher_id")),
+                    String.valueOf(row.get("inventory_fence_token"))), ignored -> new ArrayList<>()).add(row);
+        }
+        for (Map.Entry<List<String>, List<Map<String, Object>>> batch : batches.entrySet()) {
+            long voucherId = Long.parseLong(batch.getKey().get(0));
+            String fenceToken = batch.getKey().get(1);
+            List<Map<String, Object>> rows = batch.getValue();
             try {
                 transactions.executeWithoutResult(tx -> {
-                    var claimed = jdbc.queryForList("""
+                    var claimed = Set.copyOf(jdbc.queryForList("""
                             SELECT source_id FROM commerce_order_recovery
-                            WHERE source_id=? AND phase=? FOR UPDATE SKIP LOCKED
-                            """, String.class, row.get("source_id"), PHASE_RESTORE_PENDING);
-                    if (claimed.isEmpty()) return;
-                    orders.attemptTransitionInventoryRestore(
-                        String.valueOf(row.get("source_id")),
-                        ((Number) row.get("order_id")).longValue(),
-                        ((Number) row.get("voucher_id")).longValue(),
-                        ((Number) row.get("user_id")).longValue(),
-                        ((Number) row.get("status")).intValue() == 4,
-                        String.valueOf(row.get("inventory_fence_token"))
-                    );
+                            WHERE source_id IN (%s) AND phase=? FOR UPDATE SKIP LOCKED
+                            """.formatted(CommerceOrderService.placeholders(rows.size(), 1)), String.class,
+                            concatSourceIds(rows, PHASE_RESTORE_PENDING)));
+                    List<CommerceOrderService.TransitionRestore> restores = rows.stream()
+                            .filter(row -> claimed.contains(String.valueOf(row.get("source_id"))))
+                            .map(row -> new CommerceOrderService.TransitionRestore(
+                                    String.valueOf(row.get("source_id")),
+                                    ((Number) row.get("order_id")).longValue(),
+                                    ((Number) row.get("user_id")).longValue(),
+                                    ((Number) row.get("status")).intValue() == 4))
+                            .toList();
+                    if (!restores.isEmpty()) orders.restoreTransitionInventory(voucherId, fenceToken, restores);
                 });
             } catch (Exception failure) {
-                log.warn("Unable to resume inventory restore for {}", row.get("source_id"));
+                log.warn("Unable to resume inventory restore for {} orders of voucher {}", rows.size(), voucherId);
             }
         }
+    }
+
+    private static Object[] concatSourceIds(List<Map<String, Object>> rows, String phase) {
+        List<Object> arguments = new ArrayList<>();
+        rows.forEach(row -> arguments.add(row.get("source_id")));
+        arguments.add(phase);
+        return arguments.toArray();
     }
 
     /**

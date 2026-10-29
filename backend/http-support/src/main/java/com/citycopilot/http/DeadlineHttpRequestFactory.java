@@ -101,7 +101,7 @@ public final class DeadlineHttpRequestFactory implements ClientHttpRequestFactor
             String requestId = MDC.get(RequestIdFilter.MDC_KEY);
             if (requestId != null) headers.set(RequestIdFilter.HEADER, requestId);
         }
-        if (!capacity.tryAcquire()) throw new IOException("HTTP capacity exhausted for " + uri.getAuthority() + "; no request was sent");
+        if (!capacity.tryAcquire()) throw new CapacityExhaustedException(uri.getAuthority());
         CompletableFuture<HttpResponse<InputStream>> future;
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder(uri).timeout(timeout)

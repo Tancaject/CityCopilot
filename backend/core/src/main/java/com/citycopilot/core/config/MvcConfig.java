@@ -46,7 +46,7 @@ public class MvcConfig implements WebMvcConfigurer {
     private InternalApiProperties internalApiProperties;
     @Value("${citycopilot.http.request-timeout:8s}")
     private Duration requestTimeout;
-    @Value("${citycopilot.http.max-concurrent:128}")
+    @Value("${citycopilot.http.max-concurrent:768}")
     private int maxConcurrent;
     @Value("${citycopilot.http.authority-max-concurrent:32}")
     private int authorityMaxConcurrent;

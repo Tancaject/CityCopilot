@@ -35,7 +35,8 @@ class CommerceReconciliationJobTest {
                 consistency,
                 metadata,
                 JsonMapper.builderWithJackson2Defaults().build(), leader(),
-                new CommerceRedisKeyspace(1, "v1"), Duration.ofDays(1)
+                new CommerceRedisKeyspace(1, "v1"), Duration.ofDays(1),
+                mock(CommerceAdmissionDurabilityService.class), Duration.ofMinutes(10)
         );
 
         job.reconcile();
@@ -65,7 +66,8 @@ class CommerceReconciliationJobTest {
                 consistency,
                 metadata,
                 JsonMapper.builderWithJackson2Defaults().build(), leader(),
-                new CommerceRedisKeyspace(1, "v1"), Duration.ofDays(1)
+                new CommerceRedisKeyspace(1, "v1"), Duration.ofDays(1),
+                mock(CommerceAdmissionDurabilityService.class), Duration.ofMinutes(10)
         );
 
         job.reconcile();
@@ -91,7 +93,8 @@ class CommerceReconciliationJobTest {
                 consistency,
                 metadata,
                 JsonMapper.builderWithJackson2Defaults().build(), leader(),
-                new CommerceRedisKeyspace(1, "v1"), Duration.ofDays(1)
+                new CommerceRedisKeyspace(1, "v1"), Duration.ofDays(1),
+                mock(CommerceAdmissionDurabilityService.class), Duration.ofMinutes(10)
         );
 
         job.reconcile();

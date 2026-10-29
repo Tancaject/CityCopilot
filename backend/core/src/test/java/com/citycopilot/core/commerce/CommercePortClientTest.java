@@ -217,6 +217,45 @@ class CommercePortClientTest {
     }
 
     @Test
+    void localCapacityRejectionIsReportedAsNotSentInsteadOfUnknownOutcome() throws Exception {
+        HttpServer downstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var workers = Executors.newCachedThreadPool();
+        downstream.setExecutor(workers);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger requests = new AtomicInteger();
+        downstream.createContext("/commerce/v1/seckill/10", exchange -> {
+            requests.incrementAndGet();
+            try { release.await(4, TimeUnit.SECONDS); } catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+            exchange.sendResponseHeaders(500, -1); exchange.close();
+        });
+        downstream.start();
+        var factories = new CrossServiceHttpConfig().commerceHttpFactories(Duration.ofSeconds(1),
+                Duration.ofSeconds(3), Duration.ofSeconds(3), 1);
+        var real = new CommercePortClient("http://127.0.0.1:" + downstream.getAddress().getPort(), "service-secret", factories);
+        try {
+            var held = workers.submit(() -> {
+                UserDTO user = new UserDTO();
+                user.setId(8L);
+                UserHolder.saveUser(user);
+                try { return org.assertj.core.api.Assertions.catchThrowable(() -> real.seckill(10L, "first-key")); }
+                finally { UserHolder.removeUser(); }
+            });
+            while (requests.get() == 0) Thread.sleep(5);
+            var error = catchThrowableOfType(() -> real.seckill(10L, "second-key"), CommercePortClient.CommerceHttpException.class);
+            assertThat(error.status()).isEqualTo(503);
+            assertThat(error.code()).isEqualTo("COMMERCE_CAPACITY_EXHAUSTED");
+            assertThat(error.retryAfter()).isEqualTo("1");
+            // 其他调用（这里是订单列表）共享同一份名额，同样明确报“未发出”，并由统一映射转成 503。
+            assertThat(real.myOrders(1).getCode()).isEqualTo("COMMERCE_CAPACITY_EXHAUSTED");
+            assertThat(requests.get()).isEqualTo(1);
+            release.countDown();
+            held.get(5, TimeUnit.SECONDS);
+        } finally {
+            release.countDown(); downstream.stop(0); workers.shutdownNow();
+        }
+    }
+
+    @Test
     void realSlowBodyKeepsOriginalKeyAndUnknownAdmissionOutcomeWithoutRetry() throws Exception {
         HttpServer downstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         var workers = Executors.newCachedThreadPool();

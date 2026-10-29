@@ -30,6 +30,8 @@ Core、Commerce 的业务 HTTP 响应返回实际采用的截止时间头。`Req
 
 取消表示本地停止等待并尝试中止 HTTP exchange，不能证明远端处理停止、JDBC 被取消或事务回滚。预算没有为全部业务代码建立可抢占的 CPU/JDBC 执行时限。尤其写请求已经发出后，仍按既有 `COMMERCE_ADMISSION_OUTCOME_UNKNOWN` / `BOOKING_OUTCOME_UNKNOWN` 等语义处理，先查询状态，再使用原幂等键恢复；不能生成新键重做，也不因超时回退到旧 writer。
 
+共享目标容量已满时这一次请求根本没有发出：传输层抛 `CapacityExhaustedException`，秒杀返回 `503 COMMERCE_CAPACITY_EXHAUSTED` 与 `Retry-After: 1`，订单查询、订单操作等其他 Commerce 调用返回同一错误码（按错误码后缀映射为 503），预约返回 `BOOKING_SERVICE_UNAVAILABLE`，都不再报成结果未知。它可能是一次结果未知写入的重试，所以提示仍沿用原幂等键重试。这类削峰由 HTTP 503 指标计数，不逐条记录带堆栈的 WARN，避免过载时日志放大负载。
+
 ## 定向验证
 
 `DeadlineHttpRequestFactoryTest` 使用真实 loopback HTTP 服务覆盖迟到响应头、头部后停滞的 body、显式取消、并发拒绝及许可回收、多次请求共享预算。`DeadlineHandlerInterceptorTest` 覆盖认证后的夹紧、外部头隔离、拒绝与作用域清理。Core 的两个端口测试和 Commerce 的 `PlaceAuthorityDeadlineTest` 检查真实慢 body 的既有业务错误映射。无需启动数据库或完整应用。

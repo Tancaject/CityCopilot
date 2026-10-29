@@ -58,8 +58,23 @@ final class CommerceReadCache implements MessageListener {
         soldOut.invalidate(new String(message.getBody(), StandardCharsets.UTF_8));
     }
 
+    /**
+     * 本地标记 1 秒过期（Pub/Sub 丢消息时的兜底）；过期后先读一次 Redis 库存再决定，而不是放行请求去写账本。
+     * 否则售罄后每秒都有一波请求写 PREPARED、执行 Lua、再写 REJECTED，各等一次刷盘，占满上游并发名额。
+     * 这里只是提示：库存键缺失或不是数字时不下结论，交给 Lua 按维护/缺失语义处理；库存最终仍由 Lua 裁决。
+     */
     boolean isSoldOut(long voucherId) {
-        return soldOut.getIfPresent(keyspace.stock(voucherId)) != null;
+        String key = keyspace.stock(voucherId);
+        if (soldOut.getIfPresent(key) != null) return true;
+        String stock = redis.opsForValue().get(key);
+        if (stock == null) return false;
+        try {
+            if (Long.parseLong(stock) > 0) return false;
+        } catch (NumberFormatException invalid) {
+            return false;
+        }
+        soldOut.put(key, true);
+        return true;
     }
 
     void markSoldOut(long voucherId) {

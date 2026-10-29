@@ -4,16 +4,33 @@ import com.citycopilot.core.commerce.CommercePortClient;
 import com.citycopilot.core.dto.Result;
 import com.citycopilot.core.utils.CacheRebuildBusyException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@ExtendWith(OutputCaptureExtension.class)
 class WebExceptionAdviceTest {
+
+    @Test
+    void capacityShedIsNotLoggedButUnknownOutcomeIs(CapturedOutput output) {
+        WebExceptionAdvice advice = new WebExceptionAdvice();
+
+        advice.handleCommerceFailure(new CommercePortClient.CommerceHttpException(
+                503, "COMMERCE_CAPACITY_EXHAUSTED", "not sent", "1", new java.io.IOException("capacity")));
+        assertThat(output).doesNotContain("Commerce call failed");
+
+        advice.handleCommerceFailure(new CommercePortClient.CommerceHttpException(
+                503, "COMMERCE_ADMISSION_OUTCOME_UNKNOWN", "unknown", "1", new java.io.IOException("reset")));
+        assertThat(output).contains("Commerce call failed with 503 COMMERCE_ADMISSION_OUTCOME_UNKNOWN");
+    }
 
     @Test
     void cacheRebuildContentionReturnsRetryableServiceUnavailable() {
@@ -32,7 +49,8 @@ class WebExceptionAdviceTest {
     @ParameterizedTest
     @CsvSource({
             "AUTH_REQUIRED,401", "SHOP_ACCESS_DENIED,403", "SHOP_NOT_FOUND,404",
-            "LOGIN_CODE_RATE_LIMITED,429", "COMMERCE_UNAVAILABLE,503", "AMAP_RESPONSE_INVALID,502",
+            "LOGIN_CODE_RATE_LIMITED,429", "COMMERCE_UNAVAILABLE,503", "COMMERCE_CAPACITY_EXHAUSTED,503",
+            "AMAP_RESPONSE_INVALID,502",
             "SERVER_ERROR,500", "LOGIN_CODE_INVALID,400", "BAD_REQUEST,400"
     })
     void failureCodesMapToHttpStatus(String code, int status) {

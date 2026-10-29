@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -67,6 +68,7 @@ class SeckillLifecycleIT {
     private static CommerceReadCache readCache;
     private static RedisMessageListenerContainer cacheListener;
     private static CommerceVoucherService vouchers;
+    private static CommerceAdmissionDurabilityService durableAdmissions;
 
     @BeforeAll
     static void connect() throws Exception {
@@ -116,7 +118,9 @@ class SeckillLifecycleIT {
         replicatedRedis = new CommerceRedisReplicationExecutor(redisFactory, metrics, 0, 1_000);
         var ids = new CommerceOrderIdGenerator(sql, transactions, 1024);
         var durable = new CommerceAdmissionDurabilityService(sql, ids, keyspace, metrics,
-                100, 0, 30_000, 5_000, 20, 50_000, 300_000, 1, "seckill-it", readCache);
+                100, 0, 30_000, 5_000, 20, 50_000, 300_000, 1, "seckill-it", readCache,
+                new CommerceAdmissionLedgerWriter(sql, metrics, 4, 64));
+        durableAdmissions = durable;
         var recovery = new CommerceOrderRecoveryStore(sql);
         inventory = new CommerceRedisInventoryBootstrap(sql, redis, keyspace, false);
         metadata = new CommerceRedisCampaignMetadata(sql, redis, keyspace, true, 300_000);
@@ -137,6 +141,66 @@ class SeckillLifecycleIT {
         if (replicatedRedis != null) replicatedRedis.close();
         if (redisFactory != null) redisFactory.destroy();
         if (pool != null) pool.close();
+    }
+
+    @Test
+    void ledgerWriterCommitsMultiRowBatchesAndChecksEveryIdentity() throws Exception {
+        long voucherId = NEXT_VOUCHER.incrementAndGet();
+        long base = voucherId * 10;
+        var writer = CommerceAdmissionLedgerWriter.manual(sql, new SimpleMeterRegistry(), 64);
+        ExecutorService callers = Executors.newFixedThreadPool(4);
+        try {
+            List<CommerceAdmissionLedgerWriter.Identity> rows = List.of(
+                    ledgerIdentity(base, base, "k0", voucherId),
+                    ledgerIdentity(base + 1, base + 1, "k1", voucherId),
+                    ledgerIdentity(base + 2, base + 2, "k2", voucherId));
+            List<Future<?>> prepared = new ArrayList<>();
+            for (var row : rows) prepared.add(callers.submit(() -> writer.insertPrepared(row)));
+            // 同一用户幂等键、更大订单号的并发准备在同一批内被 IGNORE，按主键升序插入时较小订单号获胜。
+            prepared.add(callers.submit(() -> writer.insertPrepared(ledgerIdentity(base + 9, base, "k0", voucherId))));
+            flushWhenQueued(writer, 4);
+            for (Future<?> future : prepared) future.get();
+            assertThat(sql.queryForObject("SELECT COUNT(*) FROM commerce_admission_ledger WHERE voucher_id=?",
+                    Long.class, voucherId)).isEqualTo(3L);
+            assertThat(sql.queryForObject("SELECT order_id FROM commerce_admission_ledger WHERE user_id=? AND idempotency_key='k0'",
+                    Long.class, base)).isEqualTo(base);
+
+            // Worker 已抢先建单的行不被改回 ACCEPTED；批内无法区分哪行未命中，所有调用方都须重读确认。
+            sql.update("UPDATE commerce_admission_ledger SET status='ORDER_CREATED' WHERE order_id=?", base + 1);
+            List<Future<Boolean>> accepted = new ArrayList<>();
+            for (var row : rows) accepted.add(callers.submit(() -> writer.markAccepted(row)));
+            flushWhenQueued(writer, 3);
+            for (Future<Boolean> future : accepted) assertThat(future.get()).isFalse();
+            assertThat(sql.queryForList("SELECT status FROM commerce_admission_ledger WHERE voucher_id=? ORDER BY order_id",
+                    String.class, voucherId)).containsExactly("ACCEPTED", "ORDER_CREATED", "ACCEPTED");
+
+            List<Future<Boolean>> fresh = new ArrayList<>();
+            var next = List.of(ledgerIdentity(base + 3, base + 3, "k3", voucherId),
+                    ledgerIdentity(base + 4, base + 4, "k4", voucherId));
+            for (var row : next) fresh.add(callers.submit(() -> { writer.insertPrepared(row); return true; }));
+            flushWhenQueued(writer, 2);
+            for (Future<Boolean> future : fresh) future.get();
+            List<Future<Boolean>> certain = new ArrayList<>();
+            for (var row : next) certain.add(callers.submit(() -> writer.markAccepted(row)));
+            flushWhenQueued(writer, 2);
+            for (Future<Boolean> future : certain) assertThat(future.get()).isTrue();
+        } finally {
+            callers.shutdownNow();
+        }
+    }
+
+    private static CommerceAdmissionLedgerWriter.Identity ledgerIdentity(long orderId, long userId, String key, long voucherId) {
+        return new CommerceAdmissionLedgerWriter.Identity(orderId, userId, key, voucherId, "seckill:v1:" + voucherId,
+                keyspace.routingGeneration(), keyspace.physicalShardCount());
+    }
+
+    private static void flushWhenQueued(CommerceAdmissionLedgerWriter writer, int count) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (writer.pending() < count) {
+            if (System.nanoTime() > deadline) throw new AssertionError("ledger writes were not queued");
+            Thread.sleep(5);
+        }
+        writer.flushPending();
     }
 
     @Test
@@ -390,7 +454,8 @@ class SeckillLifecycleIT {
         var transactions = new TransactionTemplate(new DataSourceTransactionManager(pool));
         var ids = new CommerceOrderIdGenerator(sql, transactions, 1024);
         var durable = new CommerceAdmissionDurabilityService(sql, ids, keyspace, new SimpleMeterRegistry(),
-                1, 0, 30_000, 5_000, 20, 50_000, 300_000, 1, "recovery-race-it", readCache);
+                1, 0, 30_000, 5_000, 20, 50_000, 300_000, 1, "recovery-race-it", readCache,
+                new CommerceAdmissionLedgerWriter(sql, new SimpleMeterRegistry(), 4, 64));
         var contender = new CommerceOrderAdmissionService(coordinated, transactions, ids, durable, replicatedRedis, keyspace, readCache);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
@@ -570,12 +635,17 @@ class SeckillLifecycleIT {
         payments.start(orderId, 68_001, 1, false, false);
         var callback = paymentCallback(orderId);
         assertThat(payments.callback(callback, payments.sign(callback))).isEqualTo("PAID");
+        // 身份已固定、但请求在进入 Redis 前就失败的准入：活动结束后不能永远阻止归档。
+        durableAdmissions.prepare(voucherId, 68_003L, "archive-abandoned", "seckill:v1:" + voucherId, null);
+        // 两类幂等键都不能永久保留：全局键带过期时间，券内键在归档时删除。
+        assertThat(redis.getExpire(keyspace.globalIdempotency(68_001, "archive-paid"))).isPositive();
+        assertThat(redis.hasKey(keyspace.idempotency(voucherId, 68_001, "archive-paid"))).isTrue();
         sql.update("UPDATE commerce_seckill_voucher SET end_time=UTC_TIMESTAMP(3)-INTERVAL 2 DAY WHERE voucher_id=?", voucherId);
         var transactions = new TransactionTemplate(new DataSourceTransactionManager(pool));
         sql.update("DELETE FROM commerce_job_lease WHERE job_name='stock-reconciliation'");
         var job = new CommerceReconciliationJob(sql, redis, consistency, metadata,
                 JsonMapper.builderWithJackson2Defaults().build(), new CommerceJobLease(sql, transactions),
-                keyspace, java.time.Duration.ofDays(1));
+                keyspace, java.time.Duration.ofDays(1), durableAdmissions, java.time.Duration.ofMinutes(10));
         try {
             job.reconcile();
             assertThat(count("SELECT COUNT(*) FROM commerce_seckill_voucher WHERE voucher_id=? AND redis_archived_at IS NOT NULL",
@@ -583,6 +653,10 @@ class SeckillLifecycleIT {
             assertThat(redis.hasKey(keyspace.stock(voucherId))).isFalse();
             assertThat(redis.hasKey(keyspace.buyers(voucherId))).isFalse();
             assertThat(redis.hasKey(keyspace.campaignMeta(voucherId))).isFalse();
+            assertThat(redis.hasKey(keyspace.idempotency(voucherId, 68_001, "archive-paid"))).isFalse();
+            assertThat(sql.queryForObject("SELECT CONCAT(status,'/',rejection_code) FROM commerce_admission_ledger WHERE user_id=? AND idempotency_key=?",
+                    String.class, 68_003, "archive-abandoned")).isEqualTo("REJECTED/SECKILL_ENDED");
+            assertThat(seckill(voucherId, 68_003, "archive-abandoned")).isEqualTo("SECKILL_ENDED");
 
             // 归档后的退款只返还 MySQL 库存，回补记录正常完成，不进入人工修复。
             int stockBefore = databaseStock(voucherId);
@@ -597,6 +671,35 @@ class SeckillLifecycleIT {
                     String.class, 68_002, "archive-late")).isEqualTo("REJECTED");
         } finally {
             sql.update("DELETE FROM commerce_job_lease WHERE job_name='stock-reconciliation'");
+        }
+    }
+
+    @Test
+    void voucherUnderMaintenanceDoesNotStarveExpiryOfOtherVouchers() {
+        long fenced = seckillVoucher(2);
+        long open = seckillVoucher(2);
+        long openOrder = Long.parseLong(orderIdOf(seckillResult(open, 69_002, "expiry-open")));
+        drainUntilOrders(open, 1);
+        // 修复前每轮最多看 100 张到期订单：被维护的券有 150 张更早到期的未付订单排在最前面时，
+        // 每轮都在它们身上耗尽次数，其他券的到期订单永远轮不到。这些订单只写在 MySQL、没有 Redis 状态，
+        // 过期任务只会因维护 fence 跳过它们；测试结束后删除，不影响其他用例的计数。
+        sql.update("""
+                INSERT INTO commerce_order(id,user_id,voucher_id,shop_id,shop_name_snapshot,voucher_title_snapshot,
+                    pay_value_snapshot,actual_value_snapshot,status,idempotency_key,pay_deadline)
+                WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n+1 FROM seq WHERE n<149)
+                SELECT 9690000000+n, 69100+n, ?, shop_id, shop_name_snapshot, voucher_title_snapshot,
+                       pay_value_snapshot, actual_value_snapshot, 1, CONCAT('starve-',n), UTC_TIMESTAMP(3)-INTERVAL 1 YEAR
+                FROM seq CROSS JOIN commerce_order WHERE id=?
+                """, fenced, openOrder);
+        sql.update("UPDATE commerce_order SET pay_deadline=UTC_TIMESTAMP(3)-INTERVAL 1 SECOND WHERE id=?", openOrder);
+        redis.opsForValue().set(keyspace.fence(fenced), "operator-maintenance");
+        try {
+            orders.expireDueOrders();
+            assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE id=? AND status=4", openOrder)).isEqualTo(1);
+            assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=? AND status=1", fenced)).isEqualTo(150);
+        } finally {
+            redis.delete(keyspace.fence(fenced));
+            sql.update("DELETE FROM commerce_order WHERE voucher_id=?", fenced);
         }
     }
 
@@ -695,7 +798,7 @@ class SeckillLifecycleIT {
         sql.update("DELETE FROM commerce_job_lease WHERE job_name='stock-reconciliation'");
         var job = new CommerceReconciliationJob(pausedScanner, redis, consistency, metadata,
                 JsonMapper.builderWithJackson2Defaults().build(), new CommerceJobLease(sql, transactions),
-                keyspace, java.time.Duration.ofDays(1));
+                keyspace, java.time.Duration.ofDays(1), durableAdmissions, java.time.Duration.ofMinutes(10));
         try {
             assertThatThrownBy(job::reconcile).isInstanceOf(CommerceJobLease.LeaseLostException.class);
             assertThat(redis.hasKey(keyspace.campaignMeta(voucherId))).isFalse();
@@ -809,6 +912,124 @@ class SeckillLifecycleIT {
     }
 
     @Test
+    void expiryClosesDueOrdersInPerVoucherBatchesAndRestoresEachOnce() {
+        long voucherId = seckillVoucher(150);
+        for (int buyer = 0; buyer < 120; buyer++) seckillResult(voucherId, 93_000 + buyer, "batch-expiry-" + buyer);
+        drainUntilOrders(voucherId, 120);
+        sql.update("UPDATE commerce_order SET pay_deadline=UTC_TIMESTAMP(3)-INTERVAL 1 SECOND WHERE voucher_id=?", voucherId);
+
+        // 120 张超过单批上限，同一轮内分两批关闭。
+        orders.expireDueOrders();
+
+        assertThat(count("SELECT COUNT(*) FROM commerce_order WHERE voucher_id=? AND status=4", voucherId)).isEqualTo(120);
+        assertThat(databaseStock(voucherId)).isEqualTo(150);
+        assertThat(count("SELECT COUNT(*) FROM commerce_order_recovery WHERE voucher_id=? AND source_type='STATE_TRANSITION' AND phase='RESTORED'",
+                voucherId)).isEqualTo(120);
+        assertThat(count("""
+                SELECT COUNT(*) FROM commerce_outbox_event e JOIN commerce_order o ON e.aggregate_id=CAST(o.id AS CHAR)
+                WHERE e.event_type='commerce.order.cancel' AND o.voucher_id=?
+                """, voucherId)).isEqualTo(120);
+        long sample = sql.queryForObject("SELECT MIN(id) FROM commerce_order WHERE voucher_id=?", Long.class, voucherId);
+        assertThat(redis.hasKey(keyspace.restoreMarker(voucherId, sql.queryForObject(
+                "SELECT source_id FROM commerce_order_recovery WHERE order_id=? AND source_type='STATE_TRANSITION'", String.class, sample)))).isFalse();
+        assertThat(redis.hasKey(keyspace.fence(voucherId))).isFalse();
+        assertThat(consistency.snapshot(voucherId)).containsEntry("consistent", true);
+    }
+
+    @Test
+    void pendingRestoresOfOneExpiryBatchAreRetriedTogether() {
+        long voucherId = seckillVoucher(5);
+        List<Long> ids = new ArrayList<>();
+        for (int buyer = 0; buyer < 3; buyer++) {
+            ids.add(Long.parseLong(orderIdOf(seckillResult(voucherId, 94_000 + buyer, "crash-expiry-" + buyer))));
+        }
+        drainUntilOrders(voucherId, 3);
+        // 过期批次已提交、Redis 返还前进程中断的现场：MySQL 已取消并返还库存，三条 Recovery 共享一个仍被持有的 fence。
+        // 逐单重试时第一单成功就会释放 fence，后两单会被误判为 fence 过期而转人工修复。
+        redis.opsForValue().set(keyspace.fence(voucherId), "crashed-batch");
+        for (long id : ids) {
+            Map<String, Object> order = sql.queryForMap("SELECT user_id,version FROM commerce_order WHERE id=?", id);
+            sql.update("UPDATE commerce_order SET status=4,close_reason='PAY_TIMEOUT',version=version+1 WHERE id=?", id);
+            sql.update("UPDATE commerce_reservation SET status='CANCELLED',version=version+1 WHERE order_id=?", id);
+            sql.update("""
+                    INSERT INTO commerce_order_recovery(source_id,source_type,order_id,voucher_id,user_id,payload_json,
+                        phase,inventory_fence_token,compensation_delta)
+                    VALUES (?,'STATE_TRANSITION',?,?,?,'{}','RESTORE_PENDING','crashed-batch',1)
+                    """, "transition:" + id + ":cancel:" + order.get("version"), id, voucherId, order.get("user_id"));
+        }
+        sql.update("UPDATE commerce_seckill_voucher SET stock=stock+3 WHERE voucher_id=?", voucherId);
+
+        worker.resumePendingInventoryRestores();
+
+        assertThat(count("SELECT COUNT(*) FROM commerce_order_recovery WHERE voucher_id=? AND phase='RESTORED'", voucherId))
+                .isEqualTo(3);
+        assertThat(redis.hasKey(keyspace.fence(voucherId))).isFalse();
+        assertThat(consistency.snapshot(voucherId)).containsEntry("consistent", true);
+    }
+
+    @Test
+    void reconciliationRunsQuickChecksAndPeriodicFullSnapshotsCatchSwappedBuyers() {
+        long voucherId = seckillVoucher(5);
+        seckillResult(voucherId, 95_001, "quick-a");
+        seckillResult(voucherId, 95_002, "quick-b");
+        drainUntilOrders(voucherId, 2);
+        var spied = org.mockito.Mockito.spy(consistency);
+        // 用两个极端间隔区分“间隔内只做快速核对”和“到了间隔就全量”，不依赖测试机上一轮巡检耗时。
+        var job = reconciliationJob(spied, java.time.Duration.ofHours(1));
+        try {
+            job.reconcile();
+            job.reconcile();
+            // 首轮全量；第二轮汇总数一致，只做快速核对，不再取出整张买家名单。
+            org.mockito.Mockito.verify(spied, org.mockito.Mockito.times(1)).snapshotForReconciliation(voucherId);
+
+            // 换掉一个买家，数量不变：快速核对看不出，要等全量。
+            redis.opsForSet().remove(keyspace.buyers(voucherId), "95002");
+            redis.opsForSet().add(keyspace.buyers(voucherId), "95999");
+            job.reconcile();
+            assertThat(redis.hasKey(keyspace.fence(voucherId))).isFalse();
+            reconciliationJob(spied, java.time.Duration.ZERO).reconcile();
+            org.mockito.Mockito.verify(spied, org.mockito.Mockito.times(2)).snapshotForReconciliation(voucherId);
+            assertThat(redis.hasKey(keyspace.fence(voucherId))).isTrue();
+        } finally {
+            redis.opsForSet().remove(keyspace.buyers(voucherId), "95999");
+            redis.opsForSet().add(keyspace.buyers(voucherId), "95002");
+            redis.delete(keyspace.fence(voucherId));
+            sql.update("DELETE FROM commerce_job_lease WHERE job_name='stock-reconciliation'");
+        }
+    }
+
+    @Test
+    void reconciliationRunsFullSnapshotAtOnceWhenCountsDisagree() {
+        long voucherId = seckillVoucher(5);
+        seckillResult(voucherId, 96_001, "count-a");
+        seckillResult(voucherId, 96_002, "count-b");
+        drainUntilOrders(voucherId, 2);
+        var spied = org.mockito.Mockito.spy(consistency);
+        var job = reconciliationJob(spied, java.time.Duration.ofMinutes(10));
+        try {
+            job.reconcile();
+            // 少一个买家，数量对不上：不等全量间隔，本轮立即全量并封住准入。
+            redis.opsForSet().remove(keyspace.buyers(voucherId), "96002");
+            job.reconcile();
+            org.mockito.Mockito.verify(spied, org.mockito.Mockito.times(2)).snapshotForReconciliation(voucherId);
+            assertThat(redis.hasKey(keyspace.fence(voucherId))).isTrue();
+        } finally {
+            redis.opsForSet().add(keyspace.buyers(voucherId), "96002");
+            redis.delete(keyspace.fence(voucherId));
+            sql.update("DELETE FROM commerce_job_lease WHERE job_name='stock-reconciliation'");
+        }
+    }
+
+    private static CommerceReconciliationJob reconciliationJob(CommerceConsistencyService checks,
+                                                               java.time.Duration fullCheckInterval) {
+        sql.update("DELETE FROM commerce_job_lease WHERE job_name='stock-reconciliation'");
+        var transactions = new TransactionTemplate(new DataSourceTransactionManager(pool));
+        return new CommerceReconciliationJob(sql, redis, checks, metadata,
+                JsonMapper.builderWithJackson2Defaults().build(), new CommerceJobLease(sql, transactions),
+                keyspace, java.time.Duration.ofDays(1), durableAdmissions, fullCheckInterval);
+    }
+
+    @Test
     void soldOutFastRejectionPreservesPreparedRetriesAndBroadcastsRecovery() throws Exception {
         long voucherId = seckillVoucher(1);
         long owner = 91_001;
@@ -819,6 +1040,10 @@ class SeckillLifecycleIT {
         assertThat(redis.hasKey(keyspace.globalIdempotency(91_003, "sold-out-fast"))).isFalse();
         // 售罄快速拒绝不写账本，售罄洪峰不会转成 MySQL 写入。
         assertThat(count("SELECT COUNT(*) FROM commerce_admission_ledger WHERE user_id=?", 91_003)).isZero();
+        // 本地标记 1 秒后过期；过期后读 Redis 库存仍判定售罄，不放行请求去写 PREPARED/REJECTED 账本。
+        Thread.sleep(1_100);
+        assertThat(seckill(voucherId, 91_004, "sold-out-after-flag-expiry")).isEqualTo("SECKILL_STOCK_NOT_ENOUGH");
+        assertThat(count("SELECT COUNT(*) FROM commerce_admission_ledger WHERE user_id=?", 91_004)).isZero();
         sql.update("UPDATE commerce_admission_ledger SET status='PREPARED',accepted_at=NULL WHERE order_id=?", orderId);
         assertThat(seckillResult(voucherId, owner, "sold-out-owner").orderId()).isEqualTo(orderId);
         drainUntilOrders(voucherId, 1);
@@ -947,7 +1172,8 @@ class SeckillLifecycleIT {
             var migratedCache = new CommerceReadCache(redis, migratedKeys, json);
             var ids = new CommerceOrderIdGenerator(migratedSql, migratedTransactions, 1024);
             var durable = new CommerceAdmissionDurabilityService(migratedSql, ids, migratedKeys, metrics,
-                    100, 0, 30_000, 5_000, 20, 50_000, 300_000, 1, "migration-it", migratedCache);
+                    100, 0, 30_000, 5_000, 20, 50_000, 300_000, 1, "migration-it", migratedCache,
+                    new CommerceAdmissionLedgerWriter(migratedSql, metrics, 4, 64));
             var recovery = new CommerceOrderRecoveryStore(migratedSql);
             var migratedAdmissions = new CommerceOrderAdmissionService(migratedSql, migratedTransactions, ids, durable, replicatedRedis, migratedKeys, migratedCache);
             var migratedOrders = new CommerceOrderService(migratedSql, redis, migratedTransactions, json, durable,

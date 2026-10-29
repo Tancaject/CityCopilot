@@ -44,8 +44,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     @Override
     public Result queryHotBlog(Integer current) {
         if (current == null || current < 1) return Result.fail("INVALID_PAGE", "页码必须大于零");
+        // 只返回记录不返回总数，关闭分页插件每次附带的 COUNT(*) 全表计数。
         List<Blog> blogs = query().orderByDesc("liked", "id")
-                .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE)).getRecords();
+                .page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE, false)).getRecords();
         enrich(blogs);
         return Result.ok(blogs.stream().map(BlogServiceImpl::toView).toList());
     }

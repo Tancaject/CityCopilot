@@ -1,0 +1,56 @@
+# 与 compose.yaml 组合使用，项目名 citycopilot-bigdata：海量数据 MySQL 优化实验专用，数据卷独立，不读写日常数据。
+# 查询优化阶段关闭 Kafka（发布与消费都停），省出约 3GB 内存；所有服务不暴露宿主机端口，压测客户端在同一网络内访问。
+#   docker compose -p citycopilot-bigdata -f compose.yaml -f tools/loadtest/bigdata-compose.yaml --profile app up -d --wait core commerce frontend
+# MySQL 与日常配置一致（commerce-mysql 缓冲池/redo 各 1G 已写入 compose.yaml），压测结论可直接对应日常环境。
+name: citycopilot-bigdata
+
+services:
+  mysql:
+    ports: !reset []
+  commerce-mysql:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  commerce-redis:
+    ports: !reset []
+    # 压测每分钟写入上万个准入幂等键，归档前（订单过期后）一直保留；默认 160MB 几轮就会写满，压测时放宽。
+    mem_limit: 1g
+    environment:
+      REDIS_MAXMEMORY: 800mb
+  commerce-redis-replica:
+    mem_limit: 1g
+    environment:
+      REDIS_MAXMEMORY: 800mb
+  core:
+    restart: "no"
+    ports: !reset []
+    environment:
+      CITYCOPILOT_KAFKA_ENABLED: "false"
+      # 压测不调用真实高德接口：既消耗个人配额，外部限流也会污染后端测量结果。
+      CITYCOPILOT_AMAP_WEB_SERVICE_KEY: ""
+    depends_on: !override
+      mysql:
+        condition: service_healthy
+      core-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      commerce:
+        condition: service_healthy
+  commerce:
+    restart: "no"
+    ports: !reset []
+    environment:
+      CITYCOPILOT_KAFKA_ENABLED: "false"
+      # 压测券到期一分钟后即停止全量对账（生产默认一天），每一级只对账自己的券，前后两次对比的条件一致。
+      CITYCOPILOT_COMMERCE_CAMPAIGN_ARCHIVE_AFTER: "1m"
+    depends_on: !override
+      commerce-mysql:
+        condition: service_healthy
+      commerce-migrate:
+        condition: service_completed_successfully
+      commerce-redis-replica:
+        condition: service_healthy
+  frontend:
+    restart: "no"
+    ports: !reset []

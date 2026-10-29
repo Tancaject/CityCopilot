@@ -19,7 +19,7 @@ public class CommerceWebConfig implements WebMvcConfigurer {
 
     public CommerceWebConfig(
             @Value("${citycopilot.http.request-timeout:8s}") Duration requestTimeout,
-            @Value("${citycopilot.http.max-concurrent:128}") int maxConcurrent) {
+            @Value("${citycopilot.http.max-concurrent:768}") int maxConcurrent) {
         this.deadline = new DeadlineHandlerInterceptor(requestTimeout, maxConcurrent, request -> true);
     }
 

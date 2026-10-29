@@ -4,7 +4,8 @@ server:
   forward-headers-strategy: native
   tomcat:
     threads:
-      max: 400
+      # 秒杀请求要同步等 Commerce 落库（约 200ms），线程数决定能同时等待的请求数，与下游并发上限 512 配套。
+      max: 800
       min-spare: 50
     max-connections: 8192
     accept-count: 1000

@@ -48,6 +48,8 @@ final class CommerceAdmissionDurabilityService {
     private final CommerceReadCache readCache;
     /** 新身份首次准备时分配订单 ID。 */
     private final CommerceOrderIdGenerator orderIds;
+    /** PREPARED 插入与 ACCEPTED 转换的组提交写入器。 */
+    private final CommerceAdmissionLedgerWriter ledger;
     /** 当前实例拥有的路由代际指纹。 */
     private final String routingGeneration;
     /** 当前实例拥有的物理分片数指纹。 */
@@ -96,7 +98,8 @@ final class CommerceAdmissionDurabilityService {
             @Value("${citycopilot.commerce.admission-max-oldest-age-ms:300000}") long maxAcceptedAgeMillis,
             @Value("${citycopilot.commerce.admission-capacity-cache-ms:1000}") long capacityCacheMillis,
             @Value("${citycopilot.commerce.consumer-name:commerce-local}") String nodeName,
-            CommerceReadCache readCache
+            CommerceReadCache readCache,
+            CommerceAdmissionLedgerWriter ledger
     ) {
         if (recoveryBatchSize < 1 || recoveryBatchSize > 10_000) {
             throw new IllegalArgumentException("Admission recovery batch size must be 1..10000");
@@ -111,6 +114,7 @@ final class CommerceAdmissionDurabilityService {
         this.jdbc = jdbc;
         this.readCache = readCache;
         this.orderIds = orderIds;
+        this.ledger = ledger;
         this.routingGeneration = keyspace.routingGeneration();
         this.routingShardCount = keyspace.physicalShardCount();
         this.metrics = metrics;
@@ -174,13 +178,8 @@ final class CommerceAdmissionDurabilityService {
             assertRecoveryCapacity();
             long orderId = requiredOrderId == null ? orderIds.nextId() : requiredOrderId;
             // INSERT IGNORE 只解决并发创建；随后必须重读并逐字段验证究竟是哪一个身份获胜。
-            jdbc.update("""
-                    INSERT IGNORE INTO commerce_admission_ledger(
-                        order_id,user_id,idempotency_key,voucher_id,request_fingerprint,
-                        routing_generation,physical_shard_count,status
-                    ) VALUES (?,?,?,?,?,?,?,'PREPARED')
-                    """, orderId, userId, idempotencyKey, voucherId, requestFingerprint,
-                    routingGeneration, routingShardCount);
+            ledger.insertPrepared(new CommerceAdmissionLedgerWriter.Identity(orderId, userId, idempotencyKey,
+                    voucherId, requestFingerprint, routingGeneration, routingShardCount));
             Admission inserted = find(userId, idempotencyKey);
             if (inserted == null) {
                 throw durabilityUnavailable("Durable admission identity was not stored", null);
@@ -220,19 +219,10 @@ final class CommerceAdmissionDurabilityService {
     void markAccepted(Admission admission) {
         Timer.Sample sample = Timer.start(metrics);
         try {
-            int changed = jdbc.update("""
-                    UPDATE commerce_admission_ledger
-                    SET status='ACCEPTED',accepted_at=COALESCE(accepted_at,CURRENT_TIMESTAMP(3)),
-                        rejection_code=NULL,rejection_http_status=NULL,rejection_message=NULL,
-                        last_error=NULL
-                    WHERE order_id=? AND user_id=? AND voucher_id=? AND idempotency_key=?
-                      AND request_fingerprint=?
-                      AND routing_generation=? AND physical_shard_count=?
-                      AND status='PREPARED'
-                    """, admission.orderId(), admission.userId(), admission.voucherId(),
-                    admission.idempotencyKey(), admission.requestFingerprint(),
-                    admission.routingGeneration(), admission.routingShardCount());
-            if (changed == 0) {
+            boolean changed = ledger.markAccepted(new CommerceAdmissionLedgerWriter.Identity(
+                    admission.orderId(), admission.userId(), admission.idempotencyKey(), admission.voucherId(),
+                    admission.requestFingerprint(), admission.routingGeneration(), admission.routingShardCount()));
+            if (!changed) {
                 Admission current = find(admission.userId(), admission.idempotencyKey());
                 if (current == null
                         || current.status() != Status.ACCEPTED
@@ -703,6 +693,19 @@ final class CommerceAdmissionDurabilityService {
                     503
             );
         };
+    }
+
+    /** 按订单号顺序列出某券最多 limit 条仍为 PREPARED 的准入身份，供活动结束后的对账判断它们是否从未进入 Redis。 */
+    List<Admission> preparedFor(long voucherId, int limit) {
+        return rows(jdbc.queryForList("""
+                SELECT order_id,user_id,idempotency_key,voucher_id,request_fingerprint,
+                       status,rejection_code,rejection_http_status,rejection_message,
+                       attempts,claim_token,routing_generation,physical_shard_count
+                FROM commerce_admission_ledger
+                WHERE voucher_id=? AND status='PREPARED'
+                ORDER BY order_id
+                LIMIT ?
+                """, voucherId, limit));
     }
 
     private Admission find(long userId, String idempotencyKey) {

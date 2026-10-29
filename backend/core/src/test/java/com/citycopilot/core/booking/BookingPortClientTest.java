@@ -25,6 +25,37 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 class BookingPortClientTest {
     @Test
+    void localCapacityRejectionIsAKnownNotSentOutcome() throws Exception {
+        var downstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var workers = Executors.newCachedThreadPool();
+        downstream.setExecutor(workers);
+        var release = new CountDownLatch(1);
+        var count = new AtomicInteger();
+        downstream.createContext("/commerce/v1/admin/bookings/booking-1/check-in", exchange -> {
+            count.incrementAndGet();
+            try { release.await(4, TimeUnit.SECONDS); } catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+            exchange.sendResponseHeaders(500, -1); exchange.close();
+        });
+        downstream.start();
+        UserDTO user = new UserDTO(); user.setId(7L); UserHolder.saveUser(user);
+        var factories = new CrossServiceHttpConfig().commerceHttpFactories(Duration.ofSeconds(1),
+                Duration.ofSeconds(3), Duration.ofSeconds(3), 1);
+        var client = new BookingPortClient("http://127.0.0.1:" + downstream.getAddress().getPort(), "test-service-token", factories);
+        try {
+            var held = workers.submit(() -> catchThrowable(() -> client.checkIn("booking-1", new ActionRequest(1L, null, "proof"), "first-key")));
+            while (count.get() == 0) Thread.sleep(5);
+            var error = catchThrowableOfType(() -> client.checkIn("booking-1", new ActionRequest(1L, null, "proof"), "second-key"),
+                    BookingPortClient.Unavailable.class);
+            assertThat(error.outcomeUnknown).isFalse();
+            assertThat(count.get()).isEqualTo(1);
+            release.countDown();
+            held.get(5, TimeUnit.SECONDS);
+        } finally {
+            UserHolder.removeUser(); release.countDown(); downstream.stop(0); workers.shutdownNow();
+        }
+    }
+
+    @Test
     void realSlowBodyRetainsUnknownWriteAndOriginalKey() throws Exception {
         var downstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         var workers = Executors.newCachedThreadPool();

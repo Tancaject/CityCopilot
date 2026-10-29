@@ -34,4 +34,5 @@ RUN mkdir -p /app/uploads /app/logs && \
 USER citycopilot
 EXPOSE 8081 8083 9091
 
-ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-XX:MaxRAMPercentage=75.0", "-Dfile.encoding=UTF-8", "-jar", "/app/application.jar"]
+# 容器内存小于约 2GB 时 JVM 会自动选单线程 Serial GC，高并发下停顿以秒计；显式使用 G1。
+ENTRYPOINT ["java", "-XX:+UseContainerSupport", "-XX:+UseG1GC", "-XX:MaxRAMPercentage=75.0", "-Dfile.encoding=UTF-8", "-jar", "/app/application.jar"]

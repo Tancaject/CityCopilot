@@ -52,6 +52,7 @@ WHERE e.event_id = '<待核验的原 eventId>';
 ## 恢复身份与其他保留策略
 
 - Admission ledger 的用户/幂等键、请求指纹、订单身份与最终结果，以及 Inbox 的消费组/eventId/payload hash，继续在线保留；不按创建时间直接删除。
+- Redis 中每次秒杀准入写两个幂等身份键，不再永久保留：全局幂等键 1 天过期（过期后同键重试由上面的 ledger 重放，仍为 PREPARED 时以 ledger 订单号重建，身份不变）；券内幂等键在活动归档时按 ledger 分批删除。本变更之前写入的存量用 [`tools/backfill_redis_idempotency.py`](../../tools/backfill_redis_idempotency.py) 一次性处理：全局键补 1 天过期，已归档活动的券内键直接删除，可重复执行，默认只统计。活动结束超过归档窗口后，仍为 `PREPARED` 且 Redis 中没有券内身份的准入（从未进入 Redis）由对账任务固化为 `SECKILL_ENDED` 拒绝，不再永久阻止归档。
 - Core 投影 Outbox 的正文仅包含事件类型、店铺/版本及类型/GEO 状态等标量；投影与全量重建追尾使用在线身份列回读店铺事实，不读取正文。当前保留原表，不另建正文归档。若以后移除历史身份行，必须与现有 writer 租约及 fencing 协调，并保留 eventId、店铺/版本唯一约束和重建追尾所需范围；仅持有租约不足以证明删除安全。
 
 上述恢复身份与 Core 投影历史不设自动删除期限；报价清理与 Commerce 正文分离不改变它们的保留策略。

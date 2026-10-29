@@ -49,7 +49,7 @@
 
 系统以异步完成换取稳定峰值吞吐，并通过持久化 Recovery、唯一约束、Outbox/Inbox 和补偿得到可恢复的业务效果。代价是客户端必须接受 PROCESSING 状态，平台必须长期运行对账、积压告警和故障注入验证。
 
-当前部署是单机上的独立 Commerce Redis 主节点加一个副本（2026-10-15 起，与 Core 缓存 Redis 分开），生产配置要求准入写入经 `WAIT` 得到 1 个副本确认，容器内真实执行；内存满时 `noeviction` 拒绝写入。活动结束超过 `citycopilot.commerce.campaign-archive-after`（默认 1 天）且没有未决订单、账本和恢复记录后，对账任务把券标记为 `redis_archived_at` 并删除其 Redis 状态，之后的对账只扫描未归档的券。准入、补偿、重复投递、丢失 ACCEPTED 后重试和取消返库存由 [`SeckillLifecycleIT`](../../backend/commerce-service/src/test/java/com/citycopilot/commerce/SeckillLifecycleIT.java) 在真实 MySQL/Redis 上验证；Redis Cluster 下的 MOVED、主从切换和复制确认尚未验证。修改 routing generation 或 shard-count 等同于数据迁移，只能在停止准入并排空后整体重启，不能作为滚动配置变更。
+当前部署是单机上的独立 Commerce Redis 主节点加一个副本（2026-10-15 起，与 Core 缓存 Redis 分开），生产配置要求准入写入经 `WAIT` 得到 1 个副本确认，容器内真实执行；内存满时 `noeviction` 拒绝写入。活动结束超过 `citycopilot.commerce.campaign-archive-after`（默认 1 天）且没有未决订单、账本和恢复记录后，对账任务把券标记为 `redis_archived_at` 并删除其 Redis 状态，之后的对账只扫描未归档的券。对账每 5 秒只比汇总数（Redis 库存、买家集合大小、在途集合大小对比 MySQL 库存、有效订单数、RESERVED 预留数、未结恢复记录数，全部只读索引）；汇总数不一致时立即做全量快照，每张券另外至少每 `citycopilot.commerce.reconciliation-full-interval`（默认 10 分钟）全量一次，覆盖数量相同、名单不同的错误。维护 fence 与告警仍只由全量结果决定。准入、补偿、重复投递、丢失 ACCEPTED 后重试和取消返库存由 [`SeckillLifecycleIT`](../../backend/commerce-service/src/test/java/com/citycopilot/commerce/SeckillLifecycleIT.java) 在真实 MySQL/Redis 上验证；Redis Cluster 下的 MOVED、主从切换和复制确认尚未验证。修改 routing generation 或 shard-count 等同于数据迁移，只能在停止准入并排空后整体重启，不能作为滚动配置变更。
 
 ## 未实现：在线分片扩容
 

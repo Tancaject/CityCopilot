@@ -82,12 +82,23 @@ public class CommerceOutboxRelay {
      * @return 候选 eventId，最终所有权仍由 {@link #claim(String)} 决定
      */
     List<String> relayCandidates() {
+        // 三类候选各走自己的 (status, 到期时间) 索引取一批，再按创建时间合并。READY 行插入时 next_attempt_at 与
+        // created_at 取同一时间，顺序与按创建时间相同。合成一条 OR 语句时，积压一多优化器就改走全表扫描加排序，
+        // 恰好在 Kafka 恢复、最需要追积压时每秒拖慢一次投递。
         return jdbc.queryForList("""
-                SELECT event_id FROM commerce_outbox_event
-                 WHERE (status IN ('READY','FAILED')
-                       AND next_attempt_at <= CURRENT_TIMESTAMP(3))
-                   OR (status='CLAIMED'
-                       AND claimed_until < CURRENT_TIMESTAMP(3))
+                SELECT event_id FROM (
+                    (SELECT event_id, created_at FROM commerce_outbox_event
+                      WHERE status='READY' AND next_attempt_at <= CURRENT_TIMESTAMP(3)
+                      ORDER BY next_attempt_at LIMIT 50)
+                    UNION ALL
+                    (SELECT event_id, created_at FROM commerce_outbox_event
+                      WHERE status='FAILED' AND next_attempt_at <= CURRENT_TIMESTAMP(3)
+                      ORDER BY next_attempt_at LIMIT 50)
+                    UNION ALL
+                    (SELECT event_id, created_at FROM commerce_outbox_event
+                      WHERE status='CLAIMED' AND claimed_until < CURRENT_TIMESTAMP(3)
+                      ORDER BY claimed_until LIMIT 50)
+                ) candidates
                 ORDER BY created_at
                 LIMIT 50
                 """, String.class);
@@ -224,10 +235,17 @@ public class CommerceOutboxRelay {
     }
 
     private double oldestReadyAgeSeconds() {
-        Timestamp oldest = jdbc.queryForObject(
-            "SELECT MIN(created_at) FROM commerce_outbox_event WHERE status IN ('READY','FAILED','CLAIMED')",
-                Timestamp.class
-        );
+        // 按状态分别取最早创建时间，每个子查询在 (status, created_at) 索引上只读一行；
+        // 用 IN 列表时要读遍全部未发布行，积压越大每次抓取指标越慢。
+        Timestamp oldest = jdbc.queryForObject("""
+                SELECT MIN(oldest) FROM (
+                    SELECT MIN(created_at) AS oldest FROM commerce_outbox_event WHERE status='READY'
+                    UNION ALL
+                    SELECT MIN(created_at) FROM commerce_outbox_event WHERE status='FAILED'
+                    UNION ALL
+                    SELECT MIN(created_at) FROM commerce_outbox_event WHERE status='CLAIMED'
+                ) pending
+                """, Timestamp.class);
         return oldest == null ? 0 : Math.max(0, (System.currentTimeMillis() - oldest.getTime()) / 1000.0);
     }
 

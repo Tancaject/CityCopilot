@@ -58,7 +58,7 @@ public class WebExceptionAdvice implements ResponseBodyAdvice<Object> {
         if (c.endsWith("NOT_FOUND")) return HttpStatus.NOT_FOUND;
         if (c.endsWith("RATE_LIMITED")) return HttpStatus.TOO_MANY_REQUESTS;
         if (c.endsWith("UNAVAILABLE") || c.endsWith("CIRCUIT_OPEN") || c.endsWith("BUSY")
-                || c.endsWith("CONFIG_MISSING")) return HttpStatus.SERVICE_UNAVAILABLE;
+                || c.endsWith("CAPACITY_EXHAUSTED") || c.endsWith("CONFIG_MISSING")) return HttpStatus.SERVICE_UNAVAILABLE;
         if (c.endsWith("RESPONSE_INVALID") || c.endsWith("INVALID_RESPONSE")) return HttpStatus.BAD_GATEWAY;
         if (c.equals("SERVER_ERROR") || c.endsWith("_FAILED")) return HttpStatus.INTERNAL_SERVER_ERROR;
         return HttpStatus.BAD_REQUEST;
@@ -72,8 +72,10 @@ public class WebExceptionAdvice implements ResponseBodyAdvice<Object> {
      */
     @ExceptionHandler(CommercePortClient.CommerceHttpException.class)
     public ResponseEntity<Result> handleCommerceFailure(CommercePortClient.CommerceHttpException error) {
-        if (error.status() >= 500) {
-            // 结果未知等服务端失败需要根因才能排查；4xx 是正常业务拒绝，不记日志。
+        // 结果未知等服务端失败需要根因才能排查；4xx 是正常业务拒绝，不记日志。
+        // 本地并发名额已满是原因已知的削峰，请求根本没有发出，由 HTTP 503 指标计数；过载时逐条打带堆栈的
+        // WARN（每条约 8KB）只会放大负载。
+        if (error.status() >= 500 && !"COMMERCE_CAPACITY_EXHAUSTED".equals(error.code())) {
             log.warn("Commerce call failed with {} {}", error.status(), error.code(), error.getCause());
         }
         ResponseEntity.BodyBuilder response = ResponseEntity.status(error.status());
